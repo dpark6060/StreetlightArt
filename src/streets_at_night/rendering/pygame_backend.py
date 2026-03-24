@@ -1,0 +1,144 @@
+"""Pygame-based render backend for interactive preview."""
+
+import typing as t
+
+import pygame
+from PIL import Image
+
+from .backend import RenderBackend
+
+
+class PygameBackend(RenderBackend):
+    """Pygame-based render backend for interactive preview.
+
+    Draws directly onto a pygame Surface using pygame.draw primitives.
+    Coordinates are clamped to surface bounds to prevent crashes from
+    out-of-range values during projection.
+    """
+
+    def __init__(self, surface: pygame.Surface) -> None:
+        """Initialise the backend with an existing pygame surface.
+
+        Args:
+            surface (pygame.Surface): The pygame surface to draw onto.
+        """
+        self._surface = surface
+
+    def get_surface_size(self) -> t.Tuple[int, int]:
+        """Return (width, height) of the render surface.
+
+        Returns:
+            tuple[int, int]: (width, height) in pixels.
+        """
+        return self._surface.get_size()
+
+    def clear(self, color: t.Tuple[int, int, int]) -> None:
+        """Fill the surface with a solid color.
+
+        Args:
+            color (tuple[int, int, int]): RGB fill color.
+        """
+        self._surface.fill(color)
+
+    def draw_line(
+        self,
+        p1: t.Tuple[float, float],
+        p2: t.Tuple[float, float],
+        color: t.Tuple[int, int, int],
+        width: int = 1,
+    ) -> None:
+        """Draw a line segment with integer-clamped coordinates.
+
+        Coordinates are clamped to the surface bounds so pygame does not
+        crash on out-of-range projected values.
+
+        Args:
+            p1 (tuple[float, float]): Start point (x, y) in screen pixels.
+            p2 (tuple[float, float]): End point (x, y) in screen pixels.
+            color (tuple[int, int, int]): RGB line color.
+            width (int): Line width in pixels.
+        """
+        w, h = self._surface.get_size()
+        ip1 = _clamp_point(p1, w, h)
+        ip2 = _clamp_point(p2, w, h)
+        pygame.draw.line(self._surface, color, ip1, ip2, max(1, int(width)))
+
+    def draw_polygon(
+        self,
+        vertices: t.List[t.Tuple[float, float]],
+        fill_color: t.Tuple[int, int, int],
+    ) -> None:
+        """Draw a filled polygon.
+
+        Args:
+            vertices (list[tuple[float, float]]): Screen-space vertex list.
+            fill_color (tuple[int, int, int]): RGB fill color.
+        """
+        int_verts = [(int(x), int(y)) for x, y in vertices]
+        pygame.draw.polygon(self._surface, fill_color, int_verts)
+
+    def draw_circle(
+        self,
+        center: t.Tuple[float, float],
+        radius: float,
+        color: t.Tuple[int, int, int],
+    ) -> None:
+        """Draw a filled circle.
+
+        Args:
+            center (tuple[float, float]): Center (x, y) in screen pixels.
+            radius (float): Circle radius in pixels.
+            color (tuple[int, int, int]): RGB fill color.
+        """
+        pygame.draw.circle(
+            self._surface,
+            color,
+            (int(center[0]), int(center[1])),
+            max(1, int(radius)),
+        )
+
+    def get_image(self) -> Image.Image:
+        """Convert the pygame surface to a PIL Image.
+
+        Returns:
+            PIL.Image.Image: Current surface state as an RGB PIL image.
+        """
+        w, h = self._surface.get_size()
+        raw = pygame.image.tostring(self._surface, "RGB")
+        return Image.frombytes("RGB", (w, h), raw)
+
+    def blit_pil_image(self, img: Image.Image) -> None:
+        """Blit a PIL Image onto the pygame surface at (0, 0).
+
+        Converts the PIL image to a pygame Surface and blits it at the origin.
+        The image mode must be RGB or compatible with pygame.image.fromstring.
+
+        Args:
+            img (PIL.Image.Image): Image to blit. Should match surface size.
+        """
+        surf = pygame.image.fromstring(img.tobytes(), img.size, img.mode)
+        self._surface.blit(surf, (0, 0))
+
+    def present(self) -> None:
+        """Flip the pygame display to show the rendered frame."""
+        pygame.display.flip()
+
+
+def _clamp_point(
+    p: t.Tuple[float, float],
+    width: int,
+    height: int,
+) -> t.Tuple[int, int]:
+    """Clamp a float screen coordinate to integer surface bounds.
+
+    Args:
+        p (tuple[float, float]): Screen coordinate (x, y).
+        width (int): Surface width.
+        height (int): Surface height.
+
+    Returns:
+        tuple[int, int]: Clamped integer coordinate.
+    """
+    x = max(-width, min(width * 2, int(p[0])))
+    y = max(-height, min(height * 2, int(p[1])))
+    return x, y

@@ -1,0 +1,47 @@
+[original_camera]
+lat = 34.234880959491356
+lon = -117.31157772457728
+altitude_ft = 5186.0
+target_lat = 34.10834722093596
+target_lon = -117.29681238769862
+target_altitude_ft = 1000.0
+fov = 60.0
+
+[camera]
+lat = 34.23488095949135
+lon = -117.31157772457728
+altitude_ft = 5186.0
+target_lat = 34.10834722093597
+target_lon = -117.29681238769862
+target_altitude_ft = 1000.0
+fov = 60.0
+
+[bounds]
+north = 34.35
+south = 33.95
+east = -117.05
+west = -117.55
+
+[quality.low]
+width = 1920
+height = 1080
+
+[quality.medium]
+width = 3840
+height = 2160
+
+[quality.high]
+width = 7680
+height = 4320
+seed = 42
+
+# [zones.colors]
+# commercial = "#FF0000"
+# industrial = "#FF8800"
+# park_forest = "#00FF00"
+# water = "#0000FF"
+# road_surface = "#fffb00"
+# default_ground = "#222222"
+
+# [zones.house]
+# yard_base_color = "#885500"

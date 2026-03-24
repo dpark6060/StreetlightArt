@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "streets-at-night"
+version = "0.1.0"
+description = "Aerial city night renderer using OpenStreetMap data"
+requires-python = ">=3.11"
+dependencies = [
+    "osmnx>=1.9",
+    "geopandas>=0.14",
+    "shapely>=2.0",
+    "numpy>=1.26",
+    "matplotlib>=3.8",
+    "pyproj>=3.6",
+    "tomli-w>=1.0",
+    "pygame>=2.5",
+    "Pillow>=10.0",
+]
+
+[project.scripts]
+streets-at-night = "streets_at_night.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/streets_at_night"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+]
