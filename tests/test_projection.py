@@ -5,7 +5,12 @@ import numpy as np
 import pytest
 
 from streets_at_night.camera.camera import create_camera, get_view_matrix, get_projection_matrix
-from streets_at_night.camera.projection import clip_line_to_near_plane, project_points
+from streets_at_night.camera.projection import (
+    _camera_z,
+    clip_line_to_near_plane,
+    clip_polygon_to_near_plane,
+    project_points,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -165,6 +170,81 @@ def test_clip_line_to_near_plane_one_behind_returns_clipped(camera, view_matrix)
     assert clipped_p2.shape == (3,)
 
     # The clipped endpoint (p2 was behind) should now be at camera-space z ≈ -near
-    from streets_at_night.camera.projection import _camera_z
     clipped_z = _camera_z(clipped_p2, view_matrix)
     assert clipped_z == pytest.approx(-near, abs=1.0)
+
+
+# ---------------------------------------------------------------------------
+# clip_polygon_to_near_plane
+# ---------------------------------------------------------------------------
+
+
+def test_clip_polygon_to_near_plane_all_in_front_returns_all_vertices(camera, view_matrix):
+    # Arrange — a small triangle between the camera and its target; fully in front.
+    # Camera is at (0, -1000, 500) looking toward origin. Points near midpoint are safe.
+    near = camera.near
+    vertices = [
+        np.array([-50.0, -500.0, 250.0]),
+        np.array([50.0, -500.0, 250.0]),
+        np.array([0.0, -400.0, 200.0]),
+    ]
+
+    # Act
+    result = clip_polygon_to_near_plane(vertices, view_matrix, near)
+
+    # Assert — all three vertices survive; no closing duplicate added
+    assert len(result) == 3
+
+
+def test_clip_polygon_to_near_plane_all_behind_returns_empty(camera, view_matrix):
+    # Arrange — all vertices are behind the camera (further than position along -Y).
+    near = camera.near
+    vertices = [
+        np.array([-50.0, -1500.0, 500.0]),
+        np.array([50.0, -1500.0, 500.0]),
+        np.array([0.0, -2000.0, 500.0]),
+    ]
+
+    # Act
+    result = clip_polygon_to_near_plane(vertices, view_matrix, near)
+
+    # Assert
+    assert result == []
+
+
+def test_clip_polygon_to_near_plane_straddling_returns_clipped_polygon(camera, view_matrix):
+    # Arrange — a quad that straddles the near plane: two vertices clearly in
+    # front, two clearly behind the camera.
+    near = camera.near
+    vertices = [
+        np.array([-100.0, -500.0, 250.0]),   # in front
+        np.array([100.0, -500.0, 250.0]),    # in front
+        np.array([100.0, -2000.0, 500.0]),   # behind camera
+        np.array([-100.0, -2000.0, 500.0]),  # behind camera
+    ]
+
+    # Act
+    result = clip_polygon_to_near_plane(vertices, view_matrix, near)
+
+    # Assert — result is a valid polygon (>=3 vertices) and all are in front of near
+    assert len(result) >= 3
+    for v in result:
+        cam_z = _camera_z(v, view_matrix)
+        assert cam_z <= -near + 0.01
+
+
+def test_clip_polygon_to_near_plane_degenerate_after_clip_returns_empty(camera, view_matrix):
+    # Arrange — a contrived degenerate "polygon" with only 2 vertices.
+    # A 2-vertex input is a line segment, not a real polygon. Clipping
+    # can produce at most 2 output vertices, triggering the < 3 guard.
+    near = camera.near
+    vertices = [
+        np.array([0.0, -500.0, 250.0]),   # in front of near plane
+        np.array([0.0, -400.0, 200.0]),   # also in front
+    ]
+
+    # Act
+    result = clip_polygon_to_near_plane(vertices, view_matrix, near)
+
+    # Assert — fewer than 3 vertices → degenerate polygon → empty list
+    assert result == []

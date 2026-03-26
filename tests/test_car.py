@@ -7,6 +7,7 @@ import random
 import numpy as np
 import pytest
 
+from streets_at_night.config.schema import CarConfig, ColorPoolConfig
 from streets_at_night.models.car import CarLightPair
 from streets_at_night.models.light_source import LightSource
 
@@ -29,12 +30,48 @@ def road_position() -> np.ndarray:
 
 
 @pytest.fixture
-def car_pair(road_position, rng) -> CarLightPair:
+def car_config() -> CarConfig:
+    """Return a CarConfig built from DEFAULTS values."""
+    return CarConfig(
+        headlight_colors=ColorPoolConfig(colors=[
+            ("#FFFFFF", 0.5),
+            ("#FFF4E0", 0.3),
+            ("#FFEE80", 0.15),
+            ("#CCE0FF", 0.05),
+        ]),
+        taillight_colors=ColorPoolConfig(colors=[
+            ("#FF2020", 0.6),
+            ("#CC1010", 0.25),
+            ("#FF3010", 0.15),
+        ]),
+        separation_min=1.6,
+        separation_max=2.4,
+        density_highway_min=25.0,
+        density_highway_max=50.0,
+        density_major_min=40.0,
+        density_major_max=80.0,
+        density_collector_min=80.0,
+        density_collector_max=150.0,
+        density_residential_min=150.0,
+        density_residential_max=400.0,
+        density_service_min=300.0,
+        density_service_max=800.0,
+        headlight_glow_radius=8.0,
+        headlight_illumination_radius=15.0,
+        headlight_illumination_intensity=0.6,
+        taillight_glow_radius=3.0,
+        taillight_illumination_radius=2.0,
+        taillight_illumination_intensity=0.1,
+    )
+
+
+@pytest.fixture
+def car_pair(road_position, rng, car_config) -> CarLightPair:
     """Return a CarLightPair traveling East (bearing=0)."""
     return CarLightPair(
         position=road_position,
         travel_bearing=0.0,
-        config={},
+        config=car_config,
         rng=rng,
     )
 
@@ -60,13 +97,13 @@ def test_get_lights_are_light_source_instances(car_pair):
     assert all(isinstance(light, LightSource) for light in lights)
 
 
-def test_travel_bearing_stored(road_position, rng):
+def test_travel_bearing_stored(road_position, rng, car_config):
     # Arrange
     bearing = math.pi / 4
 
     # Act
     pair = CarLightPair(
-        position=road_position, travel_bearing=bearing, config={}, rng=rng
+        position=road_position, travel_bearing=bearing, config=car_config, rng=rng
     )
 
     # Assert
@@ -99,17 +136,19 @@ def test_light_positions_symmetric_about_center(car_pair, road_position):
     np.testing.assert_allclose(midpoint[:2], road_position[:2], atol=1e-9)
 
 
-def test_light_separation_within_range():
-    # Arrange — run many samples to verify separation is in [1.6, 2.4]
+def test_light_separation_within_range(car_config):
+    # Arrange — run many samples to verify separation is within config range
     for seed in range(30):
         rng = random.Random(seed)
         pos = np.array([0.0, 0.0, 0.0])
-        pair = CarLightPair(position=pos, travel_bearing=0.0, config={}, rng=rng)
+        pair = CarLightPair(position=pos, travel_bearing=0.0, config=car_config, rng=rng)
         lights = pair.get_lights()
         separation = np.linalg.norm(lights[0].position - lights[1].position)
 
         # Assert
-        assert 1.6 <= separation <= 2.4, f"seed={seed} separation={separation}"
+        assert (
+            car_config.separation_min <= separation <= car_config.separation_max
+        ), f"seed={seed} separation={separation}"
 
 
 # ---------------------------------------------------------------------------
@@ -204,11 +243,15 @@ def test_resolve_facing_taillights_both_same_color(car_pair):
 # ---------------------------------------------------------------------------
 
 
-def test_same_seed_produces_same_light_positions():
+def test_same_seed_produces_same_light_positions(car_config):
     # Arrange
     pos = np.array([0.0, 0.0, 0.0])
-    pair_a = CarLightPair(position=pos, travel_bearing=0.5, config={}, rng=random.Random(99))
-    pair_b = CarLightPair(position=pos, travel_bearing=0.5, config={}, rng=random.Random(99))
+    pair_a = CarLightPair(
+        position=pos, travel_bearing=0.5, config=car_config, rng=random.Random(99)
+    )
+    pair_b = CarLightPair(
+        position=pos, travel_bearing=0.5, config=car_config, rng=random.Random(99)
+    )
 
     # Act
     lights_a = pair_a.get_lights()
@@ -217,3 +260,293 @@ def test_same_seed_produces_same_light_positions():
     # Assert
     for la, lb in zip(lights_a, lights_b):
         np.testing.assert_array_equal(la.position, lb.position)
+
+
+# ---------------------------------------------------------------------------
+# Config passthrough
+# ---------------------------------------------------------------------------
+
+
+def test_headlight_color_comes_from_config():
+    # Arrange — single-entry pool so we know exactly which color will be picked
+    single_color_config = CarConfig(
+        headlight_colors=ColorPoolConfig(colors=[("#AABBCC", 1.0)]),
+        taillight_colors=ColorPoolConfig(colors=[("#FF0000", 1.0)]),
+        separation_min=1.6,
+        separation_max=2.4,
+        density_highway_min=25.0,
+        density_highway_max=50.0,
+        density_major_min=40.0,
+        density_major_max=80.0,
+        density_collector_min=80.0,
+        density_collector_max=150.0,
+        density_residential_min=150.0,
+        density_residential_max=400.0,
+        density_service_min=300.0,
+        density_service_max=800.0,
+        headlight_glow_radius=8.0,
+        headlight_illumination_radius=15.0,
+        headlight_illumination_intensity=0.6,
+        taillight_glow_radius=3.0,
+        taillight_illumination_radius=2.0,
+        taillight_illumination_intensity=0.1,
+    )
+    rng = random.Random(0)
+    pair = CarLightPair(
+        position=np.array([0.0, 0.0, 0.0]),
+        travel_bearing=0.0,
+        config=single_color_config,
+        rng=rng,
+    )
+    camera_forward = np.array([1.0, 0.0, 0.0])
+
+    # Act
+    pair.resolve_facing(camera_forward)
+    lights = pair.get_lights()
+
+    # Assert — headlight color matches the only color in the pool
+    expected = single_color_config.headlight_colors.colors[0]
+    expected_hex = expected[0]
+    r = int(expected_hex[1:3], 16)
+    g = int(expected_hex[3:5], 16)
+    b = int(expected_hex[5:7], 16)
+    assert lights[0].color == (r, g, b)
+
+
+def test_taillight_color_comes_from_config():
+    # Arrange — single-entry pool so we know exactly which color will be picked
+    single_color_config = CarConfig(
+        headlight_colors=ColorPoolConfig(colors=[("#FFFFFF", 1.0)]),
+        taillight_colors=ColorPoolConfig(colors=[("#DD1122", 1.0)]),
+        separation_min=1.6,
+        separation_max=2.4,
+        density_highway_min=25.0,
+        density_highway_max=50.0,
+        density_major_min=40.0,
+        density_major_max=80.0,
+        density_collector_min=80.0,
+        density_collector_max=150.0,
+        density_residential_min=150.0,
+        density_residential_max=400.0,
+        density_service_min=300.0,
+        density_service_max=800.0,
+        headlight_glow_radius=8.0,
+        headlight_illumination_radius=15.0,
+        headlight_illumination_intensity=0.6,
+        taillight_glow_radius=3.0,
+        taillight_illumination_radius=2.0,
+        taillight_illumination_intensity=0.1,
+    )
+    rng = random.Random(0)
+    pair = CarLightPair(
+        position=np.array([0.0, 0.0, 0.0]),
+        travel_bearing=0.0,
+        config=single_color_config,
+        rng=rng,
+    )
+    camera_forward = np.array([-1.0, 0.0, 0.0])
+
+    # Act
+    pair.resolve_facing(camera_forward)
+    lights = pair.get_lights()
+
+    # Assert — taillight color matches the only color in the pool
+    expected = single_color_config.taillight_colors.colors[0]
+    expected_hex = expected[0]
+    r = int(expected_hex[1:3], 16)
+    g = int(expected_hex[3:5], 16)
+    b = int(expected_hex[5:7], 16)
+    assert lights[0].color == (r, g, b)
+
+
+def test_separation_respects_config_range():
+    # Arrange — tight separation range so any sample must fall within it
+    tight_config = CarConfig(
+        headlight_colors=ColorPoolConfig(colors=[("#FFFFFF", 1.0)]),
+        taillight_colors=ColorPoolConfig(colors=[("#FF0000", 1.0)]),
+        separation_min=3.0,
+        separation_max=3.1,
+        density_highway_min=25.0,
+        density_highway_max=50.0,
+        density_major_min=40.0,
+        density_major_max=80.0,
+        density_collector_min=80.0,
+        density_collector_max=150.0,
+        density_residential_min=150.0,
+        density_residential_max=400.0,
+        density_service_min=300.0,
+        density_service_max=800.0,
+        headlight_glow_radius=8.0,
+        headlight_illumination_radius=15.0,
+        headlight_illumination_intensity=0.6,
+        taillight_glow_radius=3.0,
+        taillight_illumination_radius=2.0,
+        taillight_illumination_intensity=0.1,
+    )
+    for seed in range(20):
+        rng = random.Random(seed)
+        pair = CarLightPair(
+            position=np.array([0.0, 0.0, 0.0]),
+            travel_bearing=0.0,
+            config=tight_config,
+            rng=rng,
+        )
+        lights = pair.get_lights()
+        separation = np.linalg.norm(lights[0].position - lights[1].position)
+
+        # Assert
+        assert (
+            tight_config.separation_min <= separation <= tight_config.separation_max
+        ), f"seed={seed} separation={separation}"
+
+
+# ---------------------------------------------------------------------------
+# Config-driven glow/illumination properties
+# ---------------------------------------------------------------------------
+
+
+def _make_config_with_light_overrides(
+    headlight_glow_radius: float = 8.0,
+    headlight_illumination_radius: float = 15.0,
+    headlight_illumination_intensity: float = 0.6,
+    taillight_glow_radius: float = 3.0,
+    taillight_illumination_radius: float = 2.0,
+    taillight_illumination_intensity: float = 0.1,
+) -> CarConfig:
+    """Build a CarConfig with controllable glow/illumination fields."""
+    return CarConfig(
+        headlight_colors=ColorPoolConfig(colors=[("#FFFFFF", 1.0)]),
+        taillight_colors=ColorPoolConfig(colors=[("#FF0000", 1.0)]),
+        separation_min=1.6,
+        separation_max=2.4,
+        density_highway_min=25.0,
+        density_highway_max=50.0,
+        density_major_min=40.0,
+        density_major_max=80.0,
+        density_collector_min=80.0,
+        density_collector_max=150.0,
+        density_residential_min=150.0,
+        density_residential_max=400.0,
+        density_service_min=300.0,
+        density_service_max=800.0,
+        headlight_glow_radius=headlight_glow_radius,
+        headlight_illumination_radius=headlight_illumination_radius,
+        headlight_illumination_intensity=headlight_illumination_intensity,
+        taillight_glow_radius=taillight_glow_radius,
+        taillight_illumination_radius=taillight_illumination_radius,
+        taillight_illumination_intensity=taillight_illumination_intensity,
+    )
+
+
+def test_headlight_glow_radius_comes_from_config():
+    # Arrange — use non-default value to confirm it is read from config
+    config = _make_config_with_light_overrides(headlight_glow_radius=20.0)
+    pair = CarLightPair(
+        position=np.array([0.0, 0.0, 0.0]),
+        travel_bearing=0.0,
+        config=config,
+        rng=random.Random(0),
+    )
+    camera_forward = np.array([1.0, 0.0, 0.0])
+
+    # Act
+    pair.resolve_facing(camera_forward)
+    lights = pair.get_lights()
+
+    # Assert
+    assert all(light.glow_radius == 20.0 for light in lights)
+
+
+def test_headlight_illumination_radius_comes_from_config():
+    # Arrange
+    config = _make_config_with_light_overrides(headlight_illumination_radius=40.0)
+    pair = CarLightPair(
+        position=np.array([0.0, 0.0, 0.0]),
+        travel_bearing=0.0,
+        config=config,
+        rng=random.Random(0),
+    )
+    camera_forward = np.array([1.0, 0.0, 0.0])
+
+    # Act
+    pair.resolve_facing(camera_forward)
+    lights = pair.get_lights()
+
+    # Assert
+    assert all(light.illumination_radius == 40.0 for light in lights)
+
+
+def test_headlight_illumination_intensity_comes_from_config():
+    # Arrange
+    config = _make_config_with_light_overrides(headlight_illumination_intensity=0.9)
+    pair = CarLightPair(
+        position=np.array([0.0, 0.0, 0.0]),
+        travel_bearing=0.0,
+        config=config,
+        rng=random.Random(0),
+    )
+    camera_forward = np.array([1.0, 0.0, 0.0])
+
+    # Act
+    pair.resolve_facing(camera_forward)
+    lights = pair.get_lights()
+
+    # Assert
+    assert all(light.illumination_intensity == 0.9 for light in lights)
+
+
+def test_taillight_glow_radius_comes_from_config():
+    # Arrange — use non-default value to confirm it is read from config
+    config = _make_config_with_light_overrides(taillight_glow_radius=10.0)
+    pair = CarLightPair(
+        position=np.array([0.0, 0.0, 0.0]),
+        travel_bearing=0.0,
+        config=config,
+        rng=random.Random(0),
+    )
+    camera_forward = np.array([-1.0, 0.0, 0.0])
+
+    # Act
+    pair.resolve_facing(camera_forward)
+    lights = pair.get_lights()
+
+    # Assert
+    assert all(light.glow_radius == 10.0 for light in lights)
+
+
+def test_taillight_illumination_radius_comes_from_config():
+    # Arrange
+    config = _make_config_with_light_overrides(taillight_illumination_radius=7.0)
+    pair = CarLightPair(
+        position=np.array([0.0, 0.0, 0.0]),
+        travel_bearing=0.0,
+        config=config,
+        rng=random.Random(0),
+    )
+    camera_forward = np.array([-1.0, 0.0, 0.0])
+
+    # Act
+    pair.resolve_facing(camera_forward)
+    lights = pair.get_lights()
+
+    # Assert
+    assert all(light.illumination_radius == 7.0 for light in lights)
+
+
+def test_taillight_illumination_intensity_comes_from_config():
+    # Arrange
+    config = _make_config_with_light_overrides(taillight_illumination_intensity=0.05)
+    pair = CarLightPair(
+        position=np.array([0.0, 0.0, 0.0]),
+        travel_bearing=0.0,
+        config=config,
+        rng=random.Random(0),
+    )
+    camera_forward = np.array([-1.0, 0.0, 0.0])
+
+    # Act
+    pair.resolve_facing(camera_forward)
+    lights = pair.get_lights()
+
+    # Assert
+    assert all(light.illumination_intensity == 0.05 for light in lights)

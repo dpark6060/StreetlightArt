@@ -16,6 +16,7 @@ dependencies = [
     "pyproj>=3.6",
     "tomli-w>=1.0",
     "pygame>=2.5",
+    "pygame-gui>=0.6",
     "Pillow>=10.0",
 ]
 

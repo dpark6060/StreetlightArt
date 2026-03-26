@@ -240,3 +240,32 @@ def test_load_config_roads_partial_override(road_color_override_toml: Path):
     assert result.roads.export.minor.color == DEFAULTS["roads"]["export"]["minor"]["color"]
     # Preview unchanged
     assert result.roads.preview.highway.color == DEFAULTS["roads"]["preview"]["highway"]["color"]
+
+
+# ---------------------------------------------------------------------------
+# Atmosphere section
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_atmosphere_defaults_are_loaded(empty_toml: Path):
+    # Act
+    result = load_config(empty_toml)
+
+    # Assert — falloff_distance matches the default value
+    assert result.atmosphere.falloff_distance == DEFAULTS["atmosphere"]["falloff_distance"]
+
+
+@pytest.fixture
+def atmosphere_override_toml(tmp_path: Path) -> Path:
+    """TOML with atmosphere.falloff_distance overridden."""
+    toml_file = tmp_path / "atmosphere.toml"
+    toml_file.write_text("[atmosphere]\nfalloff_distance = 5000.0\n")
+    return toml_file
+
+
+def test_load_config_atmosphere_can_be_overridden(atmosphere_override_toml: Path):
+    # Act
+    result = load_config(atmosphere_override_toml)
+
+    # Assert — override applied
+    assert result.atmosphere.falloff_distance == 5000.0

@@ -8,24 +8,8 @@ import numpy as np
 
 from .color_pool import ColorPool
 from .light_source import LightSource
+from ..config.schema import CarConfig
 
-
-# ---------------------------------------------------------------------------
-# Color pool definitions
-# ---------------------------------------------------------------------------
-
-_HEADLIGHT_COLORS: t.List[t.Tuple[str, float]] = [
-    ("#FFFFFF", 50.0),
-    ("#FFF4E0", 30.0),
-    ("#FFEE80", 15.0),
-    ("#CCE0FF", 5.0),
-]
-
-_TAILLIGHT_COLORS: t.List[t.Tuple[str, float]] = [
-    ("#FF2020", 60.0),
-    ("#CC1010", 25.0),
-    ("#FF3010", 15.0),
-]
 
 # Placeholder color for unresolved lights (replaced on resolve_facing call)
 _PLACEHOLDER_COLOR: t.Tuple[int, int, int] = (255, 255, 255)
@@ -49,7 +33,7 @@ class CarLightPair:
         self,
         position: np.ndarray,
         travel_bearing: float,
-        config: dict,
+        config: CarConfig,
         rng: random.Random,
     ) -> None:
         """Initialize a CarLightPair at a road position.
@@ -59,19 +43,26 @@ class CarLightPair:
                 the road in ENU meters.
             travel_bearing (float): Absolute travel direction in radians.
                 0 = East, pi/2 = North. NOT camera-relative.
-            config (dict): Configuration parameters. Currently unused;
-                reserved for TOML-driven density customisation.
+            config (CarConfig): Car light configuration providing headlight
+                and taillight color pools and separation range.
             rng (random.Random): Seeded RNG for separation sampling.
         """
         self.travel_bearing = travel_bearing
         self._rng = rng
-        self._headlight_pool = ColorPool(_HEADLIGHT_COLORS, rng)
-        self._taillight_pool = ColorPool(_TAILLIGHT_COLORS, rng)
+        self._config = config
+        self._headlight_pool = ColorPool(config.headlight_colors.colors, rng)
+        self._taillight_pool = ColorPool(config.taillight_colors.colors, rng)
         self._headlight_color = self._headlight_pool.pick()
         self._headlight_brightness = rng.uniform(0.7, 0.9)
         self._taillight_color = self._taillight_pool.pick()
         self._taillight_brightness = rng.uniform(0.3, 0.5)
-        self._lights = self._create_lights(position, travel_bearing, rng)
+        self._lights = self._create_lights(
+            position,
+            travel_bearing,
+            rng,
+            config.separation_min,
+            config.separation_max,
+        )
 
     # ------------------------------------------------------------------
     # Public interface
@@ -112,6 +103,8 @@ class CarLightPair:
         position: np.ndarray,
         travel_bearing: float,
         rng: random.Random,
+        separation_min: float,
+        separation_max: float,
     ) -> t.Tuple[LightSource, LightSource]:
         """Create two LightSource instances offset perpendicular to travel.
 
@@ -119,11 +112,13 @@ class CarLightPair:
             position (np.ndarray): Road center position in ENU meters.
             travel_bearing (float): Travel direction in radians.
             rng (random.Random): RNG for separation sampling.
+            separation_min (float): Minimum light separation in meters.
+            separation_max (float): Maximum light separation in meters.
 
         Returns:
             Tuple[LightSource, LightSource]: Left and right light positions.
         """
-        separation = rng.uniform(1.6, 2.4)
+        separation = rng.uniform(separation_min, separation_max)
         left_pos, right_pos = self._compute_light_positions(
             position, travel_bearing, separation
         )
@@ -196,15 +191,15 @@ class CarLightPair:
         for light in self._lights:
             light.color = self._headlight_color
             light.brightness = self._headlight_brightness
-            light.glow_radius = 8.0
-            light.illumination_radius = 15.0
-            light.illumination_intensity = 0.6
+            light.glow_radius = self._config.headlight_glow_radius
+            light.illumination_radius = self._config.headlight_illumination_radius
+            light.illumination_intensity = self._config.headlight_illumination_intensity
 
     def _apply_taillight_properties(self) -> None:
         """Set both lights to the pre-sampled taillight color, brightness, and glow."""
         for light in self._lights:
             light.color = self._taillight_color
             light.brightness = self._taillight_brightness
-            light.glow_radius = 3.0
-            light.illumination_radius = 2.0
-            light.illumination_intensity = 0.1
+            light.glow_radius = self._config.taillight_glow_radius
+            light.illumination_radius = self._config.taillight_illumination_radius
+            light.illumination_intensity = self._config.taillight_illumination_intensity

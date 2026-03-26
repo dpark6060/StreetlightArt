@@ -1,29 +1,17 @@
 """Factory function for house window and porch light sources."""
 
 import random
-import typing as t
 
 import numpy as np
 
 from .color_pool import ColorPool
 from .light_source import LightSource
-
-
-# ---------------------------------------------------------------------------
-# House light color pool
-# ---------------------------------------------------------------------------
-
-_HOUSE_LIGHT_COLORS: t.List[t.Tuple[str, float]] = [
-    ("#FFE4A0", 45.0),  # warm yellow (most common interior/window light)
-    ("#FFF0D0", 25.0),  # warm white (LED or incandescent)
-    ("#FFCC80", 15.0),  # amber (porch/accent)
-    ("#D0E0FF", 15.0),  # TV blue (cool blue interior glow)
-]
+from ..config.schema import HouseLightConfig
 
 
 def create_house_light(
     position: np.ndarray,
-    config: dict,
+    config: HouseLightConfig,
     rng: random.Random,
 ) -> LightSource:
     """Create a LightSource representing a house window, porch, or interior light.
@@ -33,22 +21,22 @@ def create_house_light(
 
     Args:
         position (np.ndarray): 3-element (x, y, z) ENU position in meters.
-        config (dict): Configuration overrides. Currently unused; reserved
-            for TOML-driven customisation.
+        config (HouseLightConfig): House light configuration providing color pool,
+            brightness range, glow radius, illumination radius, and intensity.
         rng (random.Random): Seeded RNG for color and parameter sampling.
 
     Returns:
         LightSource: Configured house light.
     """
-    pool = ColorPool(_HOUSE_LIGHT_COLORS, rng)
+    pool = ColorPool(config.colors.colors, rng)
     color = pool.pick()
-    brightness = rng.uniform(0.3, 0.6)
+    brightness = rng.uniform(config.brightness_min, config.brightness_max)
     return LightSource(
         position=position,
         color=color,
         brightness=brightness,
         size=0.2,
-        glow_radius=5.0,
-        illumination_radius=8.0,
-        illumination_intensity=0.3,
+        glow_radius=config.glow_radius,
+        illumination_radius=config.illumination_radius,
+        illumination_intensity=config.illumination_intensity,
     )

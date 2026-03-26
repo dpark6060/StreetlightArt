@@ -263,6 +263,27 @@ spacing_max = 60.0
 side = "both"
 ```
 
+### Light Rendering: glow_radius vs illumination_radius
+
+Every light has two independent visual effects that run in separate render passes.
+
+**`glow_radius`** — the atmospheric halo around the light source itself. Drawn in `light_pass.py` as concentric rings of decreasing opacity that approximate a gaussian falloff. Measured in world meters; projected to screen pixels via `glow_radius / camera_distance × focal_length`. Glow radius expands with camera distance using the atmospheric scatter formula (`glow_radius × (1 + distance / scatter_distance)`), so distant lights appear hazier and bloom wider. This is the bright orb visible around each light source.
+
+**`illumination_radius`** — the soft pool of colored light falling on the ground around the source. Drawn in `illumination_pass.py` as concentric rings on a separate RGBA layer, then gaussian-blurred before compositing. Also measured in world meters and perspective-projected, but with a fixed 4× screen scale factor applied before blurring — so pools appear noticeably wider and softer than halos. Illumination radius does **not** expand with camera distance. Pool intensity is controlled independently by `illumination_intensity` (0–1).
+
+**How they interact:** the two passes are completely independent. Glow is "light in the air"; illumination is "light on the ground." Zeroing out either has no effect on the other. Both composite additively on top of the ground layer, so overlapping pools and halos accumulate naturally.
+
+**Quick tuning:**
+
+| Goal | What to change |
+|---|---|
+| Larger bright orb | Increase `glow_radius` |
+| Larger / brighter ground pool | Increase `illumination_radius` or `illumination_intensity` |
+| Distant lights bloom more | Decrease `scatter_distance` in `[atmosphere]` |
+| Keep orb, remove ground pool | Set `illumination_intensity = 0.0` |
+
+---
+
 ### `[lights.cars]`
 
 Controls car density, headlight/taillight separation, and color pools per road type.

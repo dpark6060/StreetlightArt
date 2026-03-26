@@ -10,6 +10,7 @@ import pytest
 from streets_at_night.config.defaults import DEFAULTS
 from streets_at_night.config.loader import _build_light_config
 from streets_at_night.config.schema import (
+    AtmosphereConfig,
     BoundsConfig,
     CameraConfig,
     ColorPoolConfig,
@@ -70,7 +71,11 @@ def zone_config() -> ZoneConfig:
 
 
 @pytest.fixture
-def scene_config(zone_config: ZoneConfig, light_config: LightConfig) -> SceneConfig:
+def scene_config(
+    zone_config: ZoneConfig,
+    light_config: LightConfig,
+    atmosphere_config: AtmosphereConfig,
+) -> SceneConfig:
     """Return a minimal SceneConfig for testing."""
     _style = RoadStyleConfig(
         highway=RoadStyleEntry(color="#141210", width=4),
@@ -96,6 +101,7 @@ def scene_config(zone_config: ZoneConfig, light_config: LightConfig) -> SceneCon
         zones=zone_config,
         lights=light_config,
         roads=RoadsConfig(export=_style, preview=_style),
+        atmosphere=atmosphere_config,
     )
 
 

@@ -206,7 +206,7 @@ def _place_sign_lights(
         if _get_edge_length(start, end) <= min_length_m:
             continue
         position = _get_edge_midpoint(start, end)
-        lights.append(create_sign_light(position, {}, rng))
+        lights.append(create_sign_light(position, config.commercial, rng))
     return lights
 
 
@@ -268,7 +268,7 @@ def _place_lights_along_edge(
     dist = spacing / 2.0
     while dist < length:
         position = np.array([start[0] + dx * dist, start[1] + dy * dist, 0.0])
-        lights.append(create_storefront_light(position, {}, rng))
+        lights.append(create_storefront_light(position, config.commercial, rng))
         dist += spacing
     return lights
 
@@ -299,7 +299,7 @@ def _place_parking_grid(
     lights: t.List[LightSource] = []
     for x, y in grid_points:
         position = np.array([x, y, 0.0])
-        lights.append(create_parking_lot_light(position, {}, rng))
+        lights.append(create_parking_lot_light(position, config.commercial, rng))
     return lights
 
 

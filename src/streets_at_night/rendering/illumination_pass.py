@@ -1,8 +1,10 @@
 """Illumination render pass — soft ground-light pools for export.
 
-Uses a project-and-splat approach: each light is projected to screen space,
-a soft circle is drawn on an illumination layer at the projected position,
-the layer is gaussian-blurred, then additively composited onto the main image.
+Uses a project-and-splat approach: each light's ground point (directly below
+the light at z=0) is projected to screen space, a soft circle is drawn on an
+illumination layer at the projected position with a radius derived from the
+projected ground-circle edge, the layer is gaussian-blurred, then additively
+composited onto the main image.
 
 This avoids the per-pixel ground-plane raycast that would be prohibitively
 slow in Python and produces perceptually correct pooled lighting.
@@ -17,7 +19,7 @@ from PIL import Image, ImageDraw, ImageFilter
 from ..camera.camera import Camera
 from ..camera.projection import project_points
 from .backend import RenderBackend
-from .render_utils import camera_distance, compute_focal_length, extract_positions
+from .render_utils import camera_distance
 
 if t.TYPE_CHECKING:
     from ..models.light_source import LightSource
@@ -28,18 +30,11 @@ if t.TYPE_CHECKING:
 # Larger values produce wider, softer light pools.
 _ILLUMINATION_BLUR_RADIUS: int = 20
 
-# Scale factor for the screen-space illumination radius relative to glow.
-# Illumination pools are significantly wider than the glow halo.
-_ILLUMINATION_RADIUS_SCALE: float = 4.0
-
 # Minimum illumination radius in screen pixels before skipping a light.
 _MIN_ILLUMINATION_RADIUS_PX: float = 3.0
 
 # Number of concentric rings used to build each illumination splat.
 _SPLAT_RING_COUNT: int = 6
-
-# Maximum alpha at the center of each illumination splat.
-_SPLAT_MAX_ALPHA: int = 60
 
 
 def render_illumination(
@@ -49,15 +44,27 @@ def render_illumination(
 ) -> None:
     """Render ground illumination from nearby light sources (export only).
 
-    Projects each visible light to screen space, draws a soft filled circle
-    proportional to its illumination radius on a separate RGBA layer, gaussian-
-    blurs the layer, then additively composites it onto the main image.
+    Projects each light's ground point (z=0 directly below the light) and a
+    sample point on the east edge of the ground circle to screen space.
+    Draws a soft filled circle on an illumination layer, gaussian-blurs the
+    layer, then additively composites it onto the main image.
+
+    The pool center is the projected ground point, and the radius in pixels
+    comes from the projected distance to the edge point — perspective
+    foreshortening is handled automatically by the projection.
+
+    The maximum splat alpha is derived from scene.config.atmosphere.illumination_brightness
+    scaled by each light's illumination_intensity and brightness.
+
+    The computed radius is clamped to at least scene.config.atmosphere.illumination_min_radius
+    so distant lights whose projected circle would shrink below the gaussian blur radius still
+    produce a visible pool.
 
     This pass should run after the ground and road passes but before the light
     core/glow pass so that illumination sits beneath individual light sources.
 
     Args:
-        scene (Scene): The world scene containing all light sources.
+        scene (Scene): The world scene containing all light sources and config.
         camera (Camera): The active camera.
         backend (RenderBackend): Target render surface (must support
             create_layer and composite_additive).
@@ -65,25 +72,33 @@ def render_illumination(
     if not scene.lights:
         return
 
+    illumination_brightness = scene.config.atmosphere.illumination_brightness
+    min_radius = scene.config.atmosphere.illumination_min_radius
     view_matrix = camera.get_view_matrix()
     proj_matrix = camera.get_projection_matrix()
     width, height = backend.get_surface_size()
 
-    positions = extract_positions(scene.lights)
-    screen_coords, valid_mask = project_points(
-        positions, view_matrix, proj_matrix, (width, height)
+    ground_centers = _extract_ground_positions(scene.lights)
+    ground_edges = _extract_ground_edge_positions(scene.lights)
+
+    center_screen, center_valid = project_points(
+        ground_centers, view_matrix, proj_matrix, (width, height)
+    )
+    edge_screen, _ = project_points(
+        ground_edges, view_matrix, proj_matrix, (width, height)
     )
 
-    focal_length = compute_focal_length(camera, width)
     illumination_layer = backend.create_layer()
     draw_ctx = _make_draw_context(illumination_layer)
 
     for i, light in enumerate(scene.lights):
-        if not valid_mask[i]:
+        if not center_valid[i]:
             continue
-        center = (float(screen_coords[i, 0]), float(screen_coords[i, 1]))
+        center = (float(center_screen[i, 0]), float(center_screen[i, 1]))
+        radius_px = _compute_ground_radius_px(center_screen[i], edge_screen[i])
+        radius_px = max(radius_px, min_radius)
         distance = camera_distance(light.position, camera.position)
-        _draw_illumination_splat(draw_ctx, center, light, distance, focal_length)
+        _draw_illumination_splat(draw_ctx, center, light, distance, radius_px, illumination_brightness)
 
     blurred = _blur_layer(illumination_layer)
     backend.composite_additive(blurred)
@@ -92,6 +107,65 @@ def render_illumination(
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
+
+
+def _extract_ground_positions(lights: t.List["LightSource"]) -> np.ndarray:
+    """Build a (N, 3) array of ground positions directly below each light.
+
+    The ground position for each light is its (x, y) position with z=0.
+
+    Args:
+        lights (list[LightSource]): Light sources to extract positions from.
+
+    Returns:
+        np.ndarray: (N, 3) float array with z=0 for each light.
+    """
+    return np.array(
+        [[light.position[0], light.position[1], 0.0] for light in lights],
+        dtype=float,
+    )
+
+
+def _extract_ground_edge_positions(lights: t.List["LightSource"]) -> np.ndarray:
+    """Build a (N, 3) array of east-edge points on each light's ground circle.
+
+    The edge point is offset east by illumination_radius from the ground center,
+    at z=0.  Projecting both the center and this edge point lets us derive the
+    pixel radius via perspective projection directly.
+
+    Args:
+        lights (list[LightSource]): Light sources to extract edge positions from.
+
+    Returns:
+        np.ndarray: (N, 3) float array with x offset by illumination_radius, z=0.
+    """
+    return np.array(
+        [
+            [
+                light.position[0] + light.illumination_radius,
+                light.position[1],
+                0.0,
+            ]
+            for light in lights
+        ],
+        dtype=float,
+    )
+
+
+def _compute_ground_radius_px(
+    center: np.ndarray,
+    edge: np.ndarray,
+) -> float:
+    """Compute screen-space radius of a ground circle from its projected points.
+
+    Args:
+        center (np.ndarray): (2,) projected screen coordinate of the ground center.
+        edge (np.ndarray): (2,) projected screen coordinate of the east edge.
+
+    Returns:
+        float: Pixel distance between the projected center and edge.
+    """
+    return float(np.linalg.norm(edge - center))
 
 
 def _make_draw_context(layer: Image.Image) -> ImageDraw.ImageDraw:
@@ -106,26 +180,8 @@ def _make_draw_context(layer: Image.Image) -> ImageDraw.ImageDraw:
     return ImageDraw.Draw(layer)
 
 
-def _illumination_radius_px(
-    light: "LightSource",
-    distance: float,
-    focal_length: float,
-) -> float:
-    """Compute screen-space illumination radius for a single light.
-
-    Args:
-        light (LightSource): The light source.
-        distance (float): Distance from camera to light in meters.
-        focal_length (float): Focal length in pixels.
-
-    Returns:
-        float: Illumination radius in screen pixels.
-    """
-    return light.illumination_radius / distance * focal_length * _ILLUMINATION_RADIUS_SCALE
-
-
 def _splat_ring_alpha(ring_index: int, max_alpha: int) -> int:
-    """Compute alpha for one splat ring using inverse-square falloff.
+    """Compute alpha for one splat ring using Gaussian falloff.
 
     Args:
         ring_index (int): Ring index, 0 = innermost.
@@ -144,26 +200,29 @@ def _draw_illumination_splat(
     center: t.Tuple[float, float],
     light: "LightSource",
     distance: float,
-    focal_length: float,
+    radius_px: float,
+    illumination_brightness: int,
 ) -> None:
     """Draw concentric filled circles to create a soft illumination splat.
 
     Rings are drawn outermost-first so that inner (brighter) rings paint over
-    outer (dimmer) rings. Alpha is scaled by illumination_intensity so that
-    lights with no ground contribution produce no splat.
+    outer (dimmer) rings. Alpha is scaled by illumination_intensity and
+    light.brightness so that lights with no ground contribution produce no splat.
+    The base maximum alpha is controlled by illumination_brightness from
+    the atmosphere config.
 
     Args:
         draw_ctx: PIL ImageDraw context for the illumination RGBA layer.
-        center (tuple[float, float]): Screen-space center (x, y).
-        light (LightSource): The light source providing color and radii.
-        distance (float): Distance from camera to light in meters.
-        focal_length (float): Focal length in pixels.
+        center (tuple[float, float]): Screen-space center (x, y) of the ground pool.
+        light (LightSource): The light source providing color and intensities.
+        distance (float): Distance from camera to light in meters (used for intensity).
+        radius_px (float): Pre-computed radius in screen pixels.
+        illumination_brightness (int): Base max alpha (0–255) from AtmosphereConfig.
     """
-    radius_px = _illumination_radius_px(light, distance, focal_length)
     if radius_px < _MIN_ILLUMINATION_RADIUS_PX:
         return
 
-    max_alpha = int(_SPLAT_MAX_ALPHA * light.illumination_intensity)
+    max_alpha = int(illumination_brightness * light.illumination_intensity * light.brightness)
     if max_alpha <= 0:
         return
 

@@ -7,11 +7,14 @@ from pathlib import Path
 
 from .defaults import DEFAULTS
 from .schema import (
+    AtmosphereConfig,
     BoundsConfig,
     CameraConfig,
     CarConfig,
     ColorPoolConfig,
     CommercialLightConfig,
+    DevmodeCameraConfig,
+    DevmodeConfig,
     FixturePoolEntry,
     FixtureProfileConfig,
     HouseConfig,
@@ -92,6 +95,8 @@ def _build_scene_config(data: dict) -> SceneConfig:
     zones = _build_zone_config(data["zones"])
     lights = _build_light_config(data["lights"])
     roads = _build_roads_config(data["roads"])
+    atmosphere = _build_atmosphere_config(data["atmosphere"])
+    devmode = _build_devmode_config(data["devmode"]) if "devmode" in data else None
     return SceneConfig(
         camera=camera,
         bounds=bounds,
@@ -100,6 +105,8 @@ def _build_scene_config(data: dict) -> SceneConfig:
         zones=zones,
         lights=lights,
         roads=roads,
+        atmosphere=atmosphere,
+        devmode=devmode,
     )
 
 
@@ -290,7 +297,7 @@ def _build_fixture_pool_entries(data: t.List[dict]) -> t.List[FixturePoolEntry]:
     return [
         FixturePoolEntry(
             weight=entry["weight"],
-            profile=_build_fixture_profile_config(entry["profile"]),
+            profile=_build_fixture_profile_config(entry.get("profile")),
         )
         for entry in data
     ]
@@ -348,6 +355,12 @@ def _build_car_config(data: dict) -> CarConfig:
         density_residential_max=data["density_residential_max"],
         density_service_min=data["density_service_min"],
         density_service_max=data["density_service_max"],
+        headlight_glow_radius=data["headlight_glow_radius"],
+        headlight_illumination_radius=data["headlight_illumination_radius"],
+        headlight_illumination_intensity=data["headlight_illumination_intensity"],
+        taillight_glow_radius=data["taillight_glow_radius"],
+        taillight_illumination_radius=data["taillight_illumination_radius"],
+        taillight_illumination_intensity=data["taillight_illumination_intensity"],
     )
 
 
@@ -366,11 +379,13 @@ def _build_commercial_light_config(data: dict) -> CommercialLightConfig:
         sign_brightness_max=data["sign_brightness_max"],
         sign_glow_radius=data["sign_glow_radius"],
         sign_illumination_radius=data["sign_illumination_radius"],
+        sign_illumination_intensity=data["sign_illumination_intensity"],
         parking_colors=_build_color_pool_config(data["parking_colors"]),
         parking_brightness_min=data["parking_brightness_min"],
         parking_brightness_max=data["parking_brightness_max"],
         parking_glow_radius=data["parking_glow_radius"],
         parking_illumination_radius=data["parking_illumination_radius"],
+        parking_illumination_intensity=data["parking_illumination_intensity"],
         parking_grid_spacing_min=data["parking_grid_spacing_min"],
         parking_grid_spacing_max=data["parking_grid_spacing_max"],
         storefront_colors=_build_color_pool_config(data["storefront_colors"]),
@@ -378,6 +393,7 @@ def _build_commercial_light_config(data: dict) -> CommercialLightConfig:
         storefront_brightness_max=data["storefront_brightness_max"],
         storefront_glow_radius=data["storefront_glow_radius"],
         storefront_illumination_radius=data["storefront_illumination_radius"],
+        storefront_illumination_intensity=data["storefront_illumination_intensity"],
         storefront_spacing_min=data["storefront_spacing_min"],
         storefront_spacing_max=data["storefront_spacing_max"],
     )
@@ -446,3 +462,75 @@ def _build_road_style_entry(data: dict) -> RoadStyleEntry:
         RoadStyleEntry: Populated entry.
     """
     return RoadStyleEntry(color=data["color"], width=int(data["width"]))
+
+
+def _build_atmosphere_config(data: dict) -> AtmosphereConfig:
+    """Build an AtmosphereConfig from the atmosphere section of the config.
+
+    Converts haze_color from a '#RRGGBB' hex string to an (R, G, B) int tuple.
+
+    Args:
+        data (dict): Atmosphere section with falloff_distance, haze_color,
+            scatter_distance, max_distance, glow_expansion_enabled,
+            glow_max_alpha, glow_falloff_steepness, min_brightness_threshold,
+            illumination_brightness, and illumination_min_radius fields.
+
+    Returns:
+        AtmosphereConfig: Populated atmosphere config.
+    """
+    haze_hex = data["haze_color"].lstrip("#")
+    haze_color = (
+        int(haze_hex[0:2], 16),
+        int(haze_hex[2:4], 16),
+        int(haze_hex[4:6], 16),
+    )
+    return AtmosphereConfig(
+        falloff_distance=data["falloff_distance"],
+        haze_color=haze_color,
+        scatter_distance=data["scatter_distance"],
+        max_distance=data["max_distance"],
+        glow_expansion_enabled=data["glow_expansion_enabled"],
+        glow_max_alpha=data["glow_max_alpha"],
+        glow_falloff_steepness=data["glow_falloff_steepness"],
+        min_brightness_threshold=data["min_brightness_threshold"],
+        illumination_brightness=data["illumination_brightness"],
+        illumination_min_radius=data["illumination_min_radius"],
+    )
+
+
+def _build_devmode_camera_config(data: dict) -> DevmodeCameraConfig:
+    """Build a DevmodeCameraConfig from the devmode camera section.
+
+    Args:
+        data (dict): Camera section from the devmode config.
+
+    Returns:
+        DevmodeCameraConfig: Populated devmode camera config.
+    """
+    return DevmodeCameraConfig(
+        pos_x=data["pos_x"],
+        pos_y=data["pos_y"],
+        pos_z=data["pos_z"],
+        target_x=data["target_x"],
+        target_y=data["target_y"],
+        target_z=data["target_z"],
+        fov=data["fov"],
+        near=data["near"],
+        far=data["far"],
+    )
+
+
+def _build_devmode_config(data: dict) -> DevmodeConfig:
+    """Build a DevmodeConfig from the devmode section of the config.
+
+    Args:
+        data (dict): Devmode section from the config.
+
+    Returns:
+        DevmodeConfig: Populated devmode config.
+    """
+    return DevmodeConfig(
+        camera=_build_devmode_camera_config(data["camera"]),
+        render_width=data["render_width"],
+        render_height=data["render_height"],
+    )

@@ -1,3 +1,21 @@
+## code_writer — 2026-03-25 12:00
+Updated `Stages/left_off_here.md`: date bumped to 2026-03-25, test count to 505, new "Done This Session" section added with 11 items, old session renamed to "Done Previous Session (2026-03-24)", and two deferred items removed (perspective-correct illumination radius and commercial `illumination_intensity` hardcoding — both resolved this session).
+
+## code_writer — 2026-03-25 00:00
+Added `_make_row_geometry()` helper and `_SEGMENT_STEP = 200.0` constant to `synthetic_scene.py`; replaced all three inline 2-point geometry constructions in `_build_road_segments` with calls to the new helper. This gives the road renderer intermediate vertices within the camera frustum so sub-segments are no longer silently dropped. 505 tests pass.
+
+## code_writer — 2026-03-24 14:30
+Replaced PIL concentric-ring glow (`_draw_glow_halo`, `_ring_alpha`, `_GLOW_RING_COUNT`) in `light_pass.py` with `_accumulate_glow`, a numpy float32 gaussian buffer approach where each light additively writes a gaussian patch into a shared `(H, W, 3)` buffer so overlapping halos accumulate correctly. Removed `create_layer` usage from `render_lights_export`; removed `ImageDraw`/`ImageChops` imports; updated 10 existing tests and added 4 new `_accumulate_glow` unit tests; 459/459 tests pass.
+
+## code_writer — 2026-03-24 12:00
+Added `pygame-gui>=0.6` dependency, `DevmodeCameraConfig`/`DevmodeConfig` config dataclasses with loader/serializer round-trip, and the `devmode/` module: `devmode_camera.py`, `synthetic_scene.py` (10-row ENU test scene with roads, lights, and cars), `label_pass.py` (projection-based row label render pass), and `config_writer.py` (full `SceneConfig` → TOML dict serializer). Six new tests added; 457/457 tests pass, no UI code included.
+
+## code_writer — 2026-03-24 10:00
+Wired `scene.get_zones_in_rect()` into `ground_pass.py`'s `_render_zones`, replacing linear iteration over `scene.dark_zones/commercial_zones/residential_zones`; added `_camera_ground_rect` helper and updated helper signatures to accept pre-filtered lists and explicit `scene_config`. Updated existing tests and added two new tests (`test_render_zones_queries_spatial_index_with_camera_bounds`, `test_render_zones_uses_filtered_zone_lists`); 444/444 tests pass.
+
+## code_writer — 2026-03-24 00:00
+Added Sutherland-Hodgman polygon near-plane clipping to `projection.py` (`clip_polygon_to_near_plane`, `_clip_polygon_edges`, `_lerp_to_near_plane`) and wired it into `ground_pass.py`'s `_project_polygon` with `near` propagated through the full render-zone call chain. Also fixed a pre-existing `atmosphere_config` missing-arg breakage in the `test_ground_pass.py` scene_config fixture; 442/442 tests pass.
+
 ## code_writer — 2026-03-23 19:35
 Wrote `left_off_here.md` verbatim as specified — session summary covering Stage 4 and Stage 5 completion, current state, known issues, design decisions, file inventory, and next-session recommendations.
 
@@ -140,3 +158,92 @@ Fixed 6 Stage 5 issues: `create_fixture_pool` in `streetlight.py` now reads from
 ## doc_writer — 2026-03-23 00:00
 Updated README.md for Stage 4 and 5 completion: added C key to controls table, updated render/preview descriptions to mention lights and zone ground texture, added a `[lights.streetlights]` and `[lights.cars]` config section (noting commercial/house light colors and car color pools are not yet TOML-tunable), and marked Stages 4 and 5 complete in the status table. All 400 tests pass.
 
+
+## code_writer — 2026-03-24 00:00
+Added `--no-lights` CLI flag to `render` and `preview` subcommands in `main.py`, with `no_lights: bool = False` parameter on `get_export_passes()` and `get_preview_passes()` in `render_pipeline.py` that omits illumination/light passes when set. Added 5 new tests to `test_render_pipeline_stage5.py`; note that the preview path uses `get_preview_passes_warp()` so the flag has no effect there until a non-warp preview path is introduced.
+
+
+## code_writer — 2026-03-24 00:00
+Implemented config passthrough for commercial, house, and car light factories: updated 7 source files to replace `{}` with typed config objects (`CommercialLightConfig`, `HouseLightConfig`, `CarConfig`), removed 5 dead module-level color constants, and updated 5 test files (adding 8 new config-verification tests). 427/427 tests pass; house light glow_radius changed from hardcoded 5.0 to config value 6.0.
+
+
+## code_writer — 2026-03-24 10:45
+Implemented Stage 6 atmospheric perspective: added `AtmosphereConfig` dataclass and defaults, `_build_atmosphere_config` loader, and three new private helpers in `light_pass.py` (`_apply_brightness_falloff`, `_apply_haze_color`, `_apply_glow_expansion`). Updated `render_lights_export` to apply all three effects per light; `render_lights_preview` applies brightness falloff only. Updated all SceneConfig fixtures across 4 test files to pass the new `atmosphere` field; added 8 new tests for atmospheric helpers and 2 for config loader; 441 tests pass, 1 pre-existing failure unrelated to this work.
+
+## debugger — 2026-03-24 00:00
+Investigated reported failure in `tests/test_ground_pass.py::test_render_ground_with_zone_straddling_near_plane_draws_polygon` — found no failure present. All 442 tests pass; the parallel-agent merge conflict was already resolved before this session ran.
+
+## doc_writer — 2026-03-24 00:00
+Rewrote `left_off_here.md` to reflect the full 2026-03-24 session: config passthrough for commercial/house/car lights, `--no-lights` CLI flag, polygon near-plane clipping, and Stage 6 atmospheric perspective. Test count updated to 442; Stage 7 flagged as next.
+
+## doc_writer — 2026-03-24 00:00
+Created default_scene_config.toml with all configurable values set to their defaults from defaults.py, verified it round-trips cleanly through load_config(). The no-light fixture pool entries (residential weight=0.25, service weight=0.7) cannot be expressed in TOML due to null not being a valid TOML value — omitted with explanatory comments; those entries are applied from defaults.py when the user does not override the pool.
+
+
+## code_writer — 2026-03-24 00:00
+Fixed `_build_fixture_pool_entries` in `loader.py` to use `entry.get("profile")` so TOML pool entries can omit the profile key for no-lights segments; added matching no-lights entries to `default_scene_config.toml` for the `residential` and `service` pools, and added one new test in `test_config_lights.py`. 445 tests pass.
+## doc_writer — 2026-03-24 00:00
+Added "Light Rendering: glow_radius vs illumination_radius" section to README.md, inserted between the [lights.streetlights] config block and [lights.cars]. Section covers how each pass works, that illumination does not distance-expand while glow does, and includes a quick tuning table referencing scatter_distance in [atmosphere] (which has no README section yet — worth adding if the atmosphere config gets documented).
+
+
+## code_writer — 2026-03-24 00:00
+Fixed six light rendering bugs across `light_pass.py`, `backend.py`, `pillow_backend.py`, `pygame_backend.py`, `config/schema.py`, `config/defaults.py`, `config/loader.py`, and `default_scene_config.toml`: glow alpha now scales with distance, falloff steepness is configurable, glow expansion is TOML-gated, dim lights are culled by threshold, lights draw far-to-near, and sub-pixel cores use `draw_point` instead of `draw_circle`. Added 6 new tests and updated 2 pre-existing tests; 451/451 pass.
+
+
+## code_writer — 2026-03-24 00:00
+Implemented devmode Phase 2 UI layer: created `slider_registry.py`, `config_bridge.py`, `panel_sections.py`, `control_panel.py`, and `cmd_devmode.py`, and added the `devmode` subcommand to `main.py`. Used a kill-and-rebuild section pattern; `_find_first_profile_index` guards against null-profile fixture pool entries that would crash `get_nested`.
+
+## debugger — 2026-03-24 00:00
+Root cause: `UIButton.get_text()` does not exist in pygame_gui; `_apply_bool_buttons` (config_bridge.py) and `_toggle_bool_button` (cmd_devmode.py) both called it to read boolean state from button text. Fixed by adding `bool_states: Dict[UIButton, bool]` to `SliderRegistry` as authoritative state, updating `register_bool` to accept an initial value, and removing all `get_text()` calls in favour of reading/writing `bool_states` directly. 457/457 tests pass.
+
+## debugger — 2026-03-24 00:00
+Fixed two devmode UI bugs: (1) row UILabels in panel_sections.py were never tracked in SliderRegistry so they persisted across section switches — fixed by adding extra_widgets list; (2) replaced read-only value UILabel beside each slider with an editable UITextEntryLine (value_entries + entry_to_slider dicts) and wired UI_TEXT_ENTRY_FINISHED in cmd_devmode.py to parse, clamp, and push typed values back to the slider. All 457 tests pass.
+
+## debugger — 2026-03-24 00:00
+Root causes: (1) Collector slider targeted only pool index 0 but the seeded RNG picked a different entry; fixed by adding `extra_config_paths` to `SliderDescriptor` so `_apply_sliders` writes to all pool entries. (2) Residential row received a no-lights pool pick so no streetlights existed to show the slider effect; fixed by adding `_force_lights_on_dark_segments` in `synthetic_scene.py`. Added 33 new tests across `test_devmode_panel_sections.py`, `test_devmode_config_bridge.py`, and `test_devmode_synthetic_scene.py`; 492/492 pass.
+
+
+## doc_writer — 2026-03-24 00:00
+Rewrote Stages/left_off_here.md from scratch as a clean handoff document. Reflects current state: Stages 1–5 complete, Stage 6 partially done (atmospheric perspective done, horizon glow/haze/compositor/export features not started), Stage 7 not started, 492 passing tests, devmode tool added this session.
+
+
+## code_writer — 2026-03-25 00:00
+Refactored `illumination_pass.py` to project ground-plane points (z=0) instead of elevated light positions, computing pixel radius from dual-batch projection of ground center and east-edge point; removed `_ILLUMINATION_RADIUS_SCALE` and `_illumination_radius_px`, and dropped the `compute_focal_length` import. All 492 tests pass.
+
+## code_writer — 2026-03-25 01:00
+Added four `RoadType.RESIDENTIAL` road segments (width=20.0m, `fixture_profile=None`) for rows 6-9 in `synthetic_scene.py._build_road_segments`, giving the illumination pass a visible road surface under each direct light row; updated `place_cars` slice from `road_segments` to `road_segments[:6]` to exclude the new rows. Updated the row-count assertion test (6→10) and added 4 new tests; 496/496 tests pass.
+
+## code_writer — 2026-03-25 00:00
+Replaced the three hardcoded layout constants in `panel_sections.py` with a `_compute_row_widths(container)` helper that allocates widths proportionally (48% label / 33% slider / remainder for value entry) from the container's actual pixel width minus a 20px scrollbar gutter. All four widget-building paths now call this helper, including the "no fixture profiles" fallback label in `build_streetlight_section`. 496/496 tests pass.
+
+## code_writer — 2026-03-25 10:00
+Added `sign_illumination_intensity`, `parking_illumination_intensity`, and `storefront_illumination_intensity` fields to `CommercialLightConfig` and threaded them through schema, defaults, loader, config_writer, factory functions in `models/commercial.py`, and the devmode panel slider list. Updated all three TOML files and added three new tests in `test_commercial.py`; 499/499 tests pass.
+
+## code_writer — 2026-03-25 00:00
+Fixed bug in `src/streets_at_night/devmode/cmd_devmode.py` where car lights were invisible in devmode because `_render_scene` never called `resolve_facing()` on car pairs before rendering. Added the loop at the top of `_render_scene` to match the pattern already used in `main.py`. All 499 tests pass.
+
+## code_writer — 2026-03-25 00:00
+Added 6 configurable fields (`headlight/taillight_glow_radius`, `_illumination_radius`, `_illumination_intensity`) to `CarConfig` in `schema.py`, `defaults.py`, `loader.py`, `config_writer.py`, `car.py`, `panel_sections.py`, and all three TOML files. Replaced hardcoded literals in `_apply_headlight_properties` and `_apply_taillight_properties`; added 6 new tests verifying each property is driven by config using non-default values — 505 tests pass.
+
+
+## code_writer — 2026-03-25 00:00
+Replaced `get_export_passes` in `cmd_devmode.py`'s `_render_scene` with a manual pass list using `render_roads_from_scene` (preview/bright colors) instead of `render_roads_export`, while keeping `render_illumination` and `render_lights_export`; removed the now-unused `get_export_passes` import. 505 tests pass.
+
+
+## code_writer — 2026-03-25 00:00
+Added `render_roads_devmode` to `road_pass.py` — same preview colors as `render_roads_from_scene` but with all widths multiplied by 8 (min 8px) so roads are visible at devmode camera distances. Updated `cmd_devmode.py` to use `render_roads_devmode` in place of `render_roads_from_scene`; 505/505 tests pass.
+
+## code_writer — 2026-03-25 00:15
+Added scroll-wheel zoom to the devmode event loop in `cmd_devmode.py`: `_handle_scroll_zoom` dollies the camera along its forward vector with step size proportional to camera-to-target distance; wired to `pygame.MOUSEWHEEL` before `manager.process_events` so pygame_gui does not consume the event; 505/505 tests pass.
+
+## code_writer — 2026-03-25 00:00
+Reverted devmode road rendering to `render_roads_export` in `cmd_devmode.py` and removed the now-unused `render_roads_devmode` function from `road_pass.py`. All 505 tests pass.
+
+## code_writer — 2026-03-25 10:00
+Added `illumination_brightness: int` (default 60) to `AtmosphereConfig` and threaded it through `defaults.py`, `loader.py`, `config_writer.py`, all three TOML files, and the devmode panel slider; removed the hardcoded `_SPLAT_MAX_ALPHA = 60` constant from `illumination_pass.py` and updated the alpha formula to `int(illumination_brightness * light.illumination_intensity * light.brightness)` so per-light brightness now participates. Updated 4 `AtmosphereConfig` constructors in `test_light_pass.py`; 505 tests pass.
+
+## code_writer — 2026-03-25 00:00
+Added missing `illumination_intensity` slider to `build_streetlight_section` in `panel_sections.py` (with `extra_config_paths` for multi-profile sync), and widened the max_val of all `illumination_intensity`-family sliders from `1.0` to `5.0` across cars, house lights, and commercial sections to allow over-brightening during tuning. 505 tests pass.
+
+## code_writer — 2026-03-25 10:15
+Added `illumination_min_radius: float = 15.0` to `AtmosphereConfig` and wired it through `defaults.py`, `loader.py`, `config_writer.py`, `panel_sections.py`, and all three TOML files; in `illumination_pass.py`, the projected splat radius is clamped to this minimum before drawing so distant lights survive the 20px gaussian blur. 505 tests pass.

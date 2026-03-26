@@ -75,6 +75,12 @@ def main() -> None:
         default=Path("cache"),
         help="Directory for OSM data cache files",
     )
+    preview_parser.add_argument(
+        "--no-lights",
+        action="store_true",
+        default=False,
+        help="Disable light rendering (faster preview)",
+    )
 
     render_parser = subparsers.add_parser(
         "render", help="Render a perspective road image"
@@ -97,6 +103,17 @@ def main() -> None:
         default=Path("cache"),
         help="Directory for OSM data cache files",
     )
+    render_parser.add_argument(
+        "--no-lights",
+        action="store_true",
+        default=False,
+        help="Disable illumination and light passes (faster render, no light effects)",
+    )
+
+    subparsers.add_parser(
+        "devmode",
+        help="Launch interactive devmode parameter tuning tool",
+    )
 
     args = parser.parse_args()
     config = load_config(args.config)
@@ -106,7 +123,10 @@ def main() -> None:
     elif args.command == "preview":
         cmd_preview(args, config)
     elif args.command == "render":
-        cmd_render(config, args.quality, args.output, args.cache_dir)
+        cmd_render(config, args.quality, args.output, args.cache_dir, args.no_lights)
+    elif args.command == "devmode":
+        from .devmode.cmd_devmode import cmd_devmode
+        cmd_devmode(args, config)
 
 
 def cmd_verify(config: SceneConfig, output_path: Path, cache_dir: Path) -> None:
@@ -225,6 +245,7 @@ def cmd_render(
     quality: str,
     output_path: Path,
     cache_dir: Path,
+    no_lights: bool = False,
 ) -> None:
     """Render a perspective road image from the configured camera.
 
@@ -237,6 +258,8 @@ def cmd_render(
         quality (str): Quality preset name (e.g. "low", "medium", "high").
         output_path (Path): Where to save the rendered PNG.
         cache_dir (Path): Directory for OSM data cache files.
+        no_lights (bool): When True, omit illumination and light passes.
+            Defaults to False.
     """
     cache_dir.mkdir(parents=True, exist_ok=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -246,7 +269,7 @@ def cmd_render(
 
     print(f"Rendering at {preset.width}×{preset.height}...")
     backend = PillowBackend(preset.width, preset.height)
-    export_passes = get_export_passes(cache_dir)
+    export_passes = get_export_passes(cache_dir, no_lights=no_lights)
 
     for car_pair in scene.car_pairs:
         car_pair.resolve_facing(scene.camera.get_forward())

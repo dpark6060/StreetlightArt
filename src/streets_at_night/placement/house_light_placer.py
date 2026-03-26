@@ -3,7 +3,7 @@
 import random
 import typing as t
 
-from ..config.schema import LightConfig
+from ..config.schema import HouseLightConfig, LightConfig
 from ..models.light_source import LightSource
 from ..models.zones import ResidentialZone
 
@@ -33,24 +33,27 @@ def collect_house_lights(
     """
     lights: t.List[LightSource] = []
     for zone in residential_zones:
-        lights.extend(_collect_zone_lights(zone, rng))
+        lights.extend(_collect_zone_lights(zone, rng, config.house_lights))
     return lights
 
 
 def _collect_zone_lights(
     zone: ResidentialZone,
     rng: random.Random,
+    house_light_config: HouseLightConfig,
 ) -> t.List[LightSource]:
     """Collect light sources from all houses in a single residential zone.
 
     Args:
         zone (ResidentialZone): The zone to process.
         rng (random.Random): Seeded RNG for house light color selection.
+        house_light_config (HouseLightConfig): House light configuration
+            passed through to each house's get_lights call.
 
     Returns:
         List[LightSource]: All lights from houses in this zone.
     """
     lights: t.List[LightSource] = []
     for house in zone.houses:
-        lights.extend(house.get_lights(rng))
+        lights.extend(house.get_lights(rng, house_light_config))
     return lights

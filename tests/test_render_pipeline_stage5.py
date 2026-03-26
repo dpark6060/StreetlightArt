@@ -143,6 +143,74 @@ def test_get_export_passes_roads_before_illumination():
 
 
 # ---------------------------------------------------------------------------
+# get_export_passes — no_lights flag
+# ---------------------------------------------------------------------------
+
+
+def test_get_export_passes_default_includes_illumination_and_lights():
+    # Act
+    passes = get_export_passes()
+
+    # Assert — default path must include both light-related passes
+    from streets_at_night.rendering.illumination_pass import render_illumination
+    from streets_at_night.rendering.light_pass import render_lights_export
+
+    assert render_illumination in passes
+    assert render_lights_export in passes
+
+
+def test_get_export_passes_no_lights_omits_illumination_and_light_passes():
+    # Act
+    passes = get_export_passes(no_lights=True)
+
+    # Assert — both light-related passes must be absent
+    from streets_at_night.rendering.illumination_pass import render_illumination
+    from streets_at_night.rendering.light_pass import render_lights_export
+
+    assert render_illumination not in passes
+    assert render_lights_export not in passes
+
+
+def test_get_export_passes_no_lights_still_includes_ground_and_roads():
+    # Act
+    passes = get_export_passes(no_lights=True)
+
+    # Assert — ground and road passes are always present regardless of flag
+    from streets_at_night.rendering.road_pass import render_roads_export
+
+    assert render_roads_export in passes
+    assert len(passes) == 2
+
+
+# ---------------------------------------------------------------------------
+# get_preview_passes — no_lights flag
+# ---------------------------------------------------------------------------
+
+
+def test_get_preview_passes_no_lights_omits_light_pass():
+    # Act
+    passes = get_preview_passes(no_lights=True)
+
+    # Assert — light preview pass must be absent
+    from streets_at_night.rendering.light_pass import render_lights_preview
+
+    assert render_lights_preview not in passes
+
+
+def test_get_preview_passes_no_lights_still_includes_ground_and_roads():
+    # Act
+    passes = get_preview_passes(no_lights=True)
+
+    # Assert — ground and road passes are always present regardless of flag
+    from streets_at_night.rendering.ground_pass import render_ground
+    from streets_at_night.rendering.road_pass import render_roads_from_scene
+
+    assert render_ground in passes
+    assert render_roads_from_scene in passes
+    assert len(passes) == 2
+
+
+# ---------------------------------------------------------------------------
 # render_scene_frame — pass invocation and stat collection
 # ---------------------------------------------------------------------------
 

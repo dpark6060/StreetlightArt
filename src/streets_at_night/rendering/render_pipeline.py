@@ -28,20 +28,27 @@ if t.TYPE_CHECKING:
 RenderPass = t.Callable[["Scene", Camera, RenderBackend], t.Any]
 
 
-def get_preview_passes() -> t.List[RenderPass]:
+def get_preview_passes(no_lights: bool = False) -> t.List[RenderPass]:
     """Return the ordered list of render passes for the pygame preview.
 
-    Includes ground fill, road projection, and light dot rendering. Light
-    dots are colored circles — no glow or illumination is applied in preview
-    since those effects are too costly for real-time rendering.
+    Includes ground fill, road projection, and optionally light dot rendering.
+    Light dots are colored circles — no glow or illumination is applied in
+    preview since those effects are too costly for real-time rendering.
+
+    Args:
+        no_lights (bool): When True, omit the light preview pass. Defaults to False.
 
     Returns:
         list[RenderPass]: Passes to run each preview frame, in order.
     """
     from .ground_pass import render_ground
-    from .light_pass import render_lights_preview
     from .road_pass import render_roads_from_scene
-    return [render_ground, render_roads_from_scene, render_lights_preview]
+
+    passes: t.List[RenderPass] = [render_ground, render_roads_from_scene]
+    if not no_lights:
+        from .light_pass import render_lights_preview
+        passes.append(render_lights_preview)
+    return passes
 
 
 def get_preview_passes_warp(
@@ -71,7 +78,10 @@ def get_preview_passes_warp(
     return [_warp_pass]
 
 
-def get_export_passes(cache_dir: Path = Path("cache")) -> t.List[RenderPass]:
+def get_export_passes(
+    cache_dir: Path = Path("cache"),
+    no_lights: bool = False,
+) -> t.List[RenderPass]:
     """Return the ordered list of render passes for Pillow export.
 
     Uses tiled ground rendering for per-house color variation. Runs the full
@@ -83,17 +93,19 @@ def get_export_passes(cache_dir: Path = Path("cache")) -> t.List[RenderPass]:
         1. Ground (tiled export) — sky, horizon, and textured ground.
         2. Roads — per-segment 3D projection with night-palette colors.
         3. Illumination — soft light-pool splats, gaussian-blurred, additive.
+           (omitted when no_lights=True)
         4. Lights — bright cores and gaussian glow halos, additive.
+           (omitted when no_lights=True)
 
     Args:
         cache_dir (Path): Directory for tile and OSM cache files.
+        no_lights (bool): When True, omit illumination and light passes.
+            Defaults to False.
 
     Returns:
         list[RenderPass]: Passes to run for still image export, in order.
     """
     from .ground_pass import render_ground_export
-    from .illumination_pass import render_illumination
-    from .light_pass import render_lights_export
     from .road_pass import render_roads_export
 
     def _ground_export_pass(
@@ -101,7 +113,12 @@ def get_export_passes(cache_dir: Path = Path("cache")) -> t.List[RenderPass]:
     ) -> None:
         render_ground_export(scene, camera, backend, cache_dir)
 
-    return [_ground_export_pass, render_roads_export, render_illumination, render_lights_export]
+    passes: t.List[RenderPass] = [_ground_export_pass, render_roads_export]
+    if not no_lights:
+        from .illumination_pass import render_illumination
+        from .light_pass import render_lights_export
+        passes.extend([render_illumination, render_lights_export])
+    return passes
 
 
 def render_scene_frame(

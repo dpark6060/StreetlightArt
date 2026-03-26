@@ -77,6 +77,22 @@ class RenderBackend(ABC):
         """
 
     @abstractmethod
+    def draw_point(
+        self,
+        center: t.Tuple[float, float],
+        color: t.Tuple[int, int, int],
+    ) -> None:
+        """Draw a single pixel at the given screen coordinate.
+
+        Used for lights whose projected core radius is too small for draw_circle
+        to produce a correct result without aliasing artifacts.
+
+        Args:
+            center (tuple[float, float]): Screen coordinate (x, y).
+            color (tuple[int, int, int]): RGB fill color.
+        """
+
+    @abstractmethod
     def get_image(self) -> Image.Image:
         """Return the current surface state as a PIL Image.
 

@@ -147,7 +147,7 @@ def _create_car_at_point(
     return CarLightPair(
         position=position,
         travel_bearing=travel_bearing,
-        config={},
+        config=car_config,
         rng=rng,
     )
 

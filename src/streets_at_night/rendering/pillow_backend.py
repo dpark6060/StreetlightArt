@@ -89,6 +89,19 @@ class PillowBackend(RenderBackend):
         bbox = [cx - radius, cy - radius, cx + radius, cy + radius]
         self._draw.ellipse(bbox, fill=color)
 
+    def draw_point(
+        self,
+        center: t.Tuple[float, float],
+        color: t.Tuple[int, int, int],
+    ) -> None:
+        """Draw a single pixel using ImageDraw.point.
+
+        Args:
+            center (tuple[float, float]): Screen coordinate (x, y).
+            color (tuple[int, int, int]): RGB fill color.
+        """
+        self._draw.point([(int(center[0]), int(center[1]))], fill=color)
+
     def draw_line_rgba(
         self,
         p1: t.Tuple[float, float],

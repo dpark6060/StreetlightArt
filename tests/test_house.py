@@ -6,7 +6,7 @@ import random
 import pytest
 from shapely.geometry import box
 
-from streets_at_night.config.schema import ColorPoolConfig, HouseConfig
+from streets_at_night.config.schema import ColorPoolConfig, HouseConfig, HouseLightConfig
 from streets_at_night.models.house import House
 
 
@@ -36,6 +36,24 @@ def house_config() -> HouseConfig:
         lot_width=15.0,
         lot_depth=25.0,
         setback=10.0,
+    )
+
+
+@pytest.fixture
+def house_light_config() -> HouseLightConfig:
+    """Return a HouseLightConfig built from DEFAULTS values."""
+    return HouseLightConfig(
+        colors=ColorPoolConfig(colors=[
+            ("#FFE4A0", 0.45),
+            ("#FFF0D0", 0.25),
+            ("#FFCC80", 0.15),
+            ("#D0E0FF", 0.15),
+        ]),
+        brightness_min=0.3,
+        brightness_max=0.6,
+        glow_radius=6.0,
+        illumination_radius=8.0,
+        illumination_intensity=0.35,
     )
 
 
@@ -112,20 +130,20 @@ def test_footprint_stored(house, footprint):
 # get_lights
 # ---------------------------------------------------------------------------
 
-def test_get_lights_returns_light_sources_for_each_position(house):
+def test_get_lights_returns_light_sources_for_each_position(house, house_light_config):
     # Arrange
     from streets_at_night.models.light_source import LightSource
     rng = random.Random(1)
 
     # Act
-    result = house.get_lights(rng)
+    result = house.get_lights(rng, house_light_config)
 
     # Assert
     assert len(result) == house.num_lights
     assert all(isinstance(light, LightSource) for light in result)
 
 
-def test_get_lights_returns_empty_list_when_no_lights(house_config, footprint):
+def test_get_lights_returns_empty_list_when_no_lights(house_config, footprint, house_light_config):
     # Arrange — force num_lights to 0 by using a config with max_lights=0
     config = HouseConfig(
         exterior_colors=house_config.exterior_colors,
@@ -143,7 +161,7 @@ def test_get_lights_returns_empty_list_when_no_lights(house_config, footprint):
     no_light_house = House(footprint=footprint, config=config, rng=rng)
 
     # Act
-    result = no_light_house.get_lights(rng)
+    result = no_light_house.get_lights(rng, house_light_config)
 
     # Assert
     assert result == []

@@ -109,45 +109,45 @@ def empty_residential_zone() -> ResidentialZone:
 # ---------------------------------------------------------------------------
 
 
-def test_collect_zone_lights_returns_list(residential_zone_with_lights, rng):
+def test_collect_zone_lights_returns_list(residential_zone_with_lights, rng, light_config):
     # Act
-    lights = _collect_zone_lights(residential_zone_with_lights, rng)
+    lights = _collect_zone_lights(residential_zone_with_lights, rng, light_config.house_lights)
 
     # Assert
     assert isinstance(lights, list)
 
 
-def test_collect_zone_lights_returns_light_sources(residential_zone_with_lights, rng):
+def test_collect_zone_lights_returns_light_sources(residential_zone_with_lights, rng, light_config):
     # Act
-    lights = _collect_zone_lights(residential_zone_with_lights, rng)
+    lights = _collect_zone_lights(residential_zone_with_lights, rng, light_config.house_lights)
 
     # Assert
     assert all(isinstance(l, LightSource) for l in lights)
 
 
 def test_collect_zone_lights_count_matches_house_lights(
-    residential_zone_with_lights, house_with_lights, rng
+    residential_zone_with_lights, house_with_lights, rng, light_config
 ):
     # Arrange — house has exactly 2 lights
     expected_count = house_with_lights.num_lights
 
     # Act
-    lights = _collect_zone_lights(residential_zone_with_lights, rng)
+    lights = _collect_zone_lights(residential_zone_with_lights, rng, light_config.house_lights)
 
     # Assert
     assert len(lights) == expected_count
 
 
-def test_collect_zone_lights_empty_zone_returns_empty(empty_residential_zone, rng):
+def test_collect_zone_lights_empty_zone_returns_empty(empty_residential_zone, rng, light_config):
     # Act
-    lights = _collect_zone_lights(empty_residential_zone, rng)
+    lights = _collect_zone_lights(empty_residential_zone, rng, light_config.house_lights)
 
     # Assert
     assert lights == []
 
 
 def test_collect_zone_lights_house_with_no_lights_contributes_nothing(
-    house_no_lights, rng
+    house_no_lights, rng, light_config
 ):
     # Arrange
     zone = ResidentialZone(
@@ -156,13 +156,13 @@ def test_collect_zone_lights_house_with_no_lights_contributes_nothing(
     )
 
     # Act
-    lights = _collect_zone_lights(zone, rng)
+    lights = _collect_zone_lights(zone, rng, light_config.house_lights)
 
     # Assert
     assert lights == []
 
 
-def test_collect_zone_lights_calls_get_lights_on_each_house(rng):
+def test_collect_zone_lights_calls_get_lights_on_each_house(rng, light_config):
     # Arrange
     mock_house = mock.MagicMock()
     mock_house.get_lights.return_value = []
@@ -172,14 +172,14 @@ def test_collect_zone_lights_calls_get_lights_on_each_house(rng):
     )
 
     # Act
-    _collect_zone_lights(zone, rng)
+    _collect_zone_lights(zone, rng, light_config.house_lights)
 
     # Assert
-    mock_house.get_lights.assert_called_once_with(rng)
+    mock_house.get_lights.assert_called_once_with(rng, light_config.house_lights)
 
 
 def test_collect_zone_lights_accumulates_from_multiple_houses(
-    house_with_lights, rng
+    house_with_lights, rng, light_config
 ):
     # Arrange — two houses, each with 2 lights
     zone = ResidentialZone(
@@ -189,7 +189,7 @@ def test_collect_zone_lights_accumulates_from_multiple_houses(
     expected_count = house_with_lights.num_lights * 2
 
     # Act
-    lights = _collect_zone_lights(zone, rng)
+    lights = _collect_zone_lights(zone, rng, light_config.house_lights)
 
     # Assert
     assert len(lights) == expected_count

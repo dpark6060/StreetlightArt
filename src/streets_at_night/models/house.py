@@ -7,7 +7,7 @@ import numpy as np
 from shapely.geometry import Polygon
 
 from .color_pool import ColorPool
-from ..config.schema import HouseConfig
+from ..config.schema import HouseConfig, HouseLightConfig
 from ..utils.colors import hex_to_rgb
 
 
@@ -52,12 +52,18 @@ class House:
     # Public interface
     # ------------------------------------------------------------------
 
-    def get_lights(self, rng: random.Random) -> t.List["LightSource"]:
+    def get_lights(
+        self,
+        rng: random.Random,
+        house_light_config: HouseLightConfig,
+    ) -> t.List["LightSource"]:
         """Create LightSource objects for this house's lights.
 
         Args:
             rng (random.Random): Seeded RNG passed through to the house
                 light factory for reproducible color selection.
+            house_light_config (HouseLightConfig): House light configuration
+                providing color pool, brightness range, and glow parameters.
 
         Returns:
             List[LightSource]: One LightSource per pre-computed light
@@ -69,7 +75,7 @@ class House:
         lights: t.List[LightSource] = []
         for pos in self.light_positions:
             position_3d = np.array([pos[0], pos[1], 0.0])
-            lights.append(create_house_light(position_3d, {}, rng))
+            lights.append(create_house_light(position_3d, house_light_config, rng))
         return lights
 
     # ------------------------------------------------------------------

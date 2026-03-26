@@ -373,6 +373,12 @@ DEFAULTS: dict = {
             "density_residential_max": 400.0,
             "density_service_min": 300.0,
             "density_service_max": 800.0,
+            "headlight_glow_radius": 8.0,
+            "headlight_illumination_radius": 15.0,
+            "headlight_illumination_intensity": 0.6,
+            "taillight_glow_radius": 3.0,
+            "taillight_illumination_radius": 2.0,
+            "taillight_illumination_intensity": 0.1,
         },
         "commercial": {
             # Sign colors: warm white 35%, red 12%, blue 12%, green 10%,
@@ -393,6 +399,7 @@ DEFAULTS: dict = {
             "sign_brightness_max": 0.9,
             "sign_glow_radius": 12.0,
             "sign_illumination_radius": 20.0,
+            "sign_illumination_intensity": 0.7,
             # Parking lot: 70% LED white, 30% sodium
             "parking_colors": {
                 "colors": [
@@ -404,6 +411,7 @@ DEFAULTS: dict = {
             "parking_brightness_max": 0.9,
             "parking_glow_radius": 20.0,
             "parking_illumination_radius": 30.0,
+            "parking_illumination_intensity": 0.8,
             "parking_grid_spacing_min": 20.0,
             "parking_grid_spacing_max": 30.0,
             # Storefront: 60% warm white, 25% warm yellow, 15% fluorescent
@@ -418,6 +426,7 @@ DEFAULTS: dict = {
             "storefront_brightness_max": 0.7,
             "storefront_glow_radius": 8.0,
             "storefront_illumination_radius": 12.0,
+            "storefront_illumination_intensity": 0.5,
             "storefront_spacing_min": 5.0,
             "storefront_spacing_max": 8.0,
         },
@@ -436,6 +445,33 @@ DEFAULTS: dict = {
             "glow_radius": 6.0,
             "illumination_radius": 8.0,
             "illumination_intensity": 0.35,
+        },
+    },
+    "atmosphere": {
+        "falloff_distance": 8000.0,
+        "haze_color": "#3A2010",
+        "scatter_distance": 10000.0,
+        "max_distance": 20000.0,
+        "glow_expansion_enabled": False,
+        "glow_max_alpha": 80,
+        "glow_falloff_steepness": 1.0,
+        "min_brightness_threshold": 0.05,
+        "illumination_brightness": 60,
+        "illumination_min_radius": 15.0,
+    },
+    "devmode": {
+        "render_width": 896,
+        "render_height": 720,
+        "camera": {
+            "pos_x": -500.0,
+            "pos_y": 0.0,
+            "pos_z": 800.0,
+            "target_x": 5000.0,
+            "target_y": 0.0,
+            "target_z": 0.0,
+            "fov": 60.0,
+            "near": 100.0,
+            "far": 60000.0,
         },
     },
 }

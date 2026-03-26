@@ -97,6 +97,19 @@ class PygameBackend(RenderBackend):
             max(1, int(radius)),
         )
 
+    def draw_point(
+        self,
+        center: t.Tuple[float, float],
+        color: t.Tuple[int, int, int],
+    ) -> None:
+        """Draw a single pixel using surface.set_at.
+
+        Args:
+            center (tuple[float, float]): Screen coordinate (x, y).
+            color (tuple[int, int, int]): RGB fill color.
+        """
+        self._surface.set_at((int(center[0]), int(center[1])), color)
+
     def get_image(self) -> Image.Image:
         """Convert the pygame surface to a PIL Image.
 

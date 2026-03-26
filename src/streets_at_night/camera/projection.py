@@ -49,6 +49,37 @@ def project_points(
     return screen_coords, valid_mask
 
 
+def clip_polygon_to_near_plane(
+    vertices: t.List[np.ndarray],
+    view_matrix: np.ndarray,
+    near: float,
+) -> t.List[np.ndarray]:
+    """Clip a convex polygon to the camera near plane using Sutherland-Hodgman.
+
+    Iterates consecutive vertex pairs (A → B) with wrap-around indexing and
+    clips to the plane defined by camera-space z = -near. The "inside" half-
+    space is camera-z < -near (same convention as clip_line_to_near_plane).
+
+    Shapely's exterior.coords typically includes a closing duplicate (last ==
+    first). That duplicate must be stripped by the caller before passing here.
+    The returned vertex list never includes a closing duplicate.
+
+    Args:
+        vertices (list[np.ndarray]): World-space (3,) polygon vertices, no
+            closing duplicate.
+        view_matrix (np.ndarray): (4, 4) world-to-camera view matrix.
+        near (float): Near clip plane distance in meters (positive value).
+
+    Returns:
+        list[np.ndarray]: Clipped world-space vertices, or [] if the result
+        has fewer than 3 vertices (degenerate / fully behind near plane).
+    """
+    output = _clip_polygon_edges(vertices, view_matrix, near)
+    if len(output) < 3:
+        return []
+    return output
+
+
 def clip_line_to_near_plane(
     p1_world: np.ndarray,
     p2_world: np.ndarray,
@@ -254,6 +285,78 @@ def _clip_one_endpoint(
     if p1_in_front:
         return (p1_world, intersection)
     return (intersection, p2_world)
+
+
+def _clip_polygon_edges(
+    vertices: t.List[np.ndarray],
+    view_matrix: np.ndarray,
+    near: float,
+) -> t.List[np.ndarray]:
+    """Run one Sutherland-Hodgman clip pass against the near plane.
+
+    Iterates each edge (A → B) with wrap-around and applies the four standard
+    S-H cases. Inside means camera-space z < -near.
+
+    Args:
+        vertices (list[np.ndarray]): World-space (3,) polygon vertices.
+        view_matrix (np.ndarray): (4, 4) view matrix.
+        near (float): Near plane distance in meters (positive).
+
+    Returns:
+        list[np.ndarray]: Output vertex list after clipping (may be empty or
+        degenerate — caller is responsible for size check).
+    """
+    output: t.List[np.ndarray] = []
+    n = len(vertices)
+
+    for i in range(n):
+        a = vertices[i]
+        b = vertices[(i + 1) % n]
+
+        za = _camera_z(a, view_matrix)
+        zb = _camera_z(b, view_matrix)
+
+        a_inside = za < -near
+        b_inside = zb < -near
+
+        if a_inside and b_inside:
+            output.append(b)
+        elif a_inside and not b_inside:
+            intersection = _lerp_to_near_plane(a, b, za, zb, near)
+            output.append(intersection)
+        elif not a_inside and b_inside:
+            intersection = _lerp_to_near_plane(a, b, za, zb, near)
+            output.append(intersection)
+            output.append(b)
+
+    return output
+
+
+def _lerp_to_near_plane(
+    a: np.ndarray,
+    b: np.ndarray,
+    za: float,
+    zb: float,
+    near: float,
+) -> np.ndarray:
+    """Interpolate in world space to the near-plane crossing between A and B.
+
+    Finds the parameter t such that the camera-space z of the interpolated
+    point equals exactly -near, then returns the corresponding world point.
+
+    Args:
+        a (np.ndarray): (3,) world position of vertex A.
+        b (np.ndarray): (3,) world position of vertex B.
+        za (float): Camera-space z of vertex A.
+        zb (float): Camera-space z of vertex B.
+        near (float): Near plane distance in meters (positive).
+
+    Returns:
+        np.ndarray: (3,) world-space intersection point on the near plane.
+    """
+    near_z = -near
+    t_val = (near_z - za) / (zb - za)
+    return a + t_val * (b - a)
 
 
 def _process_segment(

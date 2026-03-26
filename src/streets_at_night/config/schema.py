@@ -138,6 +138,12 @@ class CarConfig:
     density_residential_max: float
     density_service_min: float
     density_service_max: float
+    headlight_glow_radius: float
+    headlight_illumination_radius: float
+    headlight_illumination_intensity: float
+    taillight_glow_radius: float
+    taillight_illumination_radius: float
+    taillight_illumination_intensity: float
 
 
 @dataclass
@@ -149,11 +155,13 @@ class CommercialLightConfig:
     sign_brightness_max: float
     sign_glow_radius: float
     sign_illumination_radius: float
+    sign_illumination_intensity: float
     parking_colors: ColorPoolConfig
     parking_brightness_min: float
     parking_brightness_max: float
     parking_glow_radius: float
     parking_illumination_radius: float
+    parking_illumination_intensity: float
     parking_grid_spacing_min: float
     parking_grid_spacing_max: float
     storefront_colors: ColorPoolConfig
@@ -161,6 +169,7 @@ class CommercialLightConfig:
     storefront_brightness_max: float
     storefront_glow_radius: float
     storefront_illumination_radius: float
+    storefront_illumination_intensity: float
     storefront_spacing_min: float
     storefront_spacing_max: float
 
@@ -216,11 +225,51 @@ class RoadsConfig:
 
 
 @dataclass
+class AtmosphereConfig:
+    """Atmospheric perspective parameters for distance-based light rendering."""
+
+    falloff_distance: float
+    haze_color: t.Tuple[int, int, int]
+    scatter_distance: float
+    max_distance: float
+    glow_expansion_enabled: bool = False
+    glow_max_alpha: int = 80
+    glow_falloff_steepness: float = 1.0
+    min_brightness_threshold: float = 0.05
+    illumination_brightness: int = 60
+    illumination_min_radius: float = 15.0
+
+
+@dataclass
+class DevmodeCameraConfig:
+    """ENU-space camera configuration for the devmode synthetic scene."""
+
+    pos_x: float
+    pos_y: float
+    pos_z: float
+    target_x: float
+    target_y: float
+    target_z: float
+    fov: float
+    near: float
+    far: float
+
+
+@dataclass
+class DevmodeConfig:
+    """Configuration for the devmode parameter tuning tool."""
+
+    camera: DevmodeCameraConfig
+    render_width: int
+    render_height: int
+
+
+@dataclass
 class SceneConfig:
     """Top-level scene configuration.
 
     Holds all parameters needed to load data, build the scene, and
-    produce a verification plot. Atmosphere config is added in a later stage.
+    produce a verification plot.
     """
 
     camera: CameraConfig
@@ -230,3 +279,5 @@ class SceneConfig:
     zones: ZoneConfig
     lights: LightConfig
     roads: RoadsConfig
+    atmosphere: AtmosphereConfig
+    devmode: t.Optional["DevmodeConfig"] = None

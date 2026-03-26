@@ -7,7 +7,9 @@ import numpy as np
 from PIL import Image
 
 from ..camera.camera import Camera
-from ..camera.projection import project_points
+from ..camera.projection import clip_polygon_to_near_plane, project_points
+from ..config.schema import SceneConfig
+from ..models.zones import CommercialZone, DarkZone, ResidentialZone
 from ..utils.colors import hex_to_rgb
 from .backend import RenderBackend
 
@@ -55,7 +57,7 @@ def render_ground(
     horizon_y = _compute_horizon_y(camera, view_matrix, proj_matrix, width, height)
     _fill_ground(backend, width, height, horizon_y)
     _draw_horizon_glow(backend, width, horizon_y)
-    _render_zones(scene, view_matrix, proj_matrix, width, height, backend)
+    _render_zones(scene, camera, view_matrix, proj_matrix, width, height, backend, camera.near)
 
 
 def render_ground_export(
@@ -270,93 +272,134 @@ def _world_to_tile_pixel(
     return px, py
 
 
+def _camera_ground_rect(camera: Camera) -> t.Tuple[float, float, float, float]:
+    """Compute a conservative bounding rectangle for the camera's ground footprint.
+
+    Uses the camera position and far clip distance to produce a square bounding
+    box that is guaranteed to contain every visible ground point. This is an
+    over-approximation: it is a square of side 2*far centered on the camera XY
+    position, regardless of look direction.
+
+    Args:
+        camera (Camera): The active camera.
+
+    Returns:
+        tuple[float, float, float, float]: (min_x, min_y, max_x, max_y) in ENU meters.
+    """
+    cam_x = camera.position[0]
+    cam_y = camera.position[1]
+    half = camera.far
+    return cam_x - half, cam_y - half, cam_x + half, cam_y + half
+
+
 def _render_zones(
     scene: "Scene",
+    camera: Camera,
     view_matrix: np.ndarray,
     proj_matrix: np.ndarray,
     width: int,
     height: int,
     backend: RenderBackend,
+    near: float,
 ) -> None:
     """Render zone polygons on top of the ground fill in back-to-front order.
 
-    Renders dark zones first (parks, water), then commercial zones, then
+    Queries the spatial index for zones within the camera's visible footprint,
+    then renders dark zones first (parks, water), then commercial zones, then
     residential zones. Each group is drawn on top of the previous, matching
-    the intended layer order.
+    the intended layer order. Near-plane clipping is applied per polygon so
+    that large zones straddling the near plane are not silently discarded.
 
     Args:
-        scene (Scene): Scene with zone lists and config.
+        scene (Scene): Scene with zone lists, spatial index, and config.
+        camera (Camera): The active camera, used to compute the query rect.
         view_matrix (np.ndarray): (4, 4) view matrix from the active camera.
         proj_matrix (np.ndarray): (4, 4) projection matrix from the active camera.
         width (int): Surface width in pixels.
         height (int): Surface height in pixels.
         backend (RenderBackend): Target render surface.
+        near (float): Camera near clip plane distance in meters.
     """
-    _render_dark_zones(scene, view_matrix, proj_matrix, width, height, backend)
-    _render_commercial_zones(scene, view_matrix, proj_matrix, width, height, backend)
-    _render_residential_zones(scene, view_matrix, proj_matrix, width, height, backend)
+    min_x, min_y, max_x, max_y = _camera_ground_rect(camera)
+    residential, commercial, dark = scene.get_zones_in_rect(min_x, min_y, max_x, max_y)
+
+    _render_dark_zones(dark, view_matrix, proj_matrix, width, height, backend, near)
+    _render_commercial_zones(
+        commercial, scene.config, view_matrix, proj_matrix, width, height, backend, near
+    )
+    _render_residential_zones(
+        residential, scene.config, view_matrix, proj_matrix, width, height, backend, near
+    )
 
 
 def _render_dark_zones(
-    scene: "Scene",
+    dark_zones: t.List[DarkZone],
     view_matrix: np.ndarray,
     proj_matrix: np.ndarray,
     width: int,
     height: int,
     backend: RenderBackend,
+    near: float,
 ) -> None:
     """Project and draw dark zone (park, forest, water) polygons.
 
     Uses each zone's own base_color for the fill.
 
     Args:
-        scene (Scene): Scene with dark_zones list.
+        dark_zones (list[DarkZone]): Pre-filtered dark zones to render.
         view_matrix (np.ndarray): (4, 4) view matrix.
         proj_matrix (np.ndarray): (4, 4) projection matrix.
         width (int): Surface width in pixels.
         height (int): Surface height in pixels.
         backend (RenderBackend): Target render surface.
+        near (float): Camera near clip plane distance in meters.
     """
-    for zone in scene.dark_zones:
-        vertices = _project_polygon(zone.boundary, view_matrix, proj_matrix, width, height)
+    for zone in dark_zones:
+        vertices = _project_polygon(zone.boundary, view_matrix, proj_matrix, width, height, near)
         if len(vertices) >= _MIN_POLYGON_VERTICES:
             backend.draw_polygon(vertices, zone.base_color)
 
 
 def _render_commercial_zones(
-    scene: "Scene",
+    commercial_zones: t.List[CommercialZone],
+    scene_config: SceneConfig,
     view_matrix: np.ndarray,
     proj_matrix: np.ndarray,
     width: int,
     height: int,
     backend: RenderBackend,
+    near: float,
 ) -> None:
     """Project and draw commercial zone polygons.
 
     Uses the commercial color from scene config.
 
     Args:
-        scene (Scene): Scene with commercial_zones list and config.
+        commercial_zones (list[CommercialZone]): Pre-filtered commercial zones to render.
+        scene_config (SceneConfig): Scene configuration for zone colors.
         view_matrix (np.ndarray): (4, 4) view matrix.
         proj_matrix (np.ndarray): (4, 4) projection matrix.
         width (int): Surface width in pixels.
         height (int): Surface height in pixels.
         backend (RenderBackend): Target render surface.
+        near (float): Camera near clip plane distance in meters.
     """
-    color = hex_to_rgb(scene.config.zones.colors.commercial)
-    for zone in scene.commercial_zones:
-        vertices = _project_polygon(zone.boundary, view_matrix, proj_matrix, width, height)
+    color = hex_to_rgb(scene_config.zones.colors.commercial)
+    for zone in commercial_zones:
+        vertices = _project_polygon(zone.boundary, view_matrix, proj_matrix, width, height, near)
         if len(vertices) >= _MIN_POLYGON_VERTICES:
             backend.draw_polygon(vertices, color)
 
 
 def _render_residential_zones(
-    scene: "Scene",
+    residential_zones: t.List[ResidentialZone],
+    scene_config: SceneConfig,
     view_matrix: np.ndarray,
     proj_matrix: np.ndarray,
     width: int,
     height: int,
     backend: RenderBackend,
+    near: float,
 ) -> None:
     """Project and draw residential zone polygons using a flat yard color.
 
@@ -365,16 +408,18 @@ def _render_residential_zones(
     (too slow for real-time preview).
 
     Args:
-        scene (Scene): Scene with residential_zones list and config.
+        residential_zones (list[ResidentialZone]): Pre-filtered residential zones to render.
+        scene_config (SceneConfig): Scene configuration for zone colors.
         view_matrix (np.ndarray): (4, 4) view matrix.
         proj_matrix (np.ndarray): (4, 4) projection matrix.
         width (int): Surface width in pixels.
         height (int): Surface height in pixels.
         backend (RenderBackend): Target render surface.
+        near (float): Camera near clip plane distance in meters.
     """
-    color = hex_to_rgb(scene.config.zones.house.yard_base_color)
-    for zone in scene.residential_zones:
-        vertices = _project_polygon(zone.boundary, view_matrix, proj_matrix, width, height)
+    color = hex_to_rgb(scene_config.zones.house.yard_base_color)
+    for zone in residential_zones:
+        vertices = _project_polygon(zone.boundary, view_matrix, proj_matrix, width, height, near)
         if len(vertices) >= _MIN_POLYGON_VERTICES:
             backend.draw_polygon(vertices, color)
 
@@ -385,12 +430,17 @@ def _project_polygon(
     proj_matrix: np.ndarray,
     width: int,
     height: int,
+    near: float,
 ) -> t.List[t.Tuple[float, float]]:
     """Project a Shapely Polygon's exterior coordinates to screen space.
 
-    Extracts (x, y) exterior ring coordinates, appends z=0, and projects
-    all points via project_points. Returns only the screen-space positions
-    for points that fall within the valid projection bounds.
+    Clips the polygon to the camera near plane using Sutherland-Hodgman
+    before projecting, so large zone polygons that straddle the near plane
+    are not silently discarded. After projection, only vertices within the
+    NDC bounds are kept.
+
+    Shapely's exterior.coords includes a closing duplicate (last == first),
+    which is stripped before clipping.
 
     Args:
         boundary: Shapely Polygon with ENU meter coordinates.
@@ -398,12 +448,19 @@ def _project_polygon(
         proj_matrix (np.ndarray): (4, 4) projection matrix.
         width (int): Surface width in pixels.
         height (int): Surface height in pixels.
+        near (float): Camera near clip plane distance in meters.
 
     Returns:
         list[tuple[float, float]]: Screen-space (x, y) tuples for valid points.
     """
     exterior_coords = np.array(boundary.exterior.coords)
-    points_3d = _coords_to_3d(exterior_coords)
+    world_vertices = _coords_to_vertex_list(exterior_coords)
+
+    clipped = clip_polygon_to_near_plane(world_vertices, view_matrix, near)
+    if not clipped:
+        return []
+
+    points_3d = np.stack(clipped, axis=0)
     screen_coords, valid_mask = project_points(
         points_3d, view_matrix, proj_matrix, (width, height)
     )
@@ -414,21 +471,27 @@ def _project_polygon(
     ]
 
 
-def _coords_to_3d(coords: np.ndarray) -> np.ndarray:
-    """Convert 2D ENU exterior ring coordinates to 3D by appending z=0.
+def _coords_to_vertex_list(coords: np.ndarray) -> t.List[np.ndarray]:
+    """Convert exterior ring coordinates to a list of (3,) world-space arrays.
+
+    Strips the closing duplicate that Shapely includes in exterior.coords
+    (last vertex == first vertex). Each returned array has z=0 (ground plane).
 
     Args:
-        coords (np.ndarray): Shape (N, 2) or (N, 3) coordinate array.
-            If already 3D, the z column is overwritten with zeros.
+        coords (np.ndarray): Shape (N, 2) or (N, 3) coordinate array from
+            a Shapely exterior ring.
 
     Returns:
-        np.ndarray: Shape (N, 3) with z=0 on the ground plane.
+        list[np.ndarray]: List of (3,) float arrays with z=0, no closing duplicate.
     """
-    n = coords.shape[0]
-    points_3d = np.zeros((n, 3), dtype=float)
-    points_3d[:, 0] = coords[:, 0]
-    points_3d[:, 1] = coords[:, 1]
-    return points_3d
+    ring = coords[:-1] if len(coords) > 1 else coords
+    vertices = []
+    for row in ring:
+        v = np.zeros(3, dtype=float)
+        v[0] = row[0]
+        v[1] = row[1]
+        vertices.append(v)
+    return vertices
 
 
 def _compute_horizon_y(

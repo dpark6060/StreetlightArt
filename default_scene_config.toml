@@ -1,0 +1,626 @@
+# default_scene_config.toml
+#
+# Fully-populated default configuration for Streets at Night.
+# Every key that can appear in scene_config.toml is present here, set to its
+# default value.  Copy this file, rename it scene_config.toml, and modify
+# only the values you want to change.
+#
+# The loader deep-merges your file onto these defaults, so you only need to
+# include the keys you are overriding.  Lists (e.g. fixture pools, color pools)
+# are replaced wholesale — not merged element by element.
+#
+# NOTE ON FIXTURE POOLS: TOML has no null literal.  Pool entries with no
+# profile (meaning "no streetlights on this segment") are written as an
+# [[array of tables]] entry with only a weight key — no profile sub-table.
+# The loader calls entry.get("profile"), so a missing key yields None and is
+# treated correctly as a no-lights entry.
+
+# ---------------------------------------------------------------------------
+# Camera
+# ---------------------------------------------------------------------------
+[camera]
+# Latitude of the camera eye point (WGS84 degrees)
+lat = 34.234880959491356
+# Longitude of the camera eye point (WGS84 degrees)
+lon = -117.31157772457728
+# Camera altitude above sea level in feet
+altitude_ft = 5186.0
+# Latitude of the camera look-at target (WGS84 degrees)
+target_lat = 34.10834722093596
+# Longitude of the camera look-at target (WGS84 degrees)
+target_lon = -117.29681238769862
+# Target altitude above sea level in feet
+target_altitude_ft = 1000.0
+# Vertical field of view in degrees
+fov = 60.0
+# Near clip plane distance in meters
+near = 100.0
+# Far clip plane distance in meters
+far = 60000.0
+
+# ---------------------------------------------------------------------------
+# Geographic bounds — OSM data download bounding box
+# ---------------------------------------------------------------------------
+[bounds]
+# Northern latitude limit (WGS84 degrees)
+north = 34.35
+# Southern latitude limit (WGS84 degrees)
+south = 33.95
+# Eastern longitude limit (WGS84 degrees)
+east = -117.05
+# Western longitude limit (WGS84 degrees)
+west = -117.55
+
+# ---------------------------------------------------------------------------
+# Global seed — controls all random placement (lights, cars, house colors)
+# ---------------------------------------------------------------------------
+# Integer seed for the random number generator
+seed = 42
+
+# ---------------------------------------------------------------------------
+# Quality presets — select with --quality low | medium | high
+# ---------------------------------------------------------------------------
+[quality.low]
+# Output image width in pixels
+width = 1920
+# Output image height in pixels
+height = 1080
+# Illumination pass resolution relative to output size
+illumination_resolution_multiplier = 0.5
+# Ground tile texels per meter (higher = finer detail)
+ground_tile_resolution = 4.0
+
+[quality.medium]
+# Output image width in pixels
+width = 3840
+# Output image height in pixels
+height = 2160
+# Illumination pass resolution relative to output size
+illumination_resolution_multiplier = 0.75
+# Ground tile texels per meter (higher = finer detail)
+ground_tile_resolution = 2.0
+
+[quality.high]
+# Output image width in pixels
+width = 7680
+# Output image height in pixels
+height = 4320
+# Illumination pass resolution relative to output size
+illumination_resolution_multiplier = 1.0
+# Ground tile texels per meter (higher = finer detail)
+ground_tile_resolution = 1.0
+
+# ---------------------------------------------------------------------------
+# Zone colors — very dark ambient base tones for each land-use type
+# ---------------------------------------------------------------------------
+[zones.colors]
+# Base fill color for commercial zones
+commercial = "#0A0A0C"
+# Base fill color for industrial zones
+industrial = "#080808"
+# Base fill color for parks and forested areas
+park_forest = "#040804"
+# Base fill color for water bodies
+water = "#040408"
+# Base fill color for road surfaces (unlit)
+road_surface = "#0C0C0C"
+# Fallback ground color for unmapped land
+default_ground = "#080706"
+
+# ---------------------------------------------------------------------------
+# Zone rendering — tile grid dimensions
+# ---------------------------------------------------------------------------
+[zones]
+# Ground tile width/height in ENU meters
+tile_size_meters = 256.0
+# Ground tile texture resolution in pixels (per tile)
+tile_resolution_px = 128
+
+# ---------------------------------------------------------------------------
+# House generation within residential zones
+# ---------------------------------------------------------------------------
+[zones.house]
+# Base color for yard / lot ground
+yard_base_color = "#060A04"
+# Per-pixel brightness variation on the yard (0–255 range additive noise)
+yard_variation = 2
+# Minimum number of window/porch lights per house
+min_lights = 0
+# Maximum number of window/porch lights per house
+max_lights = 5
+# Probability weights for 0..max_lights light counts
+light_weights = [5.0, 3.0, 1.5, 0.5, 0.3, 0.1]
+# Fraction of lot area covered by the building footprint
+footprint_coverage = 0.65
+# Typical lot width in meters
+lot_width = 15.0
+# Typical lot depth in meters
+lot_depth = 25.0
+# Front-of-lot setback distance in meters
+setback = 10.0
+
+# Exterior wall color pool: each entry is [hex_color, weight]
+[zones.house.exterior_colors]
+colors = [
+    ["#0D0A08", 1.0],
+    ["#0C0907", 1.0],
+    ["#0B0808", 1.0],
+    ["#0A0907", 1.0],
+    ["#0C0A09", 1.0],
+]
+
+# ---------------------------------------------------------------------------
+# Road rendering — export pass (static render, dark asphalt tones)
+# ---------------------------------------------------------------------------
+[roads.export.highway]
+# Unlit road surface color for freeway / motorway
+color = "#141210"
+# Base line width in pixels at 1:1 scale
+width = 4
+
+[roads.export.major_road]
+# Unlit road surface color for major arterials
+color = "#121010"
+# Base line width in pixels at 1:1 scale
+width = 3
+
+[roads.export.collector]
+# Unlit road surface color for collector roads
+color = "#100E0E"
+# Base line width in pixels at 1:1 scale
+width = 2
+
+[roads.export.residential]
+# Unlit road surface color for residential streets
+color = "#0E0C0C"
+# Base line width in pixels at 1:1 scale
+width = 1
+
+[roads.export.service]
+# Unlit road surface color for service roads / alleys
+color = "#0C0A0A"
+# Base line width in pixels at 1:1 scale
+width = 1
+
+[roads.export.minor]
+# Unlit road surface color for minor / unnamed roads
+color = "#0A0908"
+# Base line width in pixels at 1:1 scale
+width = 1
+
+# ---------------------------------------------------------------------------
+# Road rendering — preview pass (interactive pygame view, bright colors)
+# ---------------------------------------------------------------------------
+[roads.preview.highway]
+# Preview color for freeway / motorway
+color = "#FFD700"
+# Base line width in pixels at preview scale
+width = 4
+
+[roads.preview.major_road]
+# Preview color for major arterials
+color = "#FF6B35"
+# Base line width in pixels at preview scale
+width = 3
+
+[roads.preview.collector]
+# Preview color for collector roads
+color = "#FFFFFF"
+# Base line width in pixels at preview scale
+width = 2
+
+[roads.preview.residential]
+# Preview color for residential streets
+color = "#888888"
+# Base line width in pixels at preview scale
+width = 1
+
+[roads.preview.service]
+# Preview color for service roads / alleys
+color = "#555555"
+# Base line width in pixels at preview scale
+width = 1
+
+[roads.preview.minor]
+# Preview color for minor / unnamed roads
+color = "#64647A"
+# Base line width in pixels at preview scale
+width = 1
+
+# ---------------------------------------------------------------------------
+# Streetlights — weighted fixture pools per road type
+#
+# Each [[lights.streetlights.<road_type>]] entry selects a fixture at random
+# according to its weight.  Entries with no profile represent unlit segments.
+# See the note at the top of this file about the TOML null limitation.
+# ---------------------------------------------------------------------------
+
+# Highway: 90% high-pressure sodium, 10% LED white
+[[lights.streetlights.highway]]
+# Selection weight relative to other entries in this pool
+weight = 0.9
+[lights.streetlights.highway.profile]
+# Lamp color (hex)
+color = "#FFA040"
+# Pole height range in meters
+height_min = 12.0
+height_max = 15.0
+# Lamp brightness range (0.0–1.0)
+brightness_min = 0.85
+brightness_max = 1.0
+# Halo glow radius in meters
+glow_radius = 25.0
+# Ground illumination circle radius in meters
+illumination_radius = 40.0
+# Ground illumination intensity (0.0–1.0)
+illumination_intensity = 0.9
+# Along-road spacing range in meters
+spacing_min = 40.0
+spacing_max = 60.0
+# Which side(s) of the road: "both", "one", or "alternating"
+side = "both"
+
+[[lights.streetlights.highway]]
+weight = 0.1
+[lights.streetlights.highway.profile]
+color = "#E0E8FF"
+height_min = 12.0
+height_max = 15.0
+brightness_min = 0.85
+brightness_max = 1.0
+glow_radius = 25.0
+illumination_radius = 40.0
+illumination_intensity = 0.9
+spacing_min = 40.0
+spacing_max = 60.0
+side = "both"
+
+# Major road: 55% sodium, 35% LED white, 10% warm LED
+[[lights.streetlights.major_road]]
+weight = 0.55
+[lights.streetlights.major_road.profile]
+color = "#FFA040"
+height_min = 8.0
+height_max = 10.0
+brightness_min = 0.75
+brightness_max = 0.9
+glow_radius = 18.0
+illumination_radius = 30.0
+illumination_intensity = 0.75
+spacing_min = 35.0
+spacing_max = 50.0
+side = "both"
+
+[[lights.streetlights.major_road]]
+weight = 0.35
+[lights.streetlights.major_road.profile]
+color = "#E0E8FF"
+height_min = 8.0
+height_max = 10.0
+brightness_min = 0.75
+brightness_max = 0.9
+glow_radius = 18.0
+illumination_radius = 30.0
+illumination_intensity = 0.75
+spacing_min = 35.0
+spacing_max = 50.0
+side = "both"
+
+[[lights.streetlights.major_road]]
+weight = 0.1
+[lights.streetlights.major_road.profile]
+color = "#FFE080"
+height_min = 8.0
+height_max = 10.0
+brightness_min = 0.75
+brightness_max = 0.9
+glow_radius = 18.0
+illumination_radius = 30.0
+illumination_intensity = 0.75
+spacing_min = 35.0
+spacing_max = 50.0
+side = "both"
+
+# Collector: 40% sodium, 40% LED white, 20% warm yellow
+[[lights.streetlights.collector]]
+weight = 0.4
+[lights.streetlights.collector.profile]
+color = "#FFA040"
+height_min = 7.0
+height_max = 9.0
+brightness_min = 0.65
+brightness_max = 0.85
+glow_radius = 14.0
+illumination_radius = 22.0
+illumination_intensity = 0.65
+spacing_min = 45.0
+spacing_max = 65.0
+side = "alternating"
+
+[[lights.streetlights.collector]]
+weight = 0.4
+[lights.streetlights.collector.profile]
+color = "#E0E8FF"
+height_min = 7.0
+height_max = 9.0
+brightness_min = 0.65
+brightness_max = 0.85
+glow_radius = 14.0
+illumination_radius = 22.0
+illumination_intensity = 0.65
+spacing_min = 45.0
+spacing_max = 65.0
+side = "alternating"
+
+[[lights.streetlights.collector]]
+weight = 0.2
+[lights.streetlights.collector.profile]
+color = "#FFE080"
+height_min = 7.0
+height_max = 9.0
+brightness_min = 0.65
+brightness_max = 0.85
+glow_radius = 14.0
+illumination_radius = 22.0
+illumination_intensity = 0.65
+spacing_min = 45.0
+spacing_max = 65.0
+side = "alternating"
+
+# Residential: 25% no lights, 30% warm yellow, 25% LED white, 15% sodium, 5% decorative warm
+[[lights.streetlights.residential]]
+# No-lights entry: this weight of segments gets no streetlights
+weight = 0.25
+
+[[lights.streetlights.residential]]
+weight = 0.3
+[lights.streetlights.residential.profile]
+color = "#FFE080"
+height_min = 5.0
+height_max = 7.0
+brightness_min = 0.5
+brightness_max = 0.7
+glow_radius = 10.0
+illumination_radius = 15.0
+illumination_intensity = 0.5
+spacing_min = 80.0
+spacing_max = 120.0
+side = "one"
+
+[[lights.streetlights.residential]]
+weight = 0.25
+[lights.streetlights.residential.profile]
+color = "#E0E8FF"
+height_min = 5.0
+height_max = 7.0
+brightness_min = 0.5
+brightness_max = 0.7
+glow_radius = 10.0
+illumination_radius = 15.0
+illumination_intensity = 0.5
+spacing_min = 80.0
+spacing_max = 120.0
+side = "one"
+
+[[lights.streetlights.residential]]
+weight = 0.15
+[lights.streetlights.residential.profile]
+color = "#FFA040"
+height_min = 5.0
+height_max = 7.0
+brightness_min = 0.5
+brightness_max = 0.7
+glow_radius = 10.0
+illumination_radius = 15.0
+illumination_intensity = 0.5
+spacing_min = 80.0
+spacing_max = 120.0
+side = "one"
+
+[[lights.streetlights.residential]]
+weight = 0.05
+[lights.streetlights.residential.profile]
+color = "#FFCC80"
+height_min = 4.0
+height_max = 5.0
+brightness_min = 0.45
+brightness_max = 0.65
+glow_radius = 8.0
+illumination_radius = 12.0
+illumination_intensity = 0.45
+spacing_min = 60.0
+spacing_max = 80.0
+side = "both"
+
+# Service: 70% no lights, 20% LED white, 10% sodium
+[[lights.streetlights.service]]
+# No-lights entry: this weight of segments gets no streetlights
+weight = 0.7
+
+[[lights.streetlights.service]]
+weight = 0.2
+[lights.streetlights.service.profile]
+color = "#E0E8FF"
+height_min = 4.0
+height_max = 6.0
+brightness_min = 0.4
+brightness_max = 0.6
+glow_radius = 8.0
+illumination_radius = 12.0
+illumination_intensity = 0.4
+spacing_min = 80.0
+spacing_max = 150.0
+side = "one"
+
+[[lights.streetlights.service]]
+weight = 0.1
+[lights.streetlights.service.profile]
+color = "#FFA040"
+height_min = 4.0
+height_max = 6.0
+brightness_min = 0.4
+brightness_max = 0.6
+glow_radius = 8.0
+illumination_radius = 12.0
+illumination_intensity = 0.4
+spacing_min = 80.0
+spacing_max = 150.0
+side = "one"
+
+# ---------------------------------------------------------------------------
+# Car lights
+# ---------------------------------------------------------------------------
+[lights.cars]
+# Lateral separation between headlight pair and taillight pair in meters
+separation_min = 1.6
+separation_max = 2.4
+# Highway car spacing range in meters
+density_highway_min = 25.0
+density_highway_max = 50.0
+# Major arterial car spacing range in meters
+density_major_min = 40.0
+density_major_max = 80.0
+# Collector road car spacing range in meters
+density_collector_min = 80.0
+density_collector_max = 150.0
+# Residential street car spacing range in meters
+density_residential_min = 150.0
+density_residential_max = 400.0
+# Service road car spacing range in meters
+density_service_min = 300.0
+density_service_max = 800.0
+headlight_glow_radius = 8.0
+headlight_illumination_radius = 15.0
+headlight_illumination_intensity = 0.6
+taillight_glow_radius = 3.0
+taillight_illumination_radius = 2.0
+taillight_illumination_intensity = 0.1
+
+# Headlight color pool: each entry is [hex_color, weight]
+# 50% bright white, 30% warm white, 15% yellow, 5% HID blue-white
+[lights.cars.headlight_colors]
+colors = [
+    ["#FFFFFF", 0.5],
+    ["#FFF4E0", 0.3],
+    ["#FFEE80", 0.15],
+    ["#CCE0FF", 0.05],
+]
+
+# Taillight color pool: 60% red, 25% dark red, 15% red-orange
+[lights.cars.taillight_colors]
+colors = [
+    ["#FF2020", 0.6],
+    ["#CC1010", 0.25],
+    ["#FF3010", 0.15],
+]
+
+# ---------------------------------------------------------------------------
+# Commercial zone lights — signs, parking lots, storefronts
+# ---------------------------------------------------------------------------
+[lights.commercial]
+# Sign brightness range (0.0–1.0)
+sign_brightness_min = 0.6
+sign_brightness_max = 0.9
+# Neon/LED sign halo glow radius in meters
+sign_glow_radius = 12.0
+# Ground illumination radius from sign in meters
+sign_illumination_radius = 20.0
+sign_illumination_intensity = 0.7
+# Parking lot lamp brightness range (0.0–1.0)
+parking_brightness_min = 0.75
+parking_brightness_max = 0.9
+# Parking lot lamp glow radius in meters
+parking_glow_radius = 20.0
+# Parking lot lamp illumination radius in meters
+parking_illumination_radius = 30.0
+parking_illumination_intensity = 0.8
+# Parking lot light pole grid spacing range in meters
+parking_grid_spacing_min = 20.0
+parking_grid_spacing_max = 30.0
+# Storefront window light brightness range (0.0–1.0)
+storefront_brightness_min = 0.5
+storefront_brightness_max = 0.7
+# Storefront light halo glow radius in meters
+storefront_glow_radius = 8.0
+# Storefront ground illumination radius in meters
+storefront_illumination_radius = 12.0
+storefront_illumination_intensity = 0.5
+# Storefront light spacing along facade in meters
+storefront_spacing_min = 5.0
+storefront_spacing_max = 8.0
+
+# Sign color pool: warm white 35%, red 12%, blue 12%, green 10%,
+#                  yellow 10%, purple 8%, orange 8%, pink 5%
+[lights.commercial.sign_colors]
+colors = [
+    ["#FFF8E0", 0.35],
+    ["#FF2020", 0.12],
+    ["#2040FF", 0.12],
+    ["#20CC40", 0.10],
+    ["#FFE020", 0.10],
+    ["#8020CC", 0.08],
+    ["#FF8020", 0.08],
+    ["#FF40A0", 0.05],
+]
+
+# Parking lot lamp color pool: 70% LED white, 30% sodium
+[lights.commercial.parking_colors]
+colors = [
+    ["#E0E8FF", 0.7],
+    ["#FFA040", 0.3],
+]
+
+# Storefront color pool: 60% warm white, 25% warm yellow, 15% fluorescent
+[lights.commercial.storefront_colors]
+colors = [
+    ["#FFE8CC", 0.6],
+    ["#FFE080", 0.25],
+    ["#F0F0FF", 0.15],
+]
+
+# ---------------------------------------------------------------------------
+# House lights — residential window, porch, and interior lighting
+# ---------------------------------------------------------------------------
+[lights.house_lights]
+# House light brightness range (0.0–1.0)
+brightness_min = 0.3
+brightness_max = 0.6
+# Window/porch light halo glow radius in meters
+glow_radius = 6.0
+# Ground illumination radius from house lights in meters
+illumination_radius = 8.0
+# Ground illumination intensity (0.0–1.0)
+illumination_intensity = 0.35
+
+# House light color pool: 45% warm yellow, 25% warm white, 15% amber, 15% TV blue
+[lights.house_lights.colors]
+colors = [
+    ["#FFE4A0", 0.45],
+    ["#FFF0D0", 0.25],
+    ["#FFCC80", 0.15],
+    ["#D0E0FF", 0.15],
+]
+
+# ---------------------------------------------------------------------------
+# Atmosphere — distance-based haze and light scatter
+# ---------------------------------------------------------------------------
+[atmosphere]
+# Distance in meters at which light intensity falls to ~37% (1/e)
+falloff_distance = 999999999999
+# Haze tint color applied to distant geometry (hex)
+haze_color = "#3A2010"
+# Distance in meters at which scatter glow begins to dominate
+scatter_distance = 10000.0
+# Maximum render distance in meters; geometry beyond this is clipped
+max_distance = 20000.0
+# Whether glow radius expands with distance (atmospheric scatter effect)
+glow_expansion_enabled = false
+# Maximum opacity of the glow halo center ring (0–255); scaled further by brightness
+glow_max_alpha = 80
+# Gaussian sigma multiplier for glow falloff; higher = gentler/wider falloff
+glow_falloff_steepness = 1.0
+# Skip lights whose effective brightness (after falloff) drops below this fraction
+min_brightness_threshold = 0.05
+# Base maximum alpha (0–255) for ground illumination splats; scaled by each light's illumination_intensity and brightness
+illumination_brightness = 60
+illumination_min_radius = 15.0

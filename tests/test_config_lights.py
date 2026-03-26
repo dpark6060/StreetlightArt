@@ -240,6 +240,30 @@ def test_fixture_pool_entry_weights_are_positive(loaded_config: SceneConfig):
 
 
 # ---------------------------------------------------------------------------
+# _build_fixture_pool_entries — missing profile key yields profile=None
+# ---------------------------------------------------------------------------
+
+
+def test_build_fixture_pool_entries_handles_missing_profile_key(tmp_path: Path):
+    # Arrange — a TOML fixture pool entry with no profile sub-table
+    toml_content = (
+        "[[lights.streetlights.residential]]\n"
+        "weight = 0.25\n"
+    )
+    toml_file = tmp_path / "no_profile.toml"
+    toml_file.write_text(toml_content)
+
+    # Act
+    result = load_config(toml_file)
+
+    # Assert — the entry with no profile key produces a FixturePoolEntry with profile=None
+    residential_pool = result.lights.streetlights.residential
+    no_lights_entries = [e for e in residential_pool if e.profile is None]
+    assert len(no_lights_entries) == 1
+    assert no_lights_entries[0].weight == 0.25
+
+
+# ---------------------------------------------------------------------------
 # TOML override — lights section deep-merges correctly
 # ---------------------------------------------------------------------------
 

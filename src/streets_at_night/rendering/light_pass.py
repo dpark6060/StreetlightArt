@@ -4,7 +4,7 @@ import math
 import typing as t
 
 import numpy as np
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image
 
 from ..camera.camera import Camera
 from ..camera.projection import project_points
@@ -16,14 +16,11 @@ if t.TYPE_CHECKING:
     from ..scene.scene import Scene
 
 
-# Maximum alpha for the glow halo at its brightest center ring
-_GLOW_MAX_ALPHA: int = 180
-
-# Number of concentric rings drawn to approximate gaussian glow falloff
-_GLOW_RING_COUNT: int = 8
-
 # Minimum glow radius in screen pixels before we skip drawing the halo
 _MIN_GLOW_RADIUS_PX: float = 2.0
+
+# Core radius threshold below which draw_point is used instead of draw_circle
+_POINT_RADIUS_THRESHOLD: float = 2.0
 
 
 def render_lights_preview(
@@ -34,8 +31,9 @@ def render_lights_preview(
     """Render lights as colored dots for interactive preview.
 
     Projects every light in the scene to screen space. Draws a filled circle
-    for each visible light. Circle radius scales with brightness but no glow
-    halos are applied — this pass is intended for real-time pygame preview.
+    for each visible light. Circle radius scales with brightness (attenuated by
+    atmospheric falloff) but no glow halos or color shift are applied — this
+    pass is intended for real-time pygame preview.
 
     Args:
         scene (Scene): The world scene containing all light sources.
@@ -51,6 +49,7 @@ def render_lights_preview(
     view_matrix = camera.get_view_matrix()
     proj_matrix = camera.get_projection_matrix()
     width, height = backend.get_surface_size()
+    atmos = scene.config.atmosphere
 
     positions = extract_positions(scene.lights)
     screen_coords, valid_mask = project_points(
@@ -62,7 +61,11 @@ def render_lights_preview(
         if not valid_mask[i]:
             continue
         center = (float(screen_coords[i, 0]), float(screen_coords[i, 1]))
-        radius = _preview_radius(light.brightness)
+        distance = camera_distance(light.position, camera.position)
+        effective_brightness = _apply_brightness_falloff(
+            light.brightness, distance, atmos.falloff_distance
+        )
+        radius = _preview_radius(effective_brightness)
         backend.draw_circle(center, radius, light.color)
         drawn += 1
 
@@ -76,18 +79,21 @@ def render_lights_export(
 ) -> t.Dict[str, int]:
     """Render lights with bright cores and gaussian glow halos for high-res export.
 
-    For each visible light:
-      - Draws a bright core dot at the light's color and full brightness.
-      - Draws concentric circles with decreasing alpha on a separate RGBA glow
-        layer to approximate gaussian falloff.
-    Composites the glow layer onto the main image using additive blending so
-    overlapping glow regions accumulate naturally.
+    For each visible light, applies atmospheric perspective before drawing:
+      - Brightness falloff: exponential attenuation by distance.
+      - Color shift: blends toward warm haze color at far distances.
+      - Glow expansion: optionally grows glow radius with scatter if enabled in config.
+    Lights below min_brightness_threshold are skipped entirely.
+    Lights are rendered far-to-near so closer cores paint over distant ones.
+    Small lights (core radius < 2px) use draw_point instead of draw_circle.
+    Each light's glow is accumulated into a float32 numpy buffer using a gaussian
+    kernel so overlapping halos add together correctly. The buffer is clamped and
+    composited additively onto the scene after all lights are processed.
 
     Args:
         scene (Scene): The world scene containing all light sources.
         camera (Camera): The active camera.
-        backend (RenderBackend): Target render surface (must be PillowBackend or
-            support create_layer / composite_additive).
+        backend (RenderBackend): Target render surface (must support composite_additive).
 
     Returns:
         dict[str, int]: Stats with key "lights_drawn" reporting visible count.
@@ -105,24 +111,195 @@ def render_lights_export(
     )
 
     focal_length = compute_focal_length(camera, width)
-    glow_layer = backend.create_layer()
-    glow_draw = ImageDraw.Draw(glow_layer)
+    atmos = scene.config.atmosphere
+    glow_buffer = np.zeros((height, width, 3), dtype=np.float32)
+
+    visible_indices = _get_visible_indices(scene.lights, valid_mask, camera, atmos)
 
     drawn = 0
-    for i, light in enumerate(scene.lights):
-        if not valid_mask[i]:
-            continue
-
+    for i in visible_indices:
+        light = scene.lights[i]
         center = (float(screen_coords[i, 0]), float(screen_coords[i, 1]))
         distance = camera_distance(light.position, camera.position)
-        core_radius = _core_radius(light, distance, focal_length)
 
-        backend.draw_circle(center, core_radius, light.color)
-        _draw_glow_halo(glow_draw, center, light, distance, focal_length)
+        effective_brightness = _apply_brightness_falloff(
+            light.brightness, distance, atmos.falloff_distance
+        )
+        effective_color = _apply_haze_color(
+            light.color, distance, atmos.haze_color, atmos.max_distance
+        )
+        effective_glow_radius = _resolve_glow_radius(light, distance, atmos)
+
+        core_radius = _core_radius(light, distance, focal_length, effective_brightness)
+        radius_px = _glow_radius_px(effective_glow_radius, distance, focal_length)
+
+        _draw_core(backend, center, core_radius, effective_color)
+
+        if radius_px >= _MIN_GLOW_RADIUS_PX:
+            _accumulate_glow(
+                glow_buffer,
+                center[0],
+                center[1],
+                effective_color,
+                radius_px,
+                int(atmos.glow_max_alpha * effective_brightness),
+                atmos.glow_falloff_steepness,
+            )
         drawn += 1
 
-    backend.composite_additive(glow_layer)
+    glow_array = np.clip(glow_buffer, 0, 255).astype(np.uint8)
+    glow_image = Image.fromarray(
+        np.dstack([glow_array, np.full((height, width), 255, dtype=np.uint8)]),
+        "RGBA",
+    )
+    backend.composite_additive(glow_image)
     return {"lights_drawn": drawn}
+
+
+# ---------------------------------------------------------------------------
+# Private helpers — export loop support
+# ---------------------------------------------------------------------------
+
+
+def _get_visible_indices(
+    lights: t.List["LightSource"],
+    valid_mask: np.ndarray,
+    camera: Camera,
+    atmos: t.Any,
+) -> t.List[int]:
+    """Collect indices of lights that pass the mask and brightness threshold.
+
+    Returns indices sorted by descending camera distance so far lights are
+    drawn first and closer lights paint over them.
+
+    Args:
+        lights (list[LightSource]): All lights in the scene.
+        valid_mask (np.ndarray): Boolean mask from project_points.
+        camera (Camera): Active camera (used to compute distances).
+        atmos: AtmosphereConfig with falloff_distance and min_brightness_threshold.
+
+    Returns:
+        list[int]: Sorted indices of drawable lights, farthest first.
+    """
+    candidates = []
+    for i, light in enumerate(lights):
+        if not valid_mask[i]:
+            continue
+        distance = camera_distance(light.position, camera.position)
+        effective_brightness = _apply_brightness_falloff(
+            light.brightness, distance, atmos.falloff_distance
+        )
+        if effective_brightness < atmos.min_brightness_threshold:
+            continue
+        candidates.append((distance, i))
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+    return [i for _, i in candidates]
+
+
+def _resolve_glow_radius(
+    light: "LightSource",
+    distance: float,
+    atmos: t.Any,
+) -> float:
+    """Return effective glow radius, expanding with distance only if configured.
+
+    Args:
+        light (LightSource): The light source.
+        distance (float): Distance from camera to light in meters.
+        atmos: AtmosphereConfig with glow_expansion_enabled and scatter_distance.
+
+    Returns:
+        float: Effective glow radius in meters.
+    """
+    if atmos.glow_expansion_enabled:
+        return _apply_glow_expansion(light.glow_radius, distance, atmos.scatter_distance)
+    return light.glow_radius
+
+
+def _draw_core(
+    backend: RenderBackend,
+    center: t.Tuple[float, float],
+    core_radius: float,
+    color: t.Tuple[int, int, int],
+) -> None:
+    """Draw the bright core of a light as a point or circle depending on radius.
+
+    Uses draw_point for sub-pixel cores to avoid Pillow's integer aliasing
+    artifacts when draw_circle is called with radius < 2.
+
+    Args:
+        backend (RenderBackend): Render surface to draw onto.
+        center (tuple[float, float]): Screen-space center (x, y).
+        core_radius (float): Core radius in pixels.
+        color (tuple[int, int, int]): RGB color.
+    """
+    if core_radius < _POINT_RADIUS_THRESHOLD:
+        backend.draw_point(center, color)
+    else:
+        backend.draw_circle(center, core_radius, color)
+
+
+# ---------------------------------------------------------------------------
+# Private helpers — atmospheric perspective
+# ---------------------------------------------------------------------------
+
+
+def _apply_brightness_falloff(
+    brightness: float, distance: float, falloff_distance: float
+) -> float:
+    """Apply exponential brightness attenuation based on distance.
+
+    Args:
+        brightness (float): Base brightness scalar.
+        distance (float): Distance from camera in meters.
+        falloff_distance (float): Characteristic decay distance in meters.
+
+    Returns:
+        float: Attenuated brightness.
+    """
+    return brightness * math.exp(-distance / falloff_distance)
+
+
+def _apply_haze_color(
+    color: t.Tuple[int, int, int],
+    distance: float,
+    haze_color: t.Tuple[int, int, int],
+    max_distance: float,
+) -> t.Tuple[int, int, int]:
+    """Blend light color toward warm haze as distance increases.
+
+    Args:
+        color (tuple[int, int, int]): Original RGB light color.
+        distance (float): Distance from camera in meters.
+        haze_color (tuple[int, int, int]): Target RGB haze color.
+        max_distance (float): Distance at which haze is fully applied.
+
+    Returns:
+        tuple[int, int, int]: Blended RGB color.
+    """
+    t_blend = min(1.0, distance / max_distance)
+    blended = tuple(
+        max(0, min(255, int(c * (1.0 - t_blend) + h * t_blend)))
+        for c, h in zip(color, haze_color)
+    )
+    return (blended[0], blended[1], blended[2])
+
+
+def _apply_glow_expansion(
+    glow_radius: float, distance: float, scatter_distance: float
+) -> float:
+    """Expand glow radius with distance to simulate atmospheric scatter.
+
+    Args:
+        glow_radius (float): Base world-space glow radius in meters.
+        distance (float): Distance from camera in meters.
+        scatter_distance (float): Distance at which the radius doubles.
+
+    Returns:
+        float: Expanded glow radius in meters.
+    """
+    return glow_radius * (1.0 + distance / scatter_distance)
 
 
 # ---------------------------------------------------------------------------
@@ -147,84 +324,77 @@ def _preview_radius(brightness: float) -> float:
 # ---------------------------------------------------------------------------
 
 
-def _core_radius(light: "LightSource", distance: float, focal_length: float) -> float:
+def _core_radius(
+    light: "LightSource",
+    distance: float,
+    focal_length: float,
+    effective_brightness: float,
+) -> float:
     """Compute the bright-core circle radius in screen pixels.
 
     Args:
         light (LightSource): The light source.
         distance (float): Distance from camera to light in meters.
         focal_length (float): Focal length in pixels.
+        effective_brightness (float): Brightness after atmospheric falloff.
 
     Returns:
         float: Core radius in pixels, at least 1.
     """
     screen_size = light.size / distance * focal_length
-    return max(1.0, screen_size * light.brightness)
+    return max(1.0, screen_size * effective_brightness)
 
 
-def _glow_radius_px(light: "LightSource", distance: float, focal_length: float) -> float:
+def _glow_radius_px(glow_radius: float, distance: float, focal_length: float) -> float:
     """Compute the glow halo radius in screen pixels.
 
     Args:
-        light (LightSource): The light source.
+        glow_radius (float): World-space glow radius in meters.
         distance (float): Distance from camera to light in meters.
         focal_length (float): Focal length in pixels.
 
     Returns:
         float: Glow radius in pixels.
     """
-    return light.glow_radius / distance * focal_length
+    return glow_radius / distance * focal_length
 
 
-def _ring_alpha(ring_index: int, total_rings: int, max_alpha: int) -> int:
-    """Compute the alpha for one concentric glow ring using gaussian falloff.
-
-    The sigma is set to half the total radius so the falloff is smooth and
-    reaches near-zero by the outermost ring.
-
-    Args:
-        ring_index (int): Index of this ring, 0 = innermost.
-        total_rings (int): Total number of rings.
-        max_alpha (int): Alpha at the center (ring_index == 0).
-
-    Returns:
-        int: Clamped alpha in [0, 255].
-    """
-    sigma = total_rings / 2.0
-    r = ring_index
-    raw = max_alpha * math.exp(-(r * r) / (2.0 * sigma * sigma))
-    return max(0, min(255, int(raw)))
-
-
-def _draw_glow_halo(
-    draw: ImageDraw.ImageDraw,
-    center: t.Tuple[float, float],
-    light: "LightSource",
-    distance: float,
-    focal_length: float,
+def _accumulate_glow(
+    buffer: np.ndarray,
+    cx: float,
+    cy: float,
+    color: t.Tuple[int, int, int],
+    radius_px: float,
+    max_alpha: int,
+    steepness: float,
 ) -> None:
-    """Draw concentric filled circles on the glow layer to approximate a gaussian halo.
+    """Add a gaussian glow contribution to the float32 accumulation buffer.
 
-    Rings are drawn from outermost to innermost so inner rings (higher alpha)
-    paint over the outer ones. Each ring decreases in radius and increases in alpha
-    following a gaussian curve.
+    Operates only on the bounding box of the glow for efficiency. Contributions
+    from multiple lights accumulate additively — overlapping halos get brighter.
 
     Args:
-        draw (ImageDraw.ImageDraw): Draw context for the RGBA glow layer.
-        center (tuple[float, float]): Screen-space center (x, y).
-        light (LightSource): The light source providing color and glow_radius.
-        distance (float): Distance from camera to light in meters.
-        focal_length (float): Focal length in pixels.
+        buffer (np.ndarray): Float32 array of shape (H, W, 3), modified in place.
+        cx (float): Screen-space center x.
+        cy (float): Screen-space center y.
+        color (tuple[int, int, int]): RGB color of the glow.
+        radius_px (float): Glow radius in screen pixels.
+        max_alpha (int): Peak glow intensity (0–255 scale, used as peak brightness factor).
+        steepness (float): Gaussian sigma multiplier — higher = sharper falloff.
     """
-    radius_px = _glow_radius_px(light, distance, focal_length)
-    if radius_px < _MIN_GLOW_RADIUS_PX:
+    h, w, _ = buffer.shape
+    margin = int(radius_px * 2.5) + 2
+    x1 = max(0, int(cx) - margin)
+    x2 = min(w, int(cx) + margin + 1)
+    y1 = max(0, int(cy) - margin)
+    y2 = min(h, int(cy) + margin + 1)
+    if x1 >= x2 or y1 >= y2:
         return
 
-    r, g, b = light.color
-    cx, cy = center
+    yy, xx = np.mgrid[y1:y2, x1:x2]
+    dist_sq = (xx - cx) ** 2 + (yy - cy) ** 2
+    sigma = max(radius_px / 2.0 * steepness, 0.5)
+    intensity = (max_alpha / 255.0) * np.exp(-dist_sq / (2.0 * sigma * sigma))
 
-    for ring_idx in range(_GLOW_RING_COUNT - 1, -1, -1):
-        ring_radius = radius_px * (ring_idx + 1) / _GLOW_RING_COUNT
-        alpha = _ring_alpha(ring_idx, _GLOW_RING_COUNT, _GLOW_MAX_ALPHA)
-        bbox = [cx - ring_radius, cy - ring_radius, cx + ring_radius, cy + ring_radius]
-        draw.ellipse(bbox, fill=(r, g, b, alpha))
+    for c, col_val in enumerate(color):
+        buffer[y1:y2, x1:x2, c] += col_val * intensity
