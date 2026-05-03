@@ -17,6 +17,7 @@ from .schema import (
     DevmodeConfig,
     FixturePoolEntry,
     FixtureProfileConfig,
+    HeatHazeConfig,
     HouseConfig,
     HouseLightConfig,
     LightConfig,
@@ -25,6 +26,7 @@ from .schema import (
     RoadStyleEntry,
     RoadsConfig,
     SceneConfig,
+    StarsConfig,
     StreetLightConfig,
     ZoneColorsConfig,
     ZoneConfig,
@@ -96,7 +98,9 @@ def _build_scene_config(data: dict) -> SceneConfig:
     lights = _build_light_config(data["lights"])
     roads = _build_roads_config(data["roads"])
     atmosphere = _build_atmosphere_config(data["atmosphere"])
+    stars = _build_stars_config(data.get("stars", {}))
     devmode = _build_devmode_config(data["devmode"]) if "devmode" in data else None
+    heat_haze = _build_heat_haze_config(data.get("heat_haze", {}))
     return SceneConfig(
         camera=camera,
         bounds=bounds,
@@ -106,7 +110,9 @@ def _build_scene_config(data: dict) -> SceneConfig:
         lights=lights,
         roads=roads,
         atmosphere=atmosphere,
+        stars=stars,
         devmode=devmode,
+        heat_haze=heat_haze,
     )
 
 
@@ -325,6 +331,8 @@ def _build_fixture_profile_config(
         glow_radius=data["glow_radius"],
         illumination_radius=data["illumination_radius"],
         illumination_intensity=data["illumination_intensity"],
+        illumination_falloff=data.get("illumination_falloff", 2.0),
+        illumination_inner_fraction=data.get("illumination_inner_fraction", 0.0),
         spacing_min=data["spacing_min"],
         spacing_max=data["spacing_max"],
         side=data["side"],
@@ -345,6 +353,10 @@ def _build_car_config(data: dict) -> CarConfig:
         taillight_colors=_build_color_pool_config(data["taillight_colors"]),
         separation_min=data["separation_min"],
         separation_max=data["separation_max"],
+        headlight_brightness_min=data.get("headlight_brightness_min", 0.7),
+        headlight_brightness_max=data.get("headlight_brightness_max", 0.9),
+        taillight_brightness_min=data.get("taillight_brightness_min", 0.3),
+        taillight_brightness_max=data.get("taillight_brightness_max", 0.5),
         density_highway_min=data["density_highway_min"],
         density_highway_max=data["density_highway_max"],
         density_major_min=data["density_major_min"],
@@ -358,9 +370,13 @@ def _build_car_config(data: dict) -> CarConfig:
         headlight_glow_radius=data["headlight_glow_radius"],
         headlight_illumination_radius=data["headlight_illumination_radius"],
         headlight_illumination_intensity=data["headlight_illumination_intensity"],
+        headlight_illumination_falloff=data.get("headlight_illumination_falloff", 1.5),
+        headlight_illumination_inner_fraction=data.get("headlight_illumination_inner_fraction", 0.3),
         taillight_glow_radius=data["taillight_glow_radius"],
         taillight_illumination_radius=data["taillight_illumination_radius"],
         taillight_illumination_intensity=data["taillight_illumination_intensity"],
+        taillight_illumination_falloff=data.get("taillight_illumination_falloff", 2.0),
+        taillight_illumination_inner_fraction=data.get("taillight_illumination_inner_fraction", 0.0),
     )
 
 
@@ -380,12 +396,16 @@ def _build_commercial_light_config(data: dict) -> CommercialLightConfig:
         sign_glow_radius=data["sign_glow_radius"],
         sign_illumination_radius=data["sign_illumination_radius"],
         sign_illumination_intensity=data["sign_illumination_intensity"],
+        sign_illumination_falloff=data.get("sign_illumination_falloff", 2.0),
+        sign_illumination_inner_fraction=data.get("sign_illumination_inner_fraction", 0.0),
         parking_colors=_build_color_pool_config(data["parking_colors"]),
         parking_brightness_min=data["parking_brightness_min"],
         parking_brightness_max=data["parking_brightness_max"],
         parking_glow_radius=data["parking_glow_radius"],
         parking_illumination_radius=data["parking_illumination_radius"],
         parking_illumination_intensity=data["parking_illumination_intensity"],
+        parking_illumination_falloff=data.get("parking_illumination_falloff", 1.5),
+        parking_illumination_inner_fraction=data.get("parking_illumination_inner_fraction", 0.3),
         parking_grid_spacing_min=data["parking_grid_spacing_min"],
         parking_grid_spacing_max=data["parking_grid_spacing_max"],
         storefront_colors=_build_color_pool_config(data["storefront_colors"]),
@@ -394,6 +414,8 @@ def _build_commercial_light_config(data: dict) -> CommercialLightConfig:
         storefront_glow_radius=data["storefront_glow_radius"],
         storefront_illumination_radius=data["storefront_illumination_radius"],
         storefront_illumination_intensity=data["storefront_illumination_intensity"],
+        storefront_illumination_falloff=data.get("storefront_illumination_falloff", 2.0),
+        storefront_illumination_inner_fraction=data.get("storefront_illumination_inner_fraction", 0.0),
         storefront_spacing_min=data["storefront_spacing_min"],
         storefront_spacing_max=data["storefront_spacing_max"],
     )
@@ -415,6 +437,8 @@ def _build_house_light_config(data: dict) -> HouseLightConfig:
         glow_radius=data["glow_radius"],
         illumination_radius=data["illumination_radius"],
         illumination_intensity=data["illumination_intensity"],
+        illumination_falloff=data.get("illumination_falloff", 2.0),
+        illumination_inner_fraction=data.get("illumination_inner_fraction", 0.0),
     )
 
 
@@ -468,12 +492,16 @@ def _build_atmosphere_config(data: dict) -> AtmosphereConfig:
     """Build an AtmosphereConfig from the atmosphere section of the config.
 
     Converts haze_color from a '#RRGGBB' hex string to an (R, G, B) int tuple.
+    New Stage 6 fields (horizon_glow_color, horizon_glow_width_px,
+    horizon_glow_peak_alpha, haze_enabled, haze_alpha, vignette_strength,
+    vignette_radius) use .get() with defaults for backward compatibility.
 
     Args:
         data (dict): Atmosphere section with falloff_distance, haze_color,
             scatter_distance, max_distance, glow_expansion_enabled,
             glow_max_alpha, glow_falloff_steepness, min_brightness_threshold,
-            illumination_brightness, and illumination_min_radius fields.
+            illumination_brightness, illumination_min_radius, and optional
+            Stage 6 atmosphere fields.
 
     Returns:
         AtmosphereConfig: Populated atmosphere config.
@@ -495,6 +523,57 @@ def _build_atmosphere_config(data: dict) -> AtmosphereConfig:
         min_brightness_threshold=data["min_brightness_threshold"],
         illumination_brightness=data["illumination_brightness"],
         illumination_min_radius=data["illumination_min_radius"],
+        horizon_glow_color=data.get("horizon_glow_color", "#28180A"),
+        horizon_glow_width_px=data.get("horizon_glow_width_px", 120),
+        horizon_glow_peak_alpha=data.get("horizon_glow_peak_alpha", 90),
+        haze_enabled=data.get("haze_enabled", True),
+        haze_alpha=data.get("haze_alpha", 30),
+        vignette_strength=data.get("vignette_strength", 0.35),
+        vignette_radius=data.get("vignette_radius", 0.7),
+    )
+
+
+def _build_stars_config(data: dict) -> StarsConfig:
+    """Build a StarsConfig from the stars section of the config.
+
+    When called with an empty dict (e.g., no stars section in the TOML), all
+    values fall back to the defaults defined in DEFAULTS["stars"].
+
+    Args:
+        data (dict): Stars section from the config, or empty dict if absent.
+
+    Returns:
+        StarsConfig: Populated stars config.
+    """
+    return StarsConfig(
+        stars_enabled=data.get("stars_enabled", False),
+        count=data.get("count", 200),
+        brightness_min=data.get("brightness_min", 0.03),
+        brightness_max=data.get("brightness_max", 0.15),
+        color_variation=data.get("color_variation", 15),
+        radius=data.get("radius", 1.0),
+    )
+
+
+def _build_heat_haze_config(data: dict) -> HeatHazeConfig:
+    """Build a HeatHazeConfig from the heat_haze section of the config.
+
+    All fields use .get() with defaults so an empty or absent section is valid.
+
+    Args:
+        data (dict): Heat haze section from the config, or empty dict if absent.
+
+    Returns:
+        HeatHazeConfig: Populated heat haze config.
+    """
+    return HeatHazeConfig(
+        enabled=data.get("enabled", True),
+        amplitude=data.get("amplitude", 3.0),
+        freq1=data.get("freq1", 0.003),
+        freq2=data.get("freq2", 0.007),
+        speed1=data.get("speed1", 0.4),
+        speed2=data.get("speed2", 0.6),
+        distance_exponent=data.get("distance_exponent", 1.5),
     )
 
 

@@ -39,6 +39,8 @@ def create_sign_light(
         glow_radius=config.sign_glow_radius,
         illumination_radius=config.sign_illumination_radius,
         illumination_intensity=config.sign_illumination_intensity,
+        illumination_falloff=config.sign_illumination_falloff,
+        illumination_inner_fraction=config.sign_illumination_inner_fraction,
     )
 
 
@@ -73,6 +75,8 @@ def create_parking_lot_light(
         glow_radius=config.parking_glow_radius,
         illumination_radius=config.parking_illumination_radius,
         illumination_intensity=config.parking_illumination_intensity,
+        illumination_falloff=config.parking_illumination_falloff,
+        illumination_inner_fraction=config.parking_illumination_inner_fraction,
     )
 
 
@@ -106,4 +110,6 @@ def create_storefront_light(
         glow_radius=config.storefront_glow_radius,
         illumination_radius=config.storefront_illumination_radius,
         illumination_intensity=config.storefront_illumination_intensity,
+        illumination_falloff=config.storefront_illumination_falloff,
+        illumination_inner_fraction=config.storefront_illumination_inner_fraction,
     )

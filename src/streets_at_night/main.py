@@ -15,6 +15,10 @@ from pathlib import Path
 
 import numpy as np
 
+from dataclasses import dataclass
+
+from PIL import Image
+
 from .camera.camera import create_camera
 from .camera.coordinates import (
     CoordinateTransformer,
@@ -26,13 +30,33 @@ from .camera.coordinates import (
 )
 from .config.loader import load_config
 from .config.schema import BoundsConfig, SceneConfig
+from .rendering.warp_preview import apply_heat_haze
 from .data.osm_loader import load_buildings, load_land_use, load_roads
 from .data.road_classifier import classify_roads
 from .data.verify_plot import save_verification_plot
 from .rendering.pillow_backend import PillowBackend
-from .rendering.render_pipeline import get_export_passes, render_scene_frame
+from .rendering.render_pipeline import (
+    get_export_pass_names,
+    get_export_passes,
+    render_scene_frame,
+    render_scene_frame_with_progress,
+)
 from .placement.scene_builder import build_scene
 from .scene.scene import Scene
+
+
+@dataclass
+class AnimationState:
+    """Per-frame animation state for the interactive preview.
+
+    base_frame holds the fully composited scene as a numpy array. It is
+    rebuilt whenever the camera moves (base_frame_dirty=True) and reused
+    otherwise — all per-frame work (heat haze) operates on a copy.
+    """
+
+    base_frame: np.ndarray
+    base_frame_dirty: bool = False
+    elapsed_t: float = 0.0
 
 
 def main() -> None:
@@ -109,10 +133,40 @@ def main() -> None:
         default=False,
         help="Disable illumination and light passes (faster render, no light effects)",
     )
+    render_parser.add_argument(
+        "--width",
+        type=int,
+        default=None,
+        help="Override output width in pixels (overrides quality preset width)",
+    )
+    render_parser.add_argument(
+        "--height",
+        type=int,
+        default=None,
+        help="Override output height in pixels (overrides quality preset height)",
+    )
+    render_parser.add_argument(
+        "--format",
+        choices=["png", "tiff"],
+        default=None,
+        help="Output format (default: auto-detect from output path extension)",
+    )
 
-    subparsers.add_parser(
+    devmode_parser = subparsers.add_parser(
         "devmode",
         help="Launch interactive devmode parameter tuning tool",
+    )
+    devmode_parser.add_argument(
+        "--real-tiles",
+        action="store_true",
+        default=False,
+        help="Load a strip of real OSM road data instead of the synthetic scene",
+    )
+    devmode_parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=Path("cache"),
+        help="Directory for OSM data cache files (used with --real-tiles)",
     )
 
     args = parser.parse_args()
@@ -123,7 +177,16 @@ def main() -> None:
     elif args.command == "preview":
         cmd_preview(args, config)
     elif args.command == "render":
-        cmd_render(config, args.quality, args.output, args.cache_dir, args.no_lights)
+        cmd_render(
+            config,
+            args.quality,
+            args.output,
+            args.cache_dir,
+            args.no_lights,
+            width_override=args.width,
+            height_override=args.height,
+            format_override=args.format,
+        )
     elif args.command == "devmode":
         from .devmode.cmd_devmode import cmd_devmode
         cmd_devmode(args, config)
@@ -205,12 +268,21 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
 
     backend = PygameBackend(screen)
     drag_state = MouseDragState()
-    running = True
 
+    print("Building initial base frame...")
+    anim = AnimationState(
+        base_frame=_render_base_frame(scene, warp_passes, preview_width, preview_height)
+    )
+
+    running = True
     while running:
         dt = clock.tick(60) / 1000.0
         events = pygame.event.get()
         held_keys = pygame.key.get_pressed()
+
+        prev_pos = scene.camera.position.copy()
+        prev_target = scene.camera.target.copy()
+        prev_fov = scene.camera.fov_deg
 
         result = handle_input(
             events, scene.camera, dt, held_keys, drag_state,
@@ -224,17 +296,39 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
             scene.camera.target = original_target.copy()
             scene.camera.fov_deg = original_fov
             drag_state.clear()
+            anim.base_frame_dirty = True
         if result.screenshot:
             _save_screenshot(scene, args.quality, config)
         if result.save_camera:
             _save_camera_position(scene, args.config)
 
+        camera_moved = (
+            not np.array_equal(scene.camera.position, prev_pos)
+            or not np.array_equal(scene.camera.target, prev_target)
+            or scene.camera.fov_deg != prev_fov
+        )
+        if camera_moved:
+            anim.base_frame_dirty = True
+
+        if anim.base_frame_dirty:
+            anim.base_frame = _render_base_frame(
+                scene, warp_passes, preview_width, preview_height
+            )
+            anim.base_frame_dirty = False
+
+        anim.elapsed_t += dt
+
         for car_pair in scene.car_pairs:
             car_pair.resolve_facing(scene.camera.get_forward())
 
-        stats = render_scene_frame(scene, backend, passes=warp_passes)
+        frame = anim.base_frame.copy()
+        heat_haze_cfg = config.heat_haze
+        if heat_haze_cfg is not None and heat_haze_cfg.enabled:
+            frame = apply_heat_haze(frame, anim.elapsed_t, heat_haze_cfg)
+
+        backend.blit_pil_image(Image.fromarray(frame))
         fps = clock.get_fps()
-        render_hud(screen, scene.camera, fps, stats.get("segments_drawn", 0), font)
+        render_hud(screen, scene.camera, fps, 0, font)
         backend.present()
 
     pygame.quit()
@@ -246,43 +340,134 @@ def cmd_render(
     output_path: Path,
     cache_dir: Path,
     no_lights: bool = False,
+    width_override: t.Optional[int] = None,
+    height_override: t.Optional[int] = None,
+    format_override: t.Optional[str] = None,
 ) -> None:
     """Render a perspective road image from the configured camera.
 
     Loads and classifies road data, builds a fully populated Scene (roads,
     zones, and lights), resolves car headlight/taillight facing once for
-    the fixed camera, and saves a PNG to output_path using the Pillow backend.
+    the fixed camera, then renders all passes with progress reporting.
 
     Args:
         config (SceneConfig): Loaded scene configuration.
         quality (str): Quality preset name (e.g. "low", "medium", "high").
-        output_path (Path): Where to save the rendered PNG.
+        output_path (Path): Where to save the rendered image.
         cache_dir (Path): Directory for OSM data cache files.
         no_lights (bool): When True, omit illumination and light passes.
             Defaults to False.
+        width_override (int | None): Override the preset width in pixels.
+        height_override (int | None): Override the preset height in pixels.
+        format_override (str | None): Force output format ("png" or "tiff").
+            When None, format is auto-detected from the output path extension.
     """
+    import dataclasses
+
     cache_dir.mkdir(parents=True, exist_ok=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     preset = config.quality_presets[quality]
+    preset = _apply_resolution_overrides(preset, width_override, height_override)
+
     scene = _load_scene(config, quality, cache_dir)
 
     print(f"Rendering at {preset.width}×{preset.height}...")
     backend = PillowBackend(preset.width, preset.height)
-    export_passes = get_export_passes(cache_dir, no_lights=no_lights)
+    export_passes = get_export_passes(cache_dir, no_lights=no_lights, quality_preset=preset)
+    pass_names = get_export_pass_names(no_lights=no_lights)
 
     for car_pair in scene.car_pairs:
         car_pair.resolve_facing(scene.camera.get_forward())
 
-    render_scene_frame(scene, backend, passes=export_passes)
+    render_scene_frame_with_progress(scene, backend, passes=export_passes, pass_names=pass_names)
+
     image = backend.get_image()
-    image.save(str(output_path))
+    output_format = _resolve_output_format(output_path, format_override)
+    image.save(str(output_path), format=output_format)
     print(f"Done. Output: {output_path}")
 
 
 # ---------------------------------------------------------------------------
 # Shared helpers
 # ---------------------------------------------------------------------------
+
+
+def _render_base_frame(
+    scene: Scene,
+    warp_passes: t.List,
+    width: int,
+    height: int,
+) -> np.ndarray:
+    """Render the full warp pipeline once and return the result as a numpy array.
+
+    Uses a PillowBackend so the output is a PIL Image that can be converted to
+    a (H, W, 3) uint8 numpy array for per-frame manipulation.
+
+    Args:
+        scene (Scene): The current world scene.
+        warp_passes (list): Render pass list (warp preview pass).
+        width (int): Output width in pixels.
+        height (int): Output height in pixels.
+
+    Returns:
+        np.ndarray: (H, W, 3) uint8 array of the composited frame.
+    """
+    pillow_backend = PillowBackend(width, height)
+    render_scene_frame(scene, pillow_backend, passes=warp_passes)
+    return np.asarray(pillow_backend.get_image()).copy()
+
+
+def _apply_resolution_overrides(
+    preset: t.Any,
+    width_override: t.Optional[int],
+    height_override: t.Optional[int],
+) -> t.Any:
+    """Return a new preset with optional width and height overrides applied.
+
+    Uses dataclasses.replace to avoid mutating the shared preset object.
+    Only the provided dimensions are replaced; unspecified dimensions keep
+    their preset values.
+
+    Args:
+        preset (QualityPreset): The base quality preset.
+        width_override (int | None): New width in pixels, or None to keep preset.
+        height_override (int | None): New height in pixels, or None to keep preset.
+
+    Returns:
+        QualityPreset: New preset with overrides applied.
+    """
+    import dataclasses
+
+    kwargs: t.Dict[str, int] = {}
+    if width_override is not None:
+        kwargs["width"] = width_override
+    if height_override is not None:
+        kwargs["height"] = height_override
+    if not kwargs:
+        return preset
+    return dataclasses.replace(preset, **kwargs)
+
+
+def _resolve_output_format(output_path: Path, format_override: t.Optional[str]) -> str:
+    """Determine the image format string for PIL Image.save.
+
+    When format_override is provided, it takes precedence. Otherwise the format
+    is inferred from the output path extension (.tiff/.tif → TIFF, otherwise PNG).
+
+    Args:
+        output_path (Path): The output file path.
+        format_override (str | None): Explicit format name ("png" or "tiff"), or None.
+
+    Returns:
+        str: PIL format string, either "PNG" or "TIFF".
+    """
+    if format_override is not None:
+        return "TIFF" if format_override == "tiff" else "PNG"
+    suffix = output_path.suffix.lower()
+    if suffix in (".tiff", ".tif"):
+        return "TIFF"
+    return "PNG"
 
 
 def _load_scene(

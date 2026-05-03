@@ -53,9 +53,9 @@ class CarLightPair:
         self._headlight_pool = ColorPool(config.headlight_colors.colors, rng)
         self._taillight_pool = ColorPool(config.taillight_colors.colors, rng)
         self._headlight_color = self._headlight_pool.pick()
-        self._headlight_brightness = rng.uniform(0.7, 0.9)
+        self._headlight_brightness = rng.uniform(config.headlight_brightness_min, config.headlight_brightness_max)
         self._taillight_color = self._taillight_pool.pick()
-        self._taillight_brightness = rng.uniform(0.3, 0.5)
+        self._taillight_brightness = rng.uniform(config.taillight_brightness_min, config.taillight_brightness_max)
         self._lights = self._create_lights(
             position,
             travel_bearing,
@@ -170,6 +170,8 @@ class CarLightPair:
             glow_radius=0.0,
             illumination_radius=0.0,
             illumination_intensity=0.0,
+            illumination_falloff=2.0,
+            illumination_inner_fraction=0.0,
         )
 
     # ------------------------------------------------------------------
@@ -194,6 +196,8 @@ class CarLightPair:
             light.glow_radius = self._config.headlight_glow_radius
             light.illumination_radius = self._config.headlight_illumination_radius
             light.illumination_intensity = self._config.headlight_illumination_intensity
+            light.illumination_falloff = self._config.headlight_illumination_falloff
+            light.illumination_inner_fraction = self._config.headlight_illumination_inner_fraction
 
     def _apply_taillight_properties(self) -> None:
         """Set both lights to the pre-sampled taillight color, brightness, and glow."""
@@ -203,3 +207,5 @@ class CarLightPair:
             light.glow_radius = self._config.taillight_glow_radius
             light.illumination_radius = self._config.taillight_illumination_radius
             light.illumination_intensity = self._config.taillight_illumination_intensity
+            light.illumination_falloff = self._config.taillight_illumination_falloff
+            light.illumination_inner_fraction = self._config.taillight_illumination_inner_fraction

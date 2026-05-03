@@ -59,6 +59,7 @@ def build_control_panel(
     pygame_gui.elements.UIScrollingContainer,
     pygame_gui.elements.UIButton,
     pygame_gui.elements.UIButton,
+    pygame_gui.elements.UIButton,
     pygame_gui.elements.UISelectionList,
 ]:
     """Create and lay out the full devmode control panel.
@@ -66,7 +67,7 @@ def build_control_panel(
     Layout (top to bottom within panel_rect):
         - 120px  UISelectionList for section navigation.
         - Middle UIScrollingContainer holding all parameter sliders.
-        - 80px   Two side-by-side action buttons (Re-render, Save Config).
+        - 80px   Three equal-width action buttons (Re-render, Save Config, Load Config).
 
     Args:
         manager (pygame_gui.UIManager): The UI manager.
@@ -79,16 +80,17 @@ def build_control_panel(
             - UIScrollingContainer: The scroll area for sliders.
             - UIButton: The "Re-render" button.
             - UIButton: The "Save Config" button.
+            - UIButton: The "Load Config" button.
             - UISelectionList: The section navigation list.
     """
     section_list = _build_section_list(manager, panel_rect)
     scroll = _build_scroll_container(manager, panel_rect)
-    rerender_btn, save_btn = _build_action_buttons(manager, panel_rect)
+    rerender_btn, save_btn, load_btn = _build_action_buttons(manager, panel_rect)
 
     registry = SliderRegistry()
     _build_section_widgets(manager, scroll, registry, config, _SECTION_NAMES[0])
 
-    return registry, scroll, rerender_btn, save_btn, section_list
+    return registry, scroll, rerender_btn, save_btn, load_btn, section_list
 
 
 def rebuild_section(
@@ -168,18 +170,22 @@ def _build_scroll_container(
 def _build_action_buttons(
     manager: pygame_gui.UIManager,
     panel_rect: pygame.Rect,
-) -> t.Tuple[pygame_gui.elements.UIButton, pygame_gui.elements.UIButton]:
-    """Create the Re-render and Save Config action buttons.
+) -> t.Tuple[
+    pygame_gui.elements.UIButton,
+    pygame_gui.elements.UIButton,
+    pygame_gui.elements.UIButton,
+]:
+    """Create the Re-render, Save Config, and Load Config action buttons.
 
     Args:
         manager (pygame_gui.UIManager): The UI manager.
         panel_rect (pygame.Rect): Panel bounding rectangle.
 
     Returns:
-        tuple[UIButton, UIButton]: (rerender_button, save_button).
+        tuple[UIButton, UIButton, UIButton]: (rerender_button, save_button, load_button).
     """
     btn_y = panel_rect.y + panel_rect.height - _BUTTON_AREA_HEIGHT + 10
-    btn_width = panel_rect.width // 2
+    btn_width = panel_rect.width // 3
 
     rerender_btn = pygame_gui.elements.UIButton(
         relative_rect=pygame.Rect(panel_rect.x, btn_y, btn_width, 35),
@@ -191,7 +197,12 @@ def _build_action_buttons(
         text="Save Config",
         manager=manager,
     )
-    return rerender_btn, save_btn
+    load_btn = pygame_gui.elements.UIButton(
+        relative_rect=pygame.Rect(panel_rect.x + btn_width * 2, btn_y, btn_width, 35),
+        text="Load Config",
+        manager=manager,
+    )
+    return rerender_btn, save_btn, load_btn
 
 
 def _build_section_widgets(

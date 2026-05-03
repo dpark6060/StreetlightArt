@@ -15,7 +15,7 @@ import pytest
 
 from streets_at_night.config.defaults import DEFAULTS
 from streets_at_night.config.loader import load_config
-from streets_at_night.config.schema import RoadsConfig, SceneConfig
+from streets_at_night.config.schema import HeatHazeConfig, RoadsConfig, SceneConfig
 
 
 # ---------------------------------------------------------------------------
@@ -269,3 +269,54 @@ def test_load_config_atmosphere_can_be_overridden(atmosphere_override_toml: Path
 
     # Assert — override applied
     assert result.atmosphere.falloff_distance == 5000.0
+
+
+# ---------------------------------------------------------------------------
+# Heat haze config section
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_heat_haze_returns_heat_haze_config(empty_toml: Path):
+    # Act
+    result = load_config(empty_toml)
+
+    # Assert
+    assert isinstance(result.heat_haze, HeatHazeConfig)
+
+
+def test_load_config_heat_haze_defaults_match_defaults_dict(empty_toml: Path):
+    # Act
+    result = load_config(empty_toml)
+
+    # Assert
+    assert result.heat_haze.enabled == DEFAULTS["heat_haze"]["enabled"]
+    assert result.heat_haze.amplitude == DEFAULTS["heat_haze"]["amplitude"]
+    assert result.heat_haze.freq1 == DEFAULTS["heat_haze"]["freq1"]
+    assert result.heat_haze.distance_exponent == DEFAULTS["heat_haze"]["distance_exponent"]
+
+
+@pytest.fixture
+def heat_haze_override_toml(tmp_path: Path) -> Path:
+    """TOML with heat_haze.amplitude overridden."""
+    toml_file = tmp_path / "heat_haze.toml"
+    toml_file.write_text("[heat_haze]\namplitude = 8.0\n")
+    return toml_file
+
+
+def test_load_config_heat_haze_amplitude_override(heat_haze_override_toml: Path):
+    # Act
+    result = load_config(heat_haze_override_toml)
+
+    # Assert — overridden field changed
+    assert result.heat_haze.amplitude == 8.0
+    # Non-overridden fields stay at defaults
+    assert result.heat_haze.freq1 == DEFAULTS["heat_haze"]["freq1"]
+
+
+def test_load_config_heat_haze_absent_section_uses_defaults(empty_toml: Path):
+    # Act — no [heat_haze] section in the TOML at all
+    result = load_config(empty_toml)
+
+    # Assert — still gets a populated config object, not None
+    assert result.heat_haze is not None
+    assert result.heat_haze.speed1 == DEFAULTS["heat_haze"]["speed1"]

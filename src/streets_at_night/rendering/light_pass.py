@@ -1,6 +1,5 @@
 """Light render passes — dots for preview, core + glow halos for export."""
 
-import math
 import typing as t
 
 import numpy as np
@@ -9,7 +8,7 @@ from PIL import Image
 from ..camera.camera import Camera
 from ..camera.projection import project_points
 from .backend import RenderBackend
-from .render_utils import camera_distance, compute_focal_length, extract_positions
+from .render_utils import apply_brightness_falloff, camera_distance, compute_focal_length, extract_positions
 
 if t.TYPE_CHECKING:
     from ..models.light_source import LightSource
@@ -258,7 +257,7 @@ def _apply_brightness_falloff(
     Returns:
         float: Attenuated brightness.
     """
-    return brightness * math.exp(-distance / falloff_distance)
+    return apply_brightness_falloff(brightness, distance, falloff_distance)
 
 
 def _apply_haze_color(

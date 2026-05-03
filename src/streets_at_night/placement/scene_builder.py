@@ -78,16 +78,21 @@ def build_scene(
         transformer=transformer,
     )
     scene.build_spatial_index()
-    populate_lights(scene, config, random.Random(config.seed))
+    streetlights, car_lights, commercial_lights, house_lights = populate_lights(
+        scene, config, random.Random(config.seed)
+    )
+    _print_light_summary(streetlights, car_lights, commercial_lights, house_lights)
     return scene
 
 
-def populate_lights(scene: Scene, config: SceneConfig, rng: random.Random) -> None:
+def populate_lights(
+    scene: Scene, config: SceneConfig, rng: random.Random
+) -> t.Tuple[t.List, t.List, t.List, t.List]:
     """Run all light placers and add results to the scene.
 
     Creates deterministic child RNGs per placer from the master seed, then
     runs each placer in turn. Results are added to the scene via add_lights
-    and add_car_pairs. Prints a placement summary when done.
+    and add_car_pairs.
 
     Args:
         scene (Scene): The scene to populate. Must have road_segments and
@@ -95,6 +100,11 @@ def populate_lights(scene: Scene, config: SceneConfig, rng: random.Random) -> No
         config (SceneConfig): Loaded scene configuration with lights section.
         rng (random.Random): Master RNG seeded from config.seed. Child RNGs
             are derived from this to keep each placer independent.
+
+    Returns:
+        Tuple[List, List, List, List]: (streetlights, car_lights,
+            commercial_lights, house_lights) — all generated LightSources
+            by type, already added to the scene.
     """
     streetlight_rng, car_rng, commercial_rng, house_rng = _create_child_rngs(rng)
 
@@ -109,7 +119,7 @@ def populate_lights(scene: Scene, config: SceneConfig, rng: random.Random) -> No
     scene.add_lights(house_lights)
     scene.add_car_pairs(car_pairs)
 
-    _print_light_summary(streetlights, car_lights, commercial_lights, house_lights)
+    return streetlights, car_lights, commercial_lights, house_lights
 
 
 def _create_child_rngs(

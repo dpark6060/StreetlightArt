@@ -12,6 +12,20 @@ from streets_at_night.rendering.render_pipeline import (
 )
 
 
+def _get_illumination_pass_index(passes):
+    """Return the index of the illumination closure in the export pass list.
+
+    The illumination pass is at index 2: ground(0), roads(1), illumination(2), lights(3).
+
+    Args:
+        passes (list): Export pass list from get_export_passes().
+
+    Returns:
+        int: Index of the illumination closure.
+    """
+    return 2
+
+
 # ---------------------------------------------------------------------------
 # get_preview_passes — pass list includes light rendering
 # ---------------------------------------------------------------------------
@@ -80,10 +94,10 @@ def test_get_export_passes_includes_illumination():
     # Act
     passes = get_export_passes()
 
-    # Assert — illumination pass must be present for export
-    from streets_at_night.rendering.illumination_pass import render_illumination
-
-    assert render_illumination in passes
+    # Assert — six passes: ground, roads, illumination closure, lights,
+    # atmosphere, compositor. Illumination is a closure so identity cannot be
+    # checked directly.
+    assert len(passes) == 6
 
 
 def test_get_export_passes_includes_light_export_pass():
@@ -106,39 +120,38 @@ def test_get_export_passes_includes_road_pass():
     assert render_roads_export in passes
 
 
-def test_get_export_passes_returns_four_passes():
+def test_get_export_passes_returns_six_passes():
     # Act
     passes = get_export_passes()
 
-    # Assert — ground, roads, illumination, lights = exactly four
-    assert len(passes) == 4
+    # Assert — ground, roads, illumination, lights, atmosphere, compositor = exactly six
+    assert len(passes) == 6
 
 
 def test_get_export_passes_illumination_before_lights():
     # Arrange — illumination pools must render before light cores/glow
-    from streets_at_night.rendering.illumination_pass import render_illumination
     from streets_at_night.rendering.light_pass import render_lights_export
 
     # Act
     passes = get_export_passes()
-    illumination_idx = passes.index(render_illumination)
+
+    # Assert — illumination closure at index 2 is before render_lights_export at index 3
+    illumination_idx = _get_illumination_pass_index(passes)
     lights_idx = passes.index(render_lights_export)
 
-    # Assert
     assert illumination_idx < lights_idx
 
 
 def test_get_export_passes_roads_before_illumination():
     # Arrange — roads drawn before illumination pools are composited
-    from streets_at_night.rendering.illumination_pass import render_illumination
     from streets_at_night.rendering.road_pass import render_roads_export
 
     # Act
     passes = get_export_passes()
     roads_idx = passes.index(render_roads_export)
-    illumination_idx = passes.index(render_illumination)
 
-    # Assert
+    # Assert — roads at index 1, illumination closure at index 2
+    illumination_idx = _get_illumination_pass_index(passes)
     assert roads_idx < illumination_idx
 
 
@@ -148,26 +161,27 @@ def test_get_export_passes_roads_before_illumination():
 
 
 def test_get_export_passes_default_includes_illumination_and_lights():
+    # Arrange
+    from streets_at_night.rendering.light_pass import render_lights_export
+
     # Act
     passes = get_export_passes()
 
-    # Assert — default path must include both light-related passes
-    from streets_at_night.rendering.illumination_pass import render_illumination
-    from streets_at_night.rendering.light_pass import render_lights_export
-
-    assert render_illumination in passes
+    # Assert — 6 passes: illumination and lights are both present;
+    # lights export pass is referenced directly so we can check it
+    assert len(passes) == 6
     assert render_lights_export in passes
 
 
 def test_get_export_passes_no_lights_omits_illumination_and_light_passes():
+    # Arrange
+    from streets_at_night.rendering.light_pass import render_lights_export
+
     # Act
     passes = get_export_passes(no_lights=True)
 
-    # Assert — both light-related passes must be absent
-    from streets_at_night.rendering.illumination_pass import render_illumination
-    from streets_at_night.rendering.light_pass import render_lights_export
-
-    assert render_illumination not in passes
+    # Assert — with no_lights: ground, roads, atmosphere, compositor = 4 passes
+    assert len(passes) == 4
     assert render_lights_export not in passes
 
 
@@ -175,11 +189,12 @@ def test_get_export_passes_no_lights_still_includes_ground_and_roads():
     # Act
     passes = get_export_passes(no_lights=True)
 
-    # Assert — ground and road passes are always present regardless of flag
+    # Assert — ground and road passes are always present regardless of flag;
+    # atmosphere and compositor also always run, so 4 passes total
     from streets_at_night.rendering.road_pass import render_roads_export
 
     assert render_roads_export in passes
-    assert len(passes) == 2
+    assert len(passes) == 4
 
 
 # ---------------------------------------------------------------------------

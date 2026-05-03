@@ -39,4 +39,6 @@ def create_house_light(
         glow_radius=config.glow_radius,
         illumination_radius=config.illumination_radius,
         illumination_intensity=config.illumination_intensity,
+        illumination_falloff=config.illumination_falloff,
+        illumination_inner_fraction=config.illumination_inner_fraction,
     )

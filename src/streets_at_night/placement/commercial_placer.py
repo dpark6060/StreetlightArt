@@ -15,6 +15,9 @@ from ..models.commercial import (
 from ..models.light_source import LightSource
 from ..models.zones import CommercialZone
 
+_PARKING_LIGHT_HEIGHT_MIN: float = 8.0
+_PARKING_LIGHT_HEIGHT_MAX: float = 12.0
+
 
 def place_commercial_lights(
     commercial_zones: t.List[CommercialZone],
@@ -281,7 +284,8 @@ def _place_parking_grid(
     """Place parking lot lights on a regular grid within a polygon.
 
     Grid spacing is drawn once from the configured range. Only grid points
-    that fall inside the polygon are kept.
+    that fall inside the polygon are kept. Each light is placed at a random
+    pole height between _PARKING_LIGHT_HEIGHT_MIN and _PARKING_LIGHT_HEIGHT_MAX.
 
     Args:
         polygon (Polygon): Parking area polygon in ENU metres.
@@ -298,7 +302,7 @@ def _place_parking_grid(
     grid_points = _compute_grid_points(polygon, spacing)
     lights: t.List[LightSource] = []
     for x, y in grid_points:
-        position = np.array([x, y, 0.0])
+        position = np.array([x, y, rng.uniform(_PARKING_LIGHT_HEIGHT_MIN, _PARKING_LIGHT_HEIGHT_MAX)])
         lights.append(create_parking_lot_light(position, config.commercial, rng))
     return lights
 

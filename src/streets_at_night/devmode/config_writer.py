@@ -288,6 +288,8 @@ def _fixture_profile_to_dict(profile: FixtureProfileConfig) -> dict:
         "glow_radius": profile.glow_radius,
         "illumination_radius": profile.illumination_radius,
         "illumination_intensity": profile.illumination_intensity,
+        "illumination_falloff": profile.illumination_falloff,
+        "illumination_inner_fraction": profile.illumination_inner_fraction,
         "spacing_min": profile.spacing_min,
         "spacing_max": profile.spacing_max,
         "side": profile.side,
@@ -321,9 +323,13 @@ def _cars_to_dict(cars: CarConfig) -> dict:
         "headlight_glow_radius": cars.headlight_glow_radius,
         "headlight_illumination_radius": cars.headlight_illumination_radius,
         "headlight_illumination_intensity": cars.headlight_illumination_intensity,
+        "headlight_illumination_falloff": cars.headlight_illumination_falloff,
+        "headlight_illumination_inner_fraction": cars.headlight_illumination_inner_fraction,
         "taillight_glow_radius": cars.taillight_glow_radius,
         "taillight_illumination_radius": cars.taillight_illumination_radius,
         "taillight_illumination_intensity": cars.taillight_illumination_intensity,
+        "taillight_illumination_falloff": cars.taillight_illumination_falloff,
+        "taillight_illumination_inner_fraction": cars.taillight_illumination_inner_fraction,
     }
 
 
@@ -343,12 +349,16 @@ def _commercial_lights_to_dict(commercial: CommercialLightConfig) -> dict:
         "sign_glow_radius": commercial.sign_glow_radius,
         "sign_illumination_radius": commercial.sign_illumination_radius,
         "sign_illumination_intensity": commercial.sign_illumination_intensity,
+        "sign_illumination_falloff": commercial.sign_illumination_falloff,
+        "sign_illumination_inner_fraction": commercial.sign_illumination_inner_fraction,
         "parking_colors": _color_pool_to_dict(commercial.parking_colors),
         "parking_brightness_min": commercial.parking_brightness_min,
         "parking_brightness_max": commercial.parking_brightness_max,
         "parking_glow_radius": commercial.parking_glow_radius,
         "parking_illumination_radius": commercial.parking_illumination_radius,
         "parking_illumination_intensity": commercial.parking_illumination_intensity,
+        "parking_illumination_falloff": commercial.parking_illumination_falloff,
+        "parking_illumination_inner_fraction": commercial.parking_illumination_inner_fraction,
         "parking_grid_spacing_min": commercial.parking_grid_spacing_min,
         "parking_grid_spacing_max": commercial.parking_grid_spacing_max,
         "storefront_colors": _color_pool_to_dict(commercial.storefront_colors),
@@ -357,6 +367,8 @@ def _commercial_lights_to_dict(commercial: CommercialLightConfig) -> dict:
         "storefront_glow_radius": commercial.storefront_glow_radius,
         "storefront_illumination_radius": commercial.storefront_illumination_radius,
         "storefront_illumination_intensity": commercial.storefront_illumination_intensity,
+        "storefront_illumination_falloff": commercial.storefront_illumination_falloff,
+        "storefront_illumination_inner_fraction": commercial.storefront_illumination_inner_fraction,
         "storefront_spacing_min": commercial.storefront_spacing_min,
         "storefront_spacing_max": commercial.storefront_spacing_max,
     }
@@ -378,6 +390,8 @@ def _house_lights_to_dict(house_lights: HouseLightConfig) -> dict:
         "glow_radius": house_lights.glow_radius,
         "illumination_radius": house_lights.illumination_radius,
         "illumination_intensity": house_lights.illumination_intensity,
+        "illumination_falloff": house_lights.illumination_falloff,
+        "illumination_inner_fraction": house_lights.illumination_inner_fraction,
     }
 
 

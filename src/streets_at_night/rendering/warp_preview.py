@@ -14,6 +14,7 @@ import numpy as np
 from PIL import Image
 
 from ..camera.camera import Camera
+from ..config.schema import HeatHazeConfig
 from .backend import RenderBackend
 from .flat_map import FlatMapMeta
 
@@ -177,3 +178,56 @@ def _sample_flat_map(
     output = np.full((height, width, 3), _SKY_COLOR, dtype=np.uint8)
     output[ground_mask] = src[flat_py[ground_mask], flat_px[ground_mask]]
     return Image.fromarray(output, "RGB")
+
+
+def apply_heat_haze(
+    frame: np.ndarray,
+    t: float,
+    config: HeatHazeConfig,
+) -> np.ndarray:
+    """Apply atmospheric heat haze distortion to a composited frame.
+
+    Shifts pixels using a two-octave sine wave displacement field. Pixels near
+    the top of the frame (horizon / distant ground) shimmer more than pixels
+    near the bottom (close ground), using screen_y as a distance proxy.
+
+    The input array is not mutated. Meshgrids are computed internally; at
+    1280×720 this costs under 1ms and avoids coupling the function to any
+    animation state object.
+
+    Args:
+        frame (np.ndarray): (H, W, 3) uint8 composited frame.
+        t (float): Elapsed time in seconds, drives wave animation.
+        config (HeatHazeConfig): Heat haze parameters.
+
+    Returns:
+        np.ndarray: New (H, W, 3) uint8 array with haze distortion applied.
+    """
+    h, w = frame.shape[:2]
+    screen_y, screen_x = np.meshgrid(
+        np.arange(h, dtype=np.float32),
+        np.arange(w, dtype=np.float32),
+        indexing="ij",
+    )
+
+    # 0.0 at bottom of frame (near ground), 1.0 at top (horizon / sky)
+    norm_y = (h - 1 - screen_y) / (h - 1)
+    distance_scale = norm_y ** config.distance_exponent
+
+    f1, f2 = config.freq1, config.freq2
+    s1, s2 = config.speed1, config.speed2
+    a = config.amplitude
+
+    dx = a * distance_scale * (
+        np.sin(f1 * screen_y + s1 * t)
+        + 0.5 * np.sin(f2 * screen_y + 0.7 * screen_x + s2 * t)
+    )
+    dy = a * distance_scale * 0.4 * (
+        np.cos(f1 * screen_x + s1 * t * 0.8)
+        + 0.5 * np.cos(f2 * screen_x + s2 * t)
+    )
+
+    src_y = np.clip(screen_y + dy, 0, h - 1).astype(np.int32)
+    src_x = np.clip(screen_x + dx, 0, w - 1).astype(np.int32)
+
+    return frame[src_y, src_x]

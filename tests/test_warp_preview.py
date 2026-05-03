@@ -17,10 +17,12 @@ from streets_at_night.rendering.flat_map import (
     _compute_cache_key,
     _auto_scale_resolution,
 )
+from streets_at_night.config.schema import HeatHazeConfig
 from streets_at_night.rendering.warp_preview import (
     _build_ray_directions,
     _raycast_to_flat_map,
     _sample_flat_map,
+    apply_heat_haze,
     render_warp_preview,
 )
 from streets_at_night.models.road_segment import RoadSegment
@@ -388,6 +390,88 @@ def test_sample_flat_map_ground_pixels_get_map_color():
 # ---------------------------------------------------------------------------
 # render_warp_preview — integration
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# apply_heat_haze
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def heat_haze_config() -> HeatHazeConfig:
+    """Return a HeatHazeConfig with default parameter values."""
+    return HeatHazeConfig(
+        enabled=True,
+        amplitude=3.0,
+        freq1=0.003,
+        freq2=0.007,
+        speed1=0.4,
+        speed2=0.6,
+        distance_exponent=1.5,
+    )
+
+
+def test_apply_heat_haze_output_shape_matches_input(heat_haze_config):
+    # Arrange
+    frame = np.zeros((72, 128, 3), dtype=np.uint8)
+
+    # Act
+    result = apply_heat_haze(frame, t=0.0, config=heat_haze_config)
+
+    # Assert
+    assert result.shape == frame.shape
+
+
+def test_apply_heat_haze_does_not_mutate_input(heat_haze_config):
+    # Arrange
+    frame = np.full((72, 128, 3), 128, dtype=np.uint8)
+    original = frame.copy()
+
+    # Act
+    apply_heat_haze(frame, t=0.0, config=heat_haze_config)
+
+    # Assert
+    np.testing.assert_array_equal(frame, original)
+
+
+def test_apply_heat_haze_zero_amplitude_returns_identity(heat_haze_config):
+    # Arrange — with amplitude=0 the displacement is zero so output == input
+    config = HeatHazeConfig(
+        enabled=True,
+        amplitude=0.0,
+        freq1=heat_haze_config.freq1,
+        freq2=heat_haze_config.freq2,
+        speed1=heat_haze_config.speed1,
+        speed2=heat_haze_config.speed2,
+        distance_exponent=heat_haze_config.distance_exponent,
+    )
+    frame = np.arange(72 * 128 * 3, dtype=np.uint8).reshape(72, 128, 3)
+
+    # Act
+    result = apply_heat_haze(frame, t=0.0, config=config)
+
+    # Assert
+    np.testing.assert_array_equal(result, frame)
+
+
+def test_apply_heat_haze_horizon_shifts_more_than_foreground(heat_haze_config):
+    # Arrange — checkerboard so any displacement creates differences
+    frame = np.zeros((72, 128, 3), dtype=np.uint8)
+    frame[::2, ::2] = 255  # white squares on even rows/cols
+
+    result_t0 = apply_heat_haze(frame, t=0.0, config=heat_haze_config)
+    result_t1 = apply_heat_haze(frame, t=2.5, config=heat_haze_config)
+
+    # Top rows (near horizon) should differ more between t=0 and t=2.5
+    # than bottom rows (near camera), because distance_scale is larger there.
+    top_diff = np.abs(
+        result_t0[:10].astype(np.int32) - result_t1[:10].astype(np.int32)
+    ).mean()
+    bottom_diff = np.abs(
+        result_t0[-10:].astype(np.int32) - result_t1[-10:].astype(np.int32)
+    ).mean()
+
+    assert top_diff > bottom_diff
 
 
 def test_render_warp_preview_calls_blit(simple_camera, minimal_scene, flat_meta):

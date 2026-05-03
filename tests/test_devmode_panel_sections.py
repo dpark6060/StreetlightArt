@@ -26,6 +26,8 @@ def _make_profile() -> FixtureProfileConfig:
         glow_radius=12.0,
         illumination_radius=30.0,
         illumination_intensity=0.4,
+        illumination_falloff=2.0,
+        illumination_inner_fraction=0.0,
         spacing_min=30.0,
         spacing_max=60.0,
         side="both",

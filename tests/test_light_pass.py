@@ -53,6 +53,8 @@ def sample_light() -> LightSource:
         glow_radius=10.0,
         illumination_radius=20.0,
         illumination_intensity=0.8,
+        illumination_falloff=2.0,
+        illumination_inner_fraction=0.0,
     )
 
 
@@ -494,6 +496,8 @@ def test_render_lights_export_uses_draw_point_for_small_lights(
         glow_radius=1.0,
         illumination_radius=2.0,
         illumination_intensity=0.5,
+        illumination_falloff=2.0,
+        illumination_inner_fraction=0.0,
     )
     screen_coords = np.array([[320.0, 180.0]])
     valid_mask = np.array([True])

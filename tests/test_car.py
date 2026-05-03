@@ -46,6 +46,10 @@ def car_config() -> CarConfig:
         ]),
         separation_min=1.6,
         separation_max=2.4,
+        headlight_brightness_min=0.7,
+        headlight_brightness_max=0.9,
+        taillight_brightness_min=0.3,
+        taillight_brightness_max=0.5,
         density_highway_min=25.0,
         density_highway_max=50.0,
         density_major_min=40.0,
@@ -59,9 +63,13 @@ def car_config() -> CarConfig:
         headlight_glow_radius=8.0,
         headlight_illumination_radius=15.0,
         headlight_illumination_intensity=0.6,
+        headlight_illumination_falloff=1.5,
+        headlight_illumination_inner_fraction=0.3,
         taillight_glow_radius=3.0,
         taillight_illumination_radius=2.0,
         taillight_illumination_intensity=0.1,
+        taillight_illumination_falloff=2.0,
+        taillight_illumination_inner_fraction=0.0,
     )
 
 
@@ -168,7 +176,7 @@ def test_resolve_facing_toward_camera_sets_bright_glow(car_pair):
     assert all(light.glow_radius == 8.0 for light in lights)
 
 
-def test_resolve_facing_toward_camera_sets_brightness_range(car_pair):
+def test_resolve_facing_toward_camera_sets_brightness_range(car_pair, car_config):
     # Arrange
     camera_forward = np.array([1.0, 0.0, 0.0])
 
@@ -176,8 +184,11 @@ def test_resolve_facing_toward_camera_sets_brightness_range(car_pair):
     car_pair.resolve_facing(camera_forward)
     lights = car_pair.get_lights()
 
-    # Assert — headlight brightness in [0.7, 0.9]
-    assert all(0.7 <= light.brightness <= 0.9 for light in lights)
+    # Assert — headlight brightness within config range
+    assert all(
+        car_config.headlight_brightness_min <= light.brightness <= car_config.headlight_brightness_max
+        for light in lights
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +208,7 @@ def test_resolve_facing_away_from_camera_sets_dim_glow(car_pair):
     assert all(light.glow_radius == 3.0 for light in lights)
 
 
-def test_resolve_facing_away_from_camera_sets_brightness_range(car_pair):
+def test_resolve_facing_away_from_camera_sets_brightness_range(car_pair, car_config):
     # Arrange
     camera_forward = np.array([-1.0, 0.0, 0.0])
 
@@ -205,8 +216,11 @@ def test_resolve_facing_away_from_camera_sets_brightness_range(car_pair):
     car_pair.resolve_facing(camera_forward)
     lights = car_pair.get_lights()
 
-    # Assert — taillight brightness in [0.3, 0.5]
-    assert all(0.3 <= light.brightness <= 0.5 for light in lights)
+    # Assert — taillight brightness within config range
+    assert all(
+        car_config.taillight_brightness_min <= light.brightness <= car_config.taillight_brightness_max
+        for light in lights
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +288,10 @@ def test_headlight_color_comes_from_config():
         taillight_colors=ColorPoolConfig(colors=[("#FF0000", 1.0)]),
         separation_min=1.6,
         separation_max=2.4,
+        headlight_brightness_min=0.7,
+        headlight_brightness_max=0.9,
+        taillight_brightness_min=0.3,
+        taillight_brightness_max=0.5,
         density_highway_min=25.0,
         density_highway_max=50.0,
         density_major_min=40.0,
@@ -287,9 +305,13 @@ def test_headlight_color_comes_from_config():
         headlight_glow_radius=8.0,
         headlight_illumination_radius=15.0,
         headlight_illumination_intensity=0.6,
+        headlight_illumination_falloff=1.5,
         taillight_glow_radius=3.0,
         taillight_illumination_radius=2.0,
         taillight_illumination_intensity=0.1,
+        taillight_illumination_falloff=2.0,
+        taillight_illumination_inner_fraction=0.0,
+        headlight_illumination_inner_fraction=0.3,
     )
     rng = random.Random(0)
     pair = CarLightPair(
@@ -320,6 +342,10 @@ def test_taillight_color_comes_from_config():
         taillight_colors=ColorPoolConfig(colors=[("#DD1122", 1.0)]),
         separation_min=1.6,
         separation_max=2.4,
+        headlight_brightness_min=0.7,
+        headlight_brightness_max=0.9,
+        taillight_brightness_min=0.3,
+        taillight_brightness_max=0.5,
         density_highway_min=25.0,
         density_highway_max=50.0,
         density_major_min=40.0,
@@ -333,9 +359,13 @@ def test_taillight_color_comes_from_config():
         headlight_glow_radius=8.0,
         headlight_illumination_radius=15.0,
         headlight_illumination_intensity=0.6,
+        headlight_illumination_falloff=1.5,
         taillight_glow_radius=3.0,
         taillight_illumination_radius=2.0,
         taillight_illumination_intensity=0.1,
+        taillight_illumination_falloff=2.0,
+        taillight_illumination_inner_fraction=0.0,
+        headlight_illumination_inner_fraction=0.3,
     )
     rng = random.Random(0)
     pair = CarLightPair(
@@ -366,6 +396,10 @@ def test_separation_respects_config_range():
         taillight_colors=ColorPoolConfig(colors=[("#FF0000", 1.0)]),
         separation_min=3.0,
         separation_max=3.1,
+        headlight_brightness_min=0.7,
+        headlight_brightness_max=0.9,
+        taillight_brightness_min=0.3,
+        taillight_brightness_max=0.5,
         density_highway_min=25.0,
         density_highway_max=50.0,
         density_major_min=40.0,
@@ -379,9 +413,13 @@ def test_separation_respects_config_range():
         headlight_glow_radius=8.0,
         headlight_illumination_radius=15.0,
         headlight_illumination_intensity=0.6,
+        headlight_illumination_falloff=1.5,
         taillight_glow_radius=3.0,
         taillight_illumination_radius=2.0,
         taillight_illumination_intensity=0.1,
+        taillight_illumination_falloff=2.0,
+        taillight_illumination_inner_fraction=0.0,
+        headlight_illumination_inner_fraction=0.3,
     )
     for seed in range(20):
         rng = random.Random(seed)
@@ -409,16 +447,28 @@ def _make_config_with_light_overrides(
     headlight_glow_radius: float = 8.0,
     headlight_illumination_radius: float = 15.0,
     headlight_illumination_intensity: float = 0.6,
+    headlight_illumination_falloff: float = 1.5,
+    headlight_illumination_inner_fraction: float = 0.3,
     taillight_glow_radius: float = 3.0,
     taillight_illumination_radius: float = 2.0,
     taillight_illumination_intensity: float = 0.1,
+    taillight_illumination_falloff: float = 2.0,
+    taillight_illumination_inner_fraction: float = 0.0,
+    headlight_brightness_min: float = 0.7,
+    headlight_brightness_max: float = 0.9,
+    taillight_brightness_min: float = 0.3,
+    taillight_brightness_max: float = 0.5,
 ) -> CarConfig:
-    """Build a CarConfig with controllable glow/illumination fields."""
+    """Build a CarConfig with controllable glow/illumination and brightness fields."""
     return CarConfig(
         headlight_colors=ColorPoolConfig(colors=[("#FFFFFF", 1.0)]),
         taillight_colors=ColorPoolConfig(colors=[("#FF0000", 1.0)]),
         separation_min=1.6,
         separation_max=2.4,
+        headlight_brightness_min=headlight_brightness_min,
+        headlight_brightness_max=headlight_brightness_max,
+        taillight_brightness_min=taillight_brightness_min,
+        taillight_brightness_max=taillight_brightness_max,
         density_highway_min=25.0,
         density_highway_max=50.0,
         density_major_min=40.0,
@@ -432,9 +482,13 @@ def _make_config_with_light_overrides(
         headlight_glow_radius=headlight_glow_radius,
         headlight_illumination_radius=headlight_illumination_radius,
         headlight_illumination_intensity=headlight_illumination_intensity,
+        headlight_illumination_falloff=headlight_illumination_falloff,
+        headlight_illumination_inner_fraction=headlight_illumination_inner_fraction,
         taillight_glow_radius=taillight_glow_radius,
         taillight_illumination_radius=taillight_illumination_radius,
         taillight_illumination_intensity=taillight_illumination_intensity,
+        taillight_illumination_falloff=taillight_illumination_falloff,
+        taillight_illumination_inner_fraction=taillight_illumination_inner_fraction,
     )
 
 
@@ -550,3 +604,52 @@ def test_taillight_illumination_intensity_comes_from_config():
 
     # Assert
     assert all(light.illumination_intensity == 0.05 for light in lights)
+
+
+# ---------------------------------------------------------------------------
+# Brightness config threading
+# ---------------------------------------------------------------------------
+
+
+def test_headlight_brightness_comes_from_config():
+    # Arrange — tight range so any sampled value must fall within it
+    config = _make_config_with_light_overrides(
+        headlight_brightness_min=0.85,
+        headlight_brightness_max=0.86,
+    )
+    pair = CarLightPair(
+        position=np.array([0.0, 0.0, 0.0]),
+        travel_bearing=0.0,
+        config=config,
+        rng=random.Random(0),
+    )
+    camera_forward = np.array([1.0, 0.0, 0.0])
+
+    # Act
+    pair.resolve_facing(camera_forward)
+    lights = pair.get_lights()
+
+    # Assert — brightness falls within the tight configured range
+    assert all(0.85 <= light.brightness <= 0.86 for light in lights)
+
+
+def test_taillight_brightness_comes_from_config():
+    # Arrange — tight range so any sampled value must fall within it
+    config = _make_config_with_light_overrides(
+        taillight_brightness_min=0.35,
+        taillight_brightness_max=0.36,
+    )
+    pair = CarLightPair(
+        position=np.array([0.0, 0.0, 0.0]),
+        travel_bearing=0.0,
+        config=config,
+        rng=random.Random(0),
+    )
+    camera_forward = np.array([-1.0, 0.0, 0.0])
+
+    # Act
+    pair.resolve_facing(camera_forward)
+    lights = pair.get_lights()
+
+    # Assert — brightness falls within the tight configured range
+    assert all(0.35 <= light.brightness <= 0.36 for light in lights)

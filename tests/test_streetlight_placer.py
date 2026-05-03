@@ -44,6 +44,8 @@ def sample_profile() -> FixtureProfile:
         glow_radius=18.0,
         illumination_radius=30.0,
         illumination_intensity=0.75,
+        illumination_falloff=2.0,
+        illumination_inner_fraction=0.0,
         spacing=50.0,
         side="both",
     )
@@ -76,6 +78,8 @@ def short_segment() -> RoadSegment:
         glow_radius=18.0,
         illumination_radius=30.0,
         illumination_intensity=0.75,
+        illumination_falloff=2.0,
+        illumination_inner_fraction=0.0,
         spacing=50.0,
         side="both",
     )
@@ -163,6 +167,8 @@ def test_place_streetlights_both_sides_produces_even_count(
         glow_radius=18.0,
         illumination_radius=30.0,
         illumination_intensity=0.75,
+        illumination_falloff=2.0,
+        illumination_inner_fraction=0.0,
         spacing=50.0,
         side="both",
     )

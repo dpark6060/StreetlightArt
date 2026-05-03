@@ -43,6 +43,8 @@ def house_light_config() -> HouseLightConfig:
         glow_radius=6.0,
         illumination_radius=8.0,
         illumination_intensity=0.35,
+        illumination_falloff=2.0,
+        illumination_inner_fraction=0.0,
     )
 
 

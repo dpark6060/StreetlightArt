@@ -235,6 +235,8 @@ def test_populate_lights_adds_all_lights_to_scene(
         glow_radius=25.0,
         illumination_radius=40.0,
         illumination_intensity=0.85,
+        illumination_falloff=2.0,
+        illumination_inner_fraction=0.0,
     )
     car_light = LightSource(
         position=np.array([10.0, 0.0, 0.5]),
@@ -244,6 +246,8 @@ def test_populate_lights_adds_all_lights_to_scene(
         glow_radius=8.0,
         illumination_radius=15.0,
         illumination_intensity=0.6,
+        illumination_falloff=2.0,
+        illumination_inner_fraction=0.0,
     )
     mock_streetlights.return_value = [street_light]
     mock_cars.return_value = ([car_light], [])

@@ -1,3 +1,51 @@
+## change_planner — 2026-04-04 12:00
+Wrote Stage 6 change plan to `Stages/stage6_change_plan.md`. Verification confirmed: `draw_line_rgba` exists in both `backend.py` and `PillowBackend`; `_compute_horizon_y` is only in `ground_pass.py` (not `render_utils.py`); `atmosphere_pass.py` and `compositor.py` do not yet exist.
+
+## code_writer — 2026-04-02 10:00
+Applied smoothstep to `fade_t` in `_paint_illumination_blob` (`illumination_pass.py` line 255): one-line insert `fade_t = fade_t * fade_t * (3.0 - 2.0 * fade_t)` eliminates the C1-discontinuity kink at the inner/outer zone boundary. 512/512 tests pass.
+
+## doc_writer — 2026-04-01 12:00
+Created `Stages/Incomplete/stage6a.md` spec for the thermal atmospheric distortion animation feature. Documents the post-process warp approach, the `LightSource.base_brightness` prerequisite, depth buffer infrastructure, and all new/modified files.
+
+## code_writer — 2026-04-01 11:00
+Added exponential distance falloff to `_paint_illumination_blob` in `illumination_pass.py` by factoring the shared formula into a new public `apply_brightness_falloff` function in `render_utils.py`, then delegating to it from both `light_pass._apply_brightness_falloff` and the new illumination path. Created `tests/test_illumination_pass.py` with 5 tests; 512/512 tests pass.
+
+## code_writer — 2026-04-01 09:45
+Three changes: (1) threaded `headlight_brightness_min/max` and `taillight_brightness_min/max` through `CarConfig`, `defaults.py`, `loader.py`, `car.py`, `panel_sections.py`, and `scene_config_devmode.toml`; (2) moved `_print_light_summary` call from `populate_lights` into `build_scene`, with `populate_lights` now returning the four light lists; (3) added `_PARKING_LIGHT_HEIGHT_MIN/MAX` constants and updated `_place_parking_grid` to place lights at 8–12m height. All 507 tests pass.
+
+## doc_writer — 2026-04-01
+Updated `.claude/work/architecture-plan.md` to reflect Stages 3–5 implementation. Key corrections: zone_builder.py is fully implemented (not a stub); ground_tiles.py documented with GroundTileGrid and cache key strategy; full config schema (AtmosphereConfig, CommercialLightConfig, CarConfig, HouseLightConfig, DevmodeConfig, RoadsConfig); devmode/ module (7 files) and utils/colors.py added to file tree; house_light.py and commercial.py are factory functions not class hierarchies; stage status table added.
+
+## code_architect — 2026-03-30 (revised)
+Rewrote `docs/animation_design.md` to reflect a cached `base_frame` architecture: full warp + illumination pipeline runs once at startup (and on camera move via `base_frame_dirty` flag), with per-frame work reduced to a numpy pixel shift for heat haze and screen-space circle draws for car lights. Heat haze now operates on the post-composited output image using `screen_y` as a distance proxy instead of `t_val`, and `apply_heat_haze` has no dependency on the raycast pipeline.
+
+## code_architect — 2026-03-30
+Wrote `docs/animation_design.md` covering heat haze (screen-space UV distortion via layered sine waves, time injected via closure into the warp pass) and moving cars (`CarState` + `AnimationState` in `main.py`, `update_position` on `CarLightPair`, teleport-on-segment-end). Key open question flagged: car lights are not visible in the warp preview path unless `render_lights_preview` is added to the pass list alongside the warp pass.
+
+## code_writer — 2026-03-30 14:30
+Replaced nearest-neighbor lookup with bilinear interpolation in `_sample_illumination_map` in `illumination_pass.py`, and reduced `_BASE_ILLUMINATION_RESOLUTION` from 5.0 to 2.0 m/px to provide finer underlying map detail. All 505 tests pass.
+
+## code_writer — 2026-03-30 14:10
+Added "Load Config" button to devmode: extended `_build_action_buttons` to three equal-width buttons in `control_panel.py`, added `_show_load_dialog` and `_handle_load` to `cmd_devmode.py`, and wired event handling to reload the scene on success. All 505 tests pass.
+
+## code_writer — 2026-03-30 13:45
+Removed `_blur_illumination_map`, `_ILLUM_BLUR_RADIUS`, and the `ImageFilter` import from `illumination_pass.py`; `_build_illumination_map` now clips directly without blurring. All 505 tests pass.
+
+## code_writer — 2026-03-30 11:30
+Replaced the `h² / (h² + r²)` falloff in `_paint_illumination_blob` (`illumination_pass.py`) with `1 / (1 + r_ratio^n)`, making `illumination_radius` the exact half-brightness radius and `n = clamp(2*height/radius, 1, 4)` the sharpness exponent. All 505 tests pass.
+
+## code_writer — 2026-03-30 11:00
+Removed dead `illumination_min_radius` SliderDescriptor from `build_atmosphere_section` in `panel_sections.py` and updated the docstring to match. All 505 tests pass.
+
+## code_writer — 2026-03-30 10:30
+Replaced Gaussian falloff in `_paint_gaussian_blob` with physics-based inverse-square-law falloff (`h² / (h² + r²)`) and renamed the function to `_paint_illumination_blob` in `illumination_pass.py`. Bounding box now uses `radius_px` directly (not `3*sigma`), and a linear soft edge fades intensity from 85%–100% of `illumination_radius` to avoid hard cutoff rings; all 505 tests pass.
+
+## code_writer — 2026-03-30 01:00
+Replaced screen-space splat illumination with world-space Gaussian map + per-pixel raycast in `illumination_pass.py` (full rewrite). Updated `render_pipeline.py` to wrap the illumination pass in a closure that forwards `quality_preset.illumination_resolution_multiplier`, updated `main.py` to pass the preset, and updated `test_render_pipeline_stage5.py` to check pass count instead of identity for the closure; all 505 tests pass. Deferred: no unit tests for the new `illumination_pass.py` internals.
+
+## code_writer — 2026-03-30 00:00
+Fixed horizon bleed bug in `illumination_pass.py`: added `_mask_above_horizon()` helper that zeros all RGBA rows above `horizon_y` post-blur, and wired it between `_blur_layer` and `composite_additive` in `render_illumination`. Imported `_compute_horizon_y` from `ground_pass`; all 505 tests pass.
+
 ## code_writer — 2026-03-25 12:00
 Updated `Stages/left_off_here.md`: date bumped to 2026-03-25, test count to 505, new "Done This Session" section added with 11 items, old session renamed to "Done Previous Session (2026-03-24)", and two deferred items removed (perspective-correct illumination radius and commercial `illumination_intensity` hardcoding — both resolved this session).
 
@@ -247,3 +295,27 @@ Added missing `illumination_intensity` slider to `build_streetlight_section` in 
 
 ## code_writer — 2026-03-25 10:15
 Added `illumination_min_radius: float = 15.0` to `AtmosphereConfig` and wired it through `defaults.py`, `loader.py`, `config_writer.py`, `panel_sections.py`, and all three TOML files; in `illumination_pass.py`, the projected splat radius is clamped to this minimum before drawing so distant lights survive the 20px gaussian blur. 505 tests pass.
+
+## debugger — 2026-03-30 00:00
+Traced the full illumination slider data flow; confirmed slider values DO reach LightSource objects correctly. Identified two root causes for apparent "no effect": (1) the inverse-square falloff makes illumination_radius irrelevant at default scale since intensity is negligible before the cutoff radius, and (2) alpha pre-multiplication in _rgba_to_additive_rgb (pillow_backend.py lines 182-183) squares the illumination values making them 5× weaker than intended. Also flagged a redundant double-render in cmd_devmode.py lines 77-79. Findings appended to .claude/work/debug-findings.md.
+
+
+## code_writer — 2026-03-30 14:45
+Fixed double-attenuation bug in `_float_to_pil_rgba` in `illumination_pass.py`: replaced `alpha = rgb.max(axis=2)` with `alpha = np.full(rgb.shape[:2], 255, dtype=np.uint8)` so the additive composite pass receives full-strength RGB values. All 505 tests pass.
+
+
+## code_writer — 2026-03-30 15:45
+Added `illumination_falloff: float` field across 8 source files (`light_source.py`, `schema.py`, `defaults.py`, `loader.py`, `config_writer.py`, `streetlight.py`, `car.py`, `commercial.py`, `house_light.py`) and replaced the sigmoid+soft-edge formula in `_paint_illumination_blob` with the cone model `(1-t)^falloff`; also added falloff sliders in `panel_sections.py`. All loader reads use `.get()` with type-appropriate defaults for backward compat with existing TOML files; 505/505 tests pass.
+
+## code_writer — 2026-03-30 17:45
+Added `illumination_inner_fraction` field across the full pipeline (LightSource, FixtureProfile, FixtureProfileConfig, CarConfig, CommercialLightConfig, HouseLightConfig, schema, defaults, loader, config_writer, all placement models, panel_sections) and replaced the cone model in `_paint_illumination_blob` with a two-zone model that holds full brightness from 0 to `inner_fraction * radius` then fades via power-law to zero at the edge. All 505 tests pass.
+
+## doc_writer — 2026-04-02 10:24
+Replaced `Stages/left_off_here.md` with a current-state note dated 2026-04-02 (stages 1–5 complete, stage 6 not started, 512 tests passing) and prepended two new dated sections to `.claude/work/implementation-notes.md` covering the 2026-03-24 and 2026-03-25 sessions.
+
+
+## process-architect — 2026-05-03 00:00
+Decomposed the heat haze feature from `docs/animation_design.md` into 11 ordered sub-tasks covering config schema, defaults, loader, TOML, `apply_heat_haze` implementation, `AnimationState` dataclass, base frame caching, per-frame loop replacement, dirty flag wiring, and unit tests. No files were created or modified; output was returned directly to the user.
+
+## debugger — 2026-04-02 15:30
+Investigated `illumination_inner_fraction` dark center bug: the formula in `_paint_illumination_blob` (illumination_pass.py lines 251-255) is mathematically correct and numerically verified — no dark values are produced. Root cause is a design artifact: the hard flat-top step boundary created by `inner_fraction > 0` creates a visible ring in world space that, when viewed under oblique perspective projection, appears as a dark gap between the screen-space glow halo and the world-space illumination inner disc. Findings written to `.claude/work/debug-findings.md`.

@@ -398,6 +398,57 @@ colors = [
 
 > **Note:** House light configs are parsed from TOML but not yet wired to the runtime placement code — the factory currently uses hardcoded values. Full passthrough is tracked in `stage5_deferred.md` item #7.
 
+### `[heat_haze]`
+
+Controls the atmospheric thermal ripple animation applied in the interactive preview. Heat haze is a post-process pixel shift applied each frame on top of a cached base frame — it does not affect the export render path.
+
+The effect simulates the way hot air distorts light near a city at night: lights near the horizon shimmer and waver, while lights close to the camera are mostly still.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `true` | Enable or disable the effect entirely |
+| `amplitude` | float | `3.0` | Maximum pixel displacement at the horizon. Controls how violently the image shimmers. At `3.0`, horizon features shift by ~1–3 pixels per frame. Values above `6.0` start to look like a bad TV signal rather than heat. |
+| `freq1` | float | `0.003` | Primary spatial frequency of the wave pattern in cycles per pixel. Lower values produce broad, slow undulations; higher values produce tighter, faster ripples. |
+| `freq2` | float | `0.007` | Secondary spatial frequency, layered on top of `freq1` to break up regularity. Should be roughly 2× `freq1` for a natural look. |
+| `speed1` | float | `0.4` | Animation speed of the primary wave in radians per second. At `0.4`, a full shimmer cycle takes ~15 seconds. |
+| `speed2` | float | `0.6` | Animation speed of the secondary wave. Setting it to a non-integer multiple of `speed1` prevents the two waves from phase-locking into a repeating pattern. |
+| `distance_exponent` | float | `1.5` | Controls how steeply the distortion fades from the horizon toward the foreground. `1.0` = linear falloff; `2.0` = quadratic (much less distortion near the camera). Values below `1.0` spread the effect toward the foreground. |
+
+**Visual intuition:**
+
+| Goal | What to change |
+|---|---|
+| More dramatic shimmer at the horizon | Increase `amplitude` |
+| Slower, lazier waves | Decrease `speed1` and `speed2` |
+| Tighter, finer ripple texture | Increase `freq1` and `freq2` |
+| Distortion only near the horizon | Increase `distance_exponent` (try `2.5`) |
+| Distortion across more of the frame | Decrease `distance_exponent` (try `0.8`) |
+| Disable without removing from config | Set `enabled = false` |
+
+**Example — subtle shimmer:**
+```toml
+[heat_haze]
+enabled = true
+amplitude = 1.5
+freq1 = 0.002
+freq2 = 0.005
+speed1 = 0.25
+speed2 = 0.4
+distance_exponent = 2.0
+```
+
+**Example — aggressive heat distortion:**
+```toml
+[heat_haze]
+enabled = true
+amplitude = 6.0
+freq1 = 0.005
+freq2 = 0.011
+speed1 = 0.7
+speed2 = 1.1
+distance_exponent = 1.0
+```
+
 ---
 
 ### Minimal override example
@@ -465,5 +516,6 @@ Roads are classified into six types from OSM `highway` tags. In the **export** r
 | Stage 3 ✅ | Pygame live preview, Scene facade, spatial index |
 | Stage 4 ✅ | Land use zones, tiled ground texture, zone colors |
 | Stage 5 ✅ | Streetlights, car lights, commercial lights, house lights, export glow and illumination |
-| Stage 6 | Export render with glow, illumination, atmosphere |
+| Stage 6 ✅ | Export render with glow, illumination, atmosphere, vignette, stars |
+| Stage 6a 🔄 | Animation: heat haze (config + apply_heat_haze done; moving cars pending) |
 | Stage 7 | 3D depth illusion export |

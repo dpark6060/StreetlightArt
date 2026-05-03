@@ -48,8 +48,8 @@ def build_atmosphere_section(
     """Build slider widgets for atmosphere configuration.
 
     Adds sliders for falloff, max distance, scatter, glow parameters,
-    minimum brightness threshold, illumination brightness, illumination minimum
-    radius, a toggle button for glow expansion, and a text entry for haze color.
+    minimum brightness threshold, illumination brightness, a toggle button for
+    glow expansion, and a text entry for haze color.
 
     Args:
         manager (pygame_gui.UIManager): The UI manager.
@@ -70,7 +70,6 @@ def build_atmosphere_section(
         SliderDescriptor("glow_falloff_steepness", ("atmosphere", "glow_falloff_steepness"), 0.1, 5.0),
         SliderDescriptor("min_brightness_threshold", ("atmosphere", "min_brightness_threshold"), 0.0, 1.0),
         SliderDescriptor("illumination_brightness", ("atmosphere", "illumination_brightness"), 0.0, 255.0, is_int=True),
-        SliderDescriptor("illumination_min_radius", ("atmosphere", "illumination_min_radius"), 0.0, 50.0),
     ]
 
     for descriptor in sliders:
@@ -148,6 +147,10 @@ def build_streetlight_section(
                          extra_config_paths=_make_extra_paths("illumination_radius")),
         SliderDescriptor("illumination_intensity", base_path + ("illumination_intensity",), 0.0, 5.0,
                          extra_config_paths=_make_extra_paths("illumination_intensity")),
+        SliderDescriptor("illumination_falloff", base_path + ("illumination_falloff",), 0.5, 6.0,
+                         extra_config_paths=_make_extra_paths("illumination_falloff")),
+        SliderDescriptor("illumination_inner_fraction", base_path + ("illumination_inner_fraction",), 0.0, 1.0,
+                         extra_config_paths=_make_extra_paths("illumination_inner_fraction")),
         SliderDescriptor("brightness_min", base_path + ("brightness_min",), 0.0, 1.0,
                          extra_config_paths=_make_extra_paths("brightness_min")),
         SliderDescriptor("brightness_max", base_path + ("brightness_max",), 0.0, 1.0,
@@ -191,12 +194,20 @@ def build_cars_section(
     sliders = [
         SliderDescriptor("separation_min", ("lights", "cars", "separation_min"), 0.5, 5.0),
         SliderDescriptor("separation_max", ("lights", "cars", "separation_max"), 0.5, 5.0),
+        SliderDescriptor("headlight_brightness_min", ("lights", "cars", "headlight_brightness_min"), 0.0, 1.0),
+        SliderDescriptor("headlight_brightness_max", ("lights", "cars", "headlight_brightness_max"), 0.0, 1.0),
         SliderDescriptor("headlight_glow_radius", ("lights", "cars", "headlight_glow_radius"), 0.0, 30.0),
         SliderDescriptor("headlight_illum_radius", ("lights", "cars", "headlight_illumination_radius"), 0.0, 50.0),
         SliderDescriptor("headlight_illum_intensity", ("lights", "cars", "headlight_illumination_intensity"), 0.0, 5.0),
+        SliderDescriptor("headlight_illum_falloff", ("lights", "cars", "headlight_illumination_falloff"), 0.5, 6.0),
+        SliderDescriptor("headlight_illum_inner", ("lights", "cars", "headlight_illumination_inner_fraction"), 0.0, 1.0),
+        SliderDescriptor("taillight_brightness_min", ("lights", "cars", "taillight_brightness_min"), 0.0, 1.0),
+        SliderDescriptor("taillight_brightness_max", ("lights", "cars", "taillight_brightness_max"), 0.0, 1.0),
         SliderDescriptor("taillight_glow_radius", ("lights", "cars", "taillight_glow_radius"), 0.0, 15.0),
         SliderDescriptor("taillight_illum_radius", ("lights", "cars", "taillight_illumination_radius"), 0.0, 20.0),
         SliderDescriptor("taillight_illum_intensity", ("lights", "cars", "taillight_illumination_intensity"), 0.0, 5.0),
+        SliderDescriptor("taillight_illum_falloff", ("lights", "cars", "taillight_illumination_falloff"), 0.5, 6.0),
+        SliderDescriptor("taillight_illum_inner", ("lights", "cars", "taillight_illumination_inner_fraction"), 0.0, 1.0),
     ]
 
     y = y_offset
@@ -231,6 +242,8 @@ def build_house_lights_section(
         SliderDescriptor("glow_radius", ("lights", "house_lights", "glow_radius"), 0.0, 50.0),
         SliderDescriptor("illumination_radius", ("lights", "house_lights", "illumination_radius"), 0.0, 100.0),
         SliderDescriptor("illumination_intensity", ("lights", "house_lights", "illumination_intensity"), 0.0, 5.0),
+        SliderDescriptor("illumination_falloff", ("lights", "house_lights", "illumination_falloff"), 0.5, 6.0),
+        SliderDescriptor("illumination_inner_fraction", ("lights", "house_lights", "illumination_inner_fraction"), 0.0, 1.0),
     ]
 
     y = y_offset
@@ -273,6 +286,8 @@ def build_commercial_section(
         SliderDescriptor("glow_radius", ("lights", "commercial", f"{p}_glow_radius"), 0.0, 100.0),
         SliderDescriptor("illumination_radius", ("lights", "commercial", f"{p}_illumination_radius"), 0.0, 200.0),
         SliderDescriptor("illumination_intensity", ("lights", "commercial", f"{p}_illumination_intensity"), 0.0, 5.0),
+        SliderDescriptor("illumination_falloff", ("lights", "commercial", f"{p}_illumination_falloff"), 0.5, 6.0),
+        SliderDescriptor("illumination_inner_fraction", ("lights", "commercial", f"{p}_illumination_inner_fraction"), 0.0, 1.0),
     ]
 
     y = y_offset

@@ -46,6 +46,8 @@ def sample_profile() -> FixtureProfile:
         glow_radius=18.0,
         illumination_radius=30.0,
         illumination_intensity=0.75,
+        illumination_falloff=2.0,
+        illumination_inner_fraction=0.0,
         spacing=45.0,
         side="both",
     )
@@ -70,6 +72,8 @@ def test_fixture_profile_stores_all_fields(sample_profile):
     assert sample_profile.glow_radius == 18.0
     assert sample_profile.illumination_radius == 30.0
     assert sample_profile.illumination_intensity == 0.75
+    assert sample_profile.illumination_falloff == 2.0
+    assert sample_profile.illumination_inner_fraction == 0.0
     assert sample_profile.spacing == 45.0
     assert sample_profile.side == "both"
 

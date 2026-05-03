@@ -1,4 +1,4 @@
-"""Ground render pass — fill sky and ground regions, draw horizon glow, render zones."""
+"""Ground render pass — fill sky and ground regions, render zones."""
 
 import typing as t
 from pathlib import Path
@@ -12,6 +12,7 @@ from ..config.schema import SceneConfig
 from ..models.zones import CommercialZone, DarkZone, ResidentialZone
 from ..utils.colors import hex_to_rgb
 from .backend import RenderBackend
+from .render_utils import compute_horizon_y
 
 if t.TYPE_CHECKING:
     from ..scene.scene import Scene
@@ -20,12 +21,6 @@ if t.TYPE_CHECKING:
 # Sky and ground background colors
 _SKY_COLOR: t.Tuple[int, int, int] = (5, 5, 15)
 _GROUND_COLOR: t.Tuple[int, int, int] = (8, 7, 6)
-
-# Horizon glow band color (RGBA with alpha for blending)
-_HORIZON_GLOW_COLOR: t.Tuple[int, int, int, int] = (40, 25, 10, 60)
-
-# Number of semi-transparent lines for the horizon glow band
-_HORIZON_GLOW_LINES: int = 10
 
 # Minimum number of projected vertices required to draw a zone polygon
 _MIN_POLYGON_VERTICES: int = 3
@@ -36,12 +31,12 @@ def render_ground(
     camera: Camera,
     backend: RenderBackend,
 ) -> None:
-    """Fill sky and ground regions, draw horizon glow, and render zone polygons.
+    """Fill sky and ground regions, then render zone polygons.
 
     Fills the whole surface with sky color, fills below the horizon with
-    ground color, draws a subtle glow band at the horizon, then renders
-    zone polygons on top in layer order: dark zones, commercial zones,
-    residential zones.
+    ground color, then renders zone polygons on top in layer order: dark
+    zones, commercial zones, residential zones. Horizon glow is handled by
+    the atmosphere pass which runs later in the pipeline.
 
     Args:
         scene (Scene): The world scene containing zones and config.
@@ -54,9 +49,8 @@ def render_ground(
 
     backend.clear(_SKY_COLOR)
 
-    horizon_y = _compute_horizon_y(camera, view_matrix, proj_matrix, width, height)
+    horizon_y = compute_horizon_y(camera, view_matrix, proj_matrix, width, height)
     _fill_ground(backend, width, height, horizon_y)
-    _draw_horizon_glow(backend, width, horizon_y)
     _render_zones(scene, camera, view_matrix, proj_matrix, width, height, backend, camera.near)
 
 
@@ -494,39 +488,6 @@ def _coords_to_vertex_list(coords: np.ndarray) -> t.List[np.ndarray]:
     return vertices
 
 
-def _compute_horizon_y(
-    camera: Camera,
-    view_matrix: np.ndarray,
-    proj_matrix: np.ndarray,
-    width: int,
-    height: int,
-) -> int:
-    """Approximate the horizon screen y-coordinate.
-
-    Projects a point far ahead on the ground plane (z=0) to find where the
-    horizon falls in screen space. Falls back to the image quarter-point if
-    the far point is behind the camera.
-
-    Args:
-        camera (Camera): The camera.
-        view_matrix (np.ndarray): (4, 4) view matrix.
-        proj_matrix (np.ndarray): (4, 4) projection matrix.
-        width (int): Image width in pixels.
-        height (int): Image height in pixels.
-
-    Returns:
-        int: Screen y-coordinate of the horizon line.
-    """
-    far_ahead = camera.position + np.array([0.0, camera.far * 0.9, 0.0])
-    far_ahead[2] = 0.0
-    coords, valid = project_points(
-        far_ahead.reshape(1, 3), view_matrix, proj_matrix, (width, height)
-    )
-    if valid[0]:
-        return int(np.clip(coords[0, 1], 0, height - 1))
-    return height // 4
-
-
 def _fill_ground(
     backend: RenderBackend,
     width: int,
@@ -549,26 +510,3 @@ def _fill_ground(
     )
 
 
-def _draw_horizon_glow(
-    backend: RenderBackend,
-    width: int,
-    horizon_y: int,
-) -> None:
-    """Draw a subtle glow band centered on the horizon line.
-
-    Draws semi-transparent lines above and below the horizon, fading in
-    opacity toward the edges of the band. The backend must support RGBA
-    colors for the glow to be visible (PillowBackend does via ImageDraw RGBA).
-
-    Args:
-        backend (RenderBackend): Target render surface.
-        width (int): Image width.
-        horizon_y (int): Screen y of the horizon.
-    """
-    r, g, b, max_alpha = _HORIZON_GLOW_COLOR
-    half = _HORIZON_GLOW_LINES // 2
-    for offset in range(-half, half + 1):
-        fade = 1.0 - abs(offset) / (half + 1)
-        alpha = int(max_alpha * fade)
-        y = horizon_y + offset
-        backend.draw_line_rgba((0, y), (width - 1, y), (r, g, b, alpha), width=1)

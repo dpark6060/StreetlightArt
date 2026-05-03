@@ -10,6 +10,41 @@ if t.TYPE_CHECKING:
     from ..models.light_source import LightSource
 
 
+def compute_horizon_y(
+    camera: "Camera",
+    view_matrix: np.ndarray,
+    proj_matrix: np.ndarray,
+    width: int,
+    height: int,
+) -> int:
+    """Approximate the horizon screen y-coordinate.
+
+    Projects a point far ahead on the ground plane (z=0) to find where the
+    horizon falls in screen space. Falls back to the image quarter-point if
+    the far point is behind the camera.
+
+    Args:
+        camera (Camera): The camera.
+        view_matrix (np.ndarray): (4, 4) view matrix.
+        proj_matrix (np.ndarray): (4, 4) projection matrix.
+        width (int): Image width in pixels.
+        height (int): Image height in pixels.
+
+    Returns:
+        int: Screen y-coordinate of the horizon line.
+    """
+    from ..camera.projection import project_points
+
+    far_ahead = camera.position + np.array([0.0, camera.far * 0.9, 0.0])
+    far_ahead[2] = 0.0
+    coords, valid = project_points(
+        far_ahead.reshape(1, 3), view_matrix, proj_matrix, (width, height)
+    )
+    if valid[0]:
+        return int(np.clip(coords[0, 1], 0, height - 1))
+    return height // 4
+
+
 def extract_positions(lights: t.List["LightSource"]) -> np.ndarray:
     """Stack light positions into a (N, 3) array for batch projection.
 
@@ -47,3 +82,17 @@ def compute_focal_length(camera: "Camera", screen_width: int) -> float:
     """
     fov_rad = math.radians(camera.fov_deg)
     return screen_width / (2.0 * math.tan(fov_rad / 2.0))
+
+
+def apply_brightness_falloff(brightness: float, distance: float, falloff_distance: float) -> float:
+    """Apply exponential brightness attenuation based on distance from camera.
+
+    Args:
+        brightness (float): Base brightness scalar.
+        distance (float): Distance from camera in meters.
+        falloff_distance (float): Characteristic decay distance in meters.
+
+    Returns:
+        float: Attenuated brightness scalar.
+    """
+    return brightness * math.exp(-distance / falloff_distance)

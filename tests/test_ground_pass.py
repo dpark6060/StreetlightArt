@@ -20,6 +20,7 @@ from streets_at_night.config.schema import (
     RoadStyleEntry,
     RoadsConfig,
     SceneConfig,
+    StarsConfig,
     ZoneColorsConfig,
     ZoneConfig,
 )
@@ -65,7 +66,7 @@ def zone_config() -> ZoneConfig:
 
 
 @pytest.fixture
-def scene_config(zone_config: ZoneConfig, light_config: LightConfig, atmosphere_config: AtmosphereConfig) -> SceneConfig:
+def scene_config(zone_config: ZoneConfig, light_config: LightConfig, atmosphere_config: AtmosphereConfig, stars_config: StarsConfig) -> SceneConfig:
     """Return a minimal SceneConfig for testing."""
     _style = RoadStyleConfig(
         highway=RoadStyleEntry(color="#141210", width=4),
@@ -91,6 +92,7 @@ def scene_config(zone_config: ZoneConfig, light_config: LightConfig, atmosphere_
         zones=zone_config,
         lights=light_config,
         atmosphere=atmosphere_config,
+        stars=stars_config,
         roads=RoadsConfig(export=_style, preview=_style),
     )
 
@@ -211,16 +213,6 @@ def test_render_ground_clears_before_drawing(empty_zone_scene, camera, mock_back
 
     # Assert — clear is the first operation
     assert call_order[0] == "clear"
-
-
-def test_render_ground_draws_horizon_glow_lines(empty_zone_scene, camera, mock_backend):
-    # Arrange — draw_line_rgba is used for the horizon glow band
-
-    # Act
-    render_ground(empty_zone_scene, camera, mock_backend)
-
-    # Assert — horizon glow draws at least one semi-transparent line
-    assert mock_backend.draw_line_rgba.call_count >= 1
 
 
 def test_render_ground_with_commercial_zone_draws_additional_polygons(

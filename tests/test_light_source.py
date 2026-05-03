@@ -31,6 +31,8 @@ def sample_light(sample_position):
         glow_radius=20.0,
         illumination_radius=15.0,
         illumination_intensity=0.6,
+        illumination_falloff=2.0,
+        illumination_inner_fraction=0.0,
     )
 
 
@@ -51,6 +53,8 @@ def test_construction_succeeds_with_all_fields(sample_position):
         glow_radius=10.0,
         illumination_radius=8.0,
         illumination_intensity=0.4,
+        illumination_falloff=2.0,
+        illumination_inner_fraction=0.0,
     )
 
     # Assert

@@ -96,6 +96,8 @@ class FixtureProfileConfig:
     glow_radius: float
     illumination_radius: float
     illumination_intensity: float
+    illumination_falloff: float
+    illumination_inner_fraction: float
     spacing_min: float
     spacing_max: float
     side: str
@@ -128,6 +130,10 @@ class CarConfig:
     taillight_colors: ColorPoolConfig
     separation_min: float
     separation_max: float
+    headlight_brightness_min: float
+    headlight_brightness_max: float
+    taillight_brightness_min: float
+    taillight_brightness_max: float
     density_highway_min: float
     density_highway_max: float
     density_major_min: float
@@ -141,9 +147,13 @@ class CarConfig:
     headlight_glow_radius: float
     headlight_illumination_radius: float
     headlight_illumination_intensity: float
+    headlight_illumination_falloff: float
+    headlight_illumination_inner_fraction: float
     taillight_glow_radius: float
     taillight_illumination_radius: float
     taillight_illumination_intensity: float
+    taillight_illumination_falloff: float
+    taillight_illumination_inner_fraction: float
 
 
 @dataclass
@@ -156,12 +166,16 @@ class CommercialLightConfig:
     sign_glow_radius: float
     sign_illumination_radius: float
     sign_illumination_intensity: float
+    sign_illumination_falloff: float
+    sign_illumination_inner_fraction: float
     parking_colors: ColorPoolConfig
     parking_brightness_min: float
     parking_brightness_max: float
     parking_glow_radius: float
     parking_illumination_radius: float
     parking_illumination_intensity: float
+    parking_illumination_falloff: float
+    parking_illumination_inner_fraction: float
     parking_grid_spacing_min: float
     parking_grid_spacing_max: float
     storefront_colors: ColorPoolConfig
@@ -170,6 +184,8 @@ class CommercialLightConfig:
     storefront_glow_radius: float
     storefront_illumination_radius: float
     storefront_illumination_intensity: float
+    storefront_illumination_falloff: float
+    storefront_illumination_inner_fraction: float
     storefront_spacing_min: float
     storefront_spacing_max: float
 
@@ -184,6 +200,8 @@ class HouseLightConfig:
     glow_radius: float
     illumination_radius: float
     illumination_intensity: float
+    illumination_falloff: float
+    illumination_inner_fraction: float
 
 
 @dataclass
@@ -238,6 +256,38 @@ class AtmosphereConfig:
     min_brightness_threshold: float = 0.05
     illumination_brightness: int = 60
     illumination_min_radius: float = 15.0
+    horizon_glow_color: str = "#28180A"
+    horizon_glow_width_px: int = 120
+    horizon_glow_peak_alpha: int = 90
+    haze_enabled: bool = True
+    haze_alpha: int = 30
+    vignette_strength: float = 0.35
+    vignette_radius: float = 0.7
+
+
+@dataclass
+class StarsConfig:
+    """Configuration for optional star rendering in the sky region."""
+
+    stars_enabled: bool
+    count: int
+    brightness_min: float
+    brightness_max: float
+    color_variation: int
+    radius: float = 1.0
+
+
+@dataclass
+class HeatHazeConfig:
+    """Configuration for the heat haze atmospheric distortion animation."""
+
+    enabled: bool
+    amplitude: float
+    freq1: float
+    freq2: float
+    speed1: float
+    speed2: float
+    distance_exponent: float
 
 
 @dataclass
@@ -280,4 +330,6 @@ class SceneConfig:
     lights: LightConfig
     roads: RoadsConfig
     atmosphere: AtmosphereConfig
+    stars: t.Optional[StarsConfig] = None
     devmode: t.Optional["DevmodeConfig"] = None
+    heat_haze: t.Optional["HeatHazeConfig"] = None

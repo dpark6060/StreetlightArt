@@ -31,6 +31,10 @@ class FixtureProfile:
         glow_radius: Atmospheric glow halo radius in meters.
         illumination_radius: Ground illumination radius in meters.
         illumination_intensity: Ground illumination strength in [0, 1].
+        illumination_falloff: Cone falloff exponent controlling the rate of
+            intensity drop from the inner edge to the outer radius.
+        illumination_inner_fraction: Fraction of illumination_radius at full
+            brightness before falloff begins, in [0, 1].
         spacing: Distance between consecutive lights in meters.
         side: Where lights are placed — "both", "one", or "alternating".
     """
@@ -41,6 +45,8 @@ class FixtureProfile:
     glow_radius: float
     illumination_radius: float
     illumination_intensity: float
+    illumination_falloff: float
+    illumination_inner_fraction: float
     spacing: float
     side: str
 
@@ -125,6 +131,8 @@ class StreetLight:
             glow_radius=fixture_profile.glow_radius,
             illumination_radius=fixture_profile.illumination_radius,
             illumination_intensity=fixture_profile.illumination_intensity,
+            illumination_falloff=fixture_profile.illumination_falloff,
+            illumination_inner_fraction=fixture_profile.illumination_inner_fraction,
         )
 
 
@@ -234,6 +242,8 @@ def _config_to_fixture_profile(
         glow_radius=cfg.glow_radius,
         illumination_radius=cfg.illumination_radius,
         illumination_intensity=cfg.illumination_intensity,
+        illumination_falloff=cfg.illumination_falloff,
+        illumination_inner_fraction=cfg.illumination_inner_fraction,
         spacing=rng.uniform(cfg.spacing_min, cfg.spacing_max),
         side=cfg.side,
     )

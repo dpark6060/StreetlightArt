@@ -51,6 +51,8 @@ def commercial_config() -> CommercialLightConfig:
         sign_glow_radius=12.0,
         sign_illumination_radius=20.0,
         sign_illumination_intensity=0.7,
+        sign_illumination_falloff=2.0,
+        sign_illumination_inner_fraction=0.0,
         parking_colors=ColorPoolConfig(colors=[
             ("#E0E8FF", 0.7),
             ("#FFA040", 0.3),
@@ -60,6 +62,8 @@ def commercial_config() -> CommercialLightConfig:
         parking_glow_radius=20.0,
         parking_illumination_radius=30.0,
         parking_illumination_intensity=0.8,
+        parking_illumination_falloff=1.5,
+        parking_illumination_inner_fraction=0.3,
         parking_grid_spacing_min=20.0,
         parking_grid_spacing_max=30.0,
         storefront_colors=ColorPoolConfig(colors=[
@@ -72,6 +76,8 @@ def commercial_config() -> CommercialLightConfig:
         storefront_glow_radius=8.0,
         storefront_illumination_radius=12.0,
         storefront_illumination_intensity=0.5,
+        storefront_illumination_falloff=2.0,
+        storefront_illumination_inner_fraction=0.0,
         storefront_spacing_min=5.0,
         storefront_spacing_max=8.0,
     )

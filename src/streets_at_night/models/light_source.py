@@ -32,6 +32,14 @@ class LightSource:
         illumination_intensity: Strength of ground illumination, in
             [0, 1]. 0.0 means no ground brightening; 1.0 means full
             contribution from this light.
+        illumination_falloff: Exponent controlling the cone falloff
+            shape. Controls how fast intensity drops from the inner edge
+            to the outer radius. Lower values (0.5) produce a gradual
+            fade; higher values (4.0+) produce a tight spotlight cone.
+        illumination_inner_fraction: Fraction of illumination_radius
+            that is at full brightness before falloff begins, in [0, 1].
+            0.0 means falloff starts immediately at the center; 1.0
+            means the entire radius is fully lit (no falloff at all).
     """
 
     position: np.ndarray
@@ -41,3 +49,5 @@ class LightSource:
     glow_radius: float
     illumination_radius: float
     illumination_intensity: float
+    illumination_falloff: float
+    illumination_inner_fraction: float

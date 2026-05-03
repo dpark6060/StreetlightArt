@@ -166,6 +166,8 @@ def sample_light() -> LightSource:
         glow_radius=10.0,
         illumination_radius=20.0,
         illumination_intensity=0.8,
+        illumination_falloff=2.0,
+        illumination_inner_fraction=0.0,
     )
 
 
@@ -525,6 +527,8 @@ def test_scene_get_lights_near_with_index_excludes_far_light(
         glow_radius=10.0,
         illumination_radius=20.0,
         illumination_intensity=0.8,
+        illumination_falloff=2.0,
+        illumination_inner_fraction=0.0,
     )
     scene = Scene(three_segments, camera, scene_config)
     scene.build_spatial_index()

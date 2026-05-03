@@ -546,6 +546,30 @@ glow_falloff_steepness = 1.0
 min_brightness_threshold = 0.05
 illumination_brightness = 60
 illumination_min_radius = 15.0
+horizon_glow_color = "#28180A"
+horizon_glow_width_px = 120
+horizon_glow_peak_alpha = 90
+haze_enabled = true
+haze_alpha = 30
+vignette_strength = 0.35
+vignette_radius = 0.7
+
+[stars]
+stars_enabled = false
+count = 200
+brightness_min = 0.03
+brightness_max = 0.15
+color_variation = 15
+radius = 1.0
+
+[heat_haze]
+enabled = false
+amplitude = 3.0
+freq1 = 0.003
+freq2 = 0.007
+speed1 = 0.4
+speed2 = 0.6
+distance_exponent = 1.5
 
 [devmode]
 render_width = 896
