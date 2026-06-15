@@ -1,7 +1,7 @@
 """Configuration dataclass definitions for Streets at Night."""
 
 import typing as t
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -266,6 +266,21 @@ class AtmosphereConfig:
 
 
 @dataclass
+class GradeConfig:
+    """Final color-grade parameters for the linear-light pipeline.
+
+    Attributes:
+        exposure: Exposure adjustment in stops (EV), applied as a linear
+            multiplier of 2**exposure before tone mapping. 0.0 is neutral.
+        tonemap: Tone-mapping operator name. "aces" applies the Narkowicz ACES
+            filmic curve; any other value falls back to a linear clamp.
+    """
+
+    exposure: float = 0.0
+    tonemap: str = "aces"
+
+
+@dataclass
 class StarsConfig:
     """Configuration for optional star rendering in the sky region."""
 
@@ -278,16 +293,35 @@ class StarsConfig:
 
 
 @dataclass
+class HeatHazeLayerConfig:
+    """One atmospheric turbulence layer in the heat haze stack.
+
+    The eddy size in pixels of a layer is approximately
+    ``L0 / pixel_scale_m``. Keep this well below the image width to avoid
+    the whole frame bulging as one big eddy.
+    """
+
+    r0: float
+    L0: float
+    pixel_scale_m: float
+    weight: float
+    wind_x_pxs: float
+    wind_y_pxs: float
+
+
+@dataclass
 class HeatHazeConfig:
-    """Configuration for the heat haze atmospheric distortion animation."""
+    """Configuration for the multi-layer heat haze atmospheric distortion."""
 
     enabled: bool
-    amplitude: float
-    freq1: float
-    freq2: float
-    speed1: float
-    speed2: float
+    amplitude_px: float
+    max_distance_m: float
     distance_exponent: float
+    sky_distance_factor: float
+    seed: int
+    screen_width_px: int
+    screen_height_px: int
+    layers: t.List[HeatHazeLayerConfig]
 
 
 @dataclass
@@ -330,6 +364,8 @@ class SceneConfig:
     lights: LightConfig
     roads: RoadsConfig
     atmosphere: AtmosphereConfig
+    grade: GradeConfig = field(default_factory=GradeConfig)
     stars: t.Optional[StarsConfig] = None
     devmode: t.Optional["DevmodeConfig"] = None
     heat_haze: t.Optional["HeatHazeConfig"] = None
+    region_name: t.Optional[str] = None

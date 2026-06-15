@@ -30,7 +30,7 @@ from .camera.coordinates import (
 )
 from .config.loader import load_config
 from .config.schema import BoundsConfig, SceneConfig
-from .rendering.warp_preview import apply_heat_haze
+from .rendering.heat_haze import HeatHaze, compute_depth_map
 from .data.osm_loader import load_buildings, load_land_use, load_roads
 from .data.road_classifier import classify_roads
 from .data.verify_plot import save_verification_plot
@@ -152,6 +152,69 @@ def main() -> None:
         help="Output format (default: auto-detect from output path extension)",
     )
 
+    animate_parser = subparsers.add_parser(
+        "animate",
+        help="Animate heat haze over a pre-rendered image (live preview or offline MP4)",
+    )
+    animate_parser.add_argument(
+        "--image",
+        type=Path,
+        default=Path("output/render.png"),
+        help="Path to the base image to animate (default: output/render.png)",
+    )
+    animate_parser.add_argument(
+        "--width",
+        type=int,
+        default=None,
+        help="Output width in pixels. Pygame mode: display size (default 1280). "
+             "Record mode: overrides the --quality preset width.",
+    )
+    animate_parser.add_argument(
+        "--height",
+        type=int,
+        default=None,
+        help="Output height in pixels. Pygame mode: display size (default 720). "
+             "Record mode: overrides the --quality preset height.",
+    )
+    animate_parser.add_argument(
+        "--record",
+        type=Path,
+        default=None,
+        help="Render an offline MP4 to this path instead of opening a pygame window.",
+    )
+    animate_parser.add_argument(
+        "--quality",
+        choices=["low", "medium", "high"],
+        default="low",
+        help="Quality preset for video resolution when --record is set (default: low). "
+             "Ignored in pygame mode.",
+    )
+    animate_parser.add_argument(
+        "--duration",
+        type=float,
+        default=None,
+        help="Video duration in seconds when --record is set "
+             "(default: 2 cycles of the slowest haze layer).",
+    )
+    animate_parser.add_argument(
+        "--fps",
+        type=int,
+        default=30,
+        help="Frame rate for recorded video (default: 30).",
+    )
+    animate_parser.add_argument(
+        "--seamless",
+        action="store_true",
+        default=False,
+        help="Crossfade the end of the recorded video with the start so it loops seamlessly.",
+    )
+    animate_parser.add_argument(
+        "--crossfade-seconds",
+        type=float,
+        default=0.5,
+        help="Crossfade duration in seconds when --seamless is set (default: 0.5).",
+    )
+
     devmode_parser = subparsers.add_parser(
         "devmode",
         help="Launch interactive devmode parameter tuning tool",
@@ -173,7 +236,7 @@ def main() -> None:
     config = load_config(args.config)
 
     if args.command == "verify":
-        cmd_verify(config, args.output, args.cache_dir)
+        cmd_verify(config, args.output, _resolve_cache_dir(args.cache_dir, config))
     elif args.command == "preview":
         cmd_preview(args, config)
     elif args.command == "render":
@@ -181,15 +244,32 @@ def main() -> None:
             config,
             args.quality,
             args.output,
-            args.cache_dir,
+            _resolve_cache_dir(args.cache_dir, config),
             args.no_lights,
             width_override=args.width,
             height_override=args.height,
             format_override=args.format,
         )
+    elif args.command == "animate":
+        cmd_animate(args, config)
     elif args.command == "devmode":
         from .devmode.cmd_devmode import cmd_devmode
         cmd_devmode(args, config)
+
+
+def _resolve_cache_dir(base_dir: Path, config: SceneConfig) -> Path:
+    """Return the effective cache directory, applying region_name if set.
+
+    Args:
+        base_dir (Path): Base cache directory from CLI (default: cache/).
+        config (SceneConfig): Loaded scene config.
+
+    Returns:
+        Path: base_dir / region_name if region_name is set, else base_dir.
+    """
+    if config.region_name:
+        return base_dir / config.region_name
+    return base_dir
 
 
 def cmd_verify(config: SceneConfig, output_path: Path, cache_dir: Path) -> None:
@@ -244,7 +324,7 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
     from .rendering.render_pipeline import get_preview_passes_warp
     from .camera.controls import handle_input, render_hud, MouseDragState
 
-    cache_dir = getattr(args, "cache_dir", Path("cache"))
+    cache_dir = _resolve_cache_dir(getattr(args, "cache_dir", Path("cache")), config)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     scene = _load_scene(config, args.quality, cache_dir)
@@ -273,6 +353,14 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
     anim = AnimationState(
         base_frame=_render_base_frame(scene, warp_passes, preview_width, preview_height)
     )
+
+    heat_haze_cfg = config.heat_haze
+    haze = None
+    if heat_haze_cfg is not None and heat_haze_cfg.enabled:
+        haze = HeatHaze(preview_width, preview_height, heat_haze_cfg)
+        haze.set_base_frame(anim.base_frame)
+        haze.set_depth_map(_compute_preview_depth(scene.camera, heat_haze_cfg,
+                                                  preview_width, preview_height))
 
     running = True
     while running:
@@ -315,16 +403,21 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
                 scene, warp_passes, preview_width, preview_height
             )
             anim.base_frame_dirty = False
+            if haze is not None:
+                haze.set_base_frame(anim.base_frame)
+                haze.set_depth_map(_compute_preview_depth(
+                    scene.camera, heat_haze_cfg, preview_width, preview_height
+                ))
 
         anim.elapsed_t += dt
 
         for car_pair in scene.car_pairs:
             car_pair.resolve_facing(scene.camera.get_forward())
 
-        frame = anim.base_frame.copy()
-        heat_haze_cfg = config.heat_haze
-        if heat_haze_cfg is not None and heat_haze_cfg.enabled:
-            frame = apply_heat_haze(frame, anim.elapsed_t, heat_haze_cfg)
+        if haze is not None:
+            frame = haze.apply(anim.elapsed_t)
+        else:
+            frame = anim.base_frame
 
         backend.blit_pil_image(Image.fromarray(frame))
         fps = clock.get_fps()
@@ -332,6 +425,347 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
         backend.present()
 
     pygame.quit()
+
+
+def cmd_animate(args: argparse.Namespace, config: SceneConfig) -> None:
+    """Animate Kolmogorov heat haze distortion over a pre-rendered image.
+
+    Two modes:
+      * **Pygame mode** (default): runs a real-time interactive window.
+      * **Record mode** (``--record FILE``): renders frames offline and writes
+        an MP4 — used for high-resolution video that can't be played in real
+        time.
+
+    Args:
+        args (argparse.Namespace): Parsed CLI args.
+        config (SceneConfig): Loaded scene configuration (camera + heat_haze).
+    """
+    image_path: Path = args.image
+    if not image_path.exists():
+        print(f"Image not found: {image_path}")
+        print("Run `uv run streets-at-night render` first to produce a base image.")
+        return
+
+    heat_haze_cfg = config.heat_haze
+    if heat_haze_cfg is None or not heat_haze_cfg.enabled:
+        print("Heat haze is disabled in config. Set [heat_haze] enabled = true to see the effect.")
+        return
+
+    if args.record is not None:
+        cmd_animate_record(args, config, heat_haze_cfg)
+        return
+
+    import pygame
+
+    display_width = args.width if args.width is not None else 1280
+    display_height = args.height if args.height is not None else 720
+
+    base_frame = _load_animate_base_frame(image_path, display_width, display_height)
+    haze = _build_animate_haze(config, heat_haze_cfg, base_frame, display_width, display_height)
+
+    pygame.init()
+    screen = pygame.display.set_mode((display_width, display_height))
+    pygame.display.set_caption("Streets At Night — Heat Haze")
+    clock = pygame.time.Clock()
+
+    elapsed_t = 0.0
+    running = True
+    while running:
+        dt = clock.tick(60) / 1000.0
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    running = False
+                elif event.key == pygame.K_p:
+                    _save_animate_frame(haze, elapsed_t)
+
+        elapsed_t += dt
+        frame = haze.apply(elapsed_t)
+        pil_frame = Image.fromarray(frame)
+        pg_surface = pygame.image.fromstring(pil_frame.tobytes(), pil_frame.size, pil_frame.mode)
+        screen.blit(pg_surface, (0, 0))
+        pygame.display.flip()
+
+    pygame.quit()
+
+
+def _load_animate_base_frame(
+    image_path: Path, display_width: int, display_height: int,
+) -> np.ndarray:
+    """Load and resize the base image for ``cmd_animate``.
+
+    Args:
+        image_path (Path): Source image path.
+        display_width (int): Target display width in pixels.
+        display_height (int): Target display height in pixels.
+
+    Returns:
+        np.ndarray: (H, W, 3) uint8 RGB frame at display size.
+    """
+    print(f"Loading base image: {image_path}")
+    base_pil = Image.open(image_path).convert("RGB")
+    if base_pil.size != (display_width, display_height):
+        print(
+            f"  Resizing {base_pil.size[0]}x{base_pil.size[1]} → "
+            f"{display_width}x{display_height}"
+        )
+        base_pil = base_pil.resize((display_width, display_height), Image.LANCZOS)
+    return np.asarray(base_pil).copy()
+
+
+def _build_animate_haze(
+    config: SceneConfig,
+    heat_haze_cfg: t.Any,
+    base_frame: np.ndarray,
+    display_width: int,
+    display_height: int,
+) -> HeatHaze:
+    """Construct a HeatHaze instance for ``cmd_animate``.
+
+    Builds a Camera from the scene config so the per-pixel depth map matches
+    what the rendered image saw, computes that depth map at the display
+    resolution, and uploads the base frame to the GPU.
+
+    Args:
+        config (SceneConfig): Full scene config (used for camera).
+        heat_haze_cfg: Active HeatHazeConfig.
+        base_frame (np.ndarray): (H, W, 3) base RGB frame.
+        display_width (int): Target width.
+        display_height (int): Target height.
+
+    Returns:
+        HeatHaze: Ready-to-use haze instance.
+    """
+    transformer = create_transformer(*_compute_origin(config))
+    camera = create_camera(
+        position=_camera_position_enu(config, transformer),
+        target=_target_position_enu(config, transformer),
+        fov_deg=config.camera.fov,
+        aspect_ratio=display_width / display_height,
+        near=config.camera.near,
+        far=config.camera.far,
+    )
+    depth = compute_depth_map(
+        camera, display_width, display_height,
+        heat_haze_cfg.max_distance_m, heat_haze_cfg.sky_distance_factor,
+    )
+    print("Building heat haze phase screens...")
+    haze = HeatHaze(display_width, display_height, heat_haze_cfg)
+    haze.set_base_frame(base_frame)
+    haze.set_depth_map(depth)
+    return haze
+
+
+def cmd_animate_record(
+    args: argparse.Namespace,
+    config: SceneConfig,
+    heat_haze_cfg: t.Any,
+) -> None:
+    """Render an offline MP4 of heat-haze animation at high resolution.
+
+    Used when ``--record FILE`` is supplied to ``animate``. Skips the pygame
+    window entirely; renders frames sequentially and pipes them to ffmpeg via
+    imageio. Memory-friendly: only the head buffer (for seamless crossfade)
+    and one in-flight frame are held at a time.
+
+    Args:
+        args (argparse.Namespace): Parsed CLI args (image, record, quality,
+            width, height, duration, fps, seamless, crossfade_seconds).
+        config (SceneConfig): Loaded scene configuration.
+        heat_haze_cfg: Active HeatHazeConfig (already verified non-null and enabled).
+    """
+    out_path: Path = args.record
+    out_w, out_h = _resolve_record_dimensions(args, config)
+    duration = args.duration if args.duration is not None else _default_video_duration(heat_haze_cfg)
+    fps = max(1, int(args.fps))
+    n_frames = max(1, int(round(duration * fps)))
+
+    base_frame = _load_animate_base_frame(args.image, out_w, out_h)
+    haze = _build_animate_haze(config, heat_haze_cfg, base_frame, out_w, out_h)
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    print(
+        f"Recording {n_frames} frames @ {fps}fps ({duration:.1f}s) "
+        f"at {out_w}x{out_h} → {out_path}"
+    )
+
+    if args.seamless:
+        crossfade_frames = max(1, int(round(args.crossfade_seconds * fps)))
+        crossfade_frames = min(crossfade_frames, n_frames // 2)
+        _record_haze_seamless(haze, fps, n_frames, crossfade_frames, out_path)
+    else:
+        _record_haze(haze, fps, n_frames, out_path)
+
+    print(f"Saved video: {out_path}")
+
+
+def _resolve_record_dimensions(
+    args: argparse.Namespace, config: SceneConfig,
+) -> t.Tuple[int, int]:
+    """Resolve output (width, height) for record mode.
+
+    Explicit ``--width`` / ``--height`` override the ``--quality`` preset; if
+    neither is supplied, the preset's dimensions are used.
+
+    Args:
+        args (argparse.Namespace): Parsed CLI args.
+        config (SceneConfig): Loaded scene configuration.
+
+    Returns:
+        tuple[int, int]: ``(width, height)`` in pixels.
+    """
+    preset = config.quality_presets[args.quality]
+    width = args.width if args.width is not None else preset.width
+    height = args.height if args.height is not None else preset.height
+    return int(width), int(height)
+
+
+def _default_video_duration(heat_haze_cfg: t.Any) -> float:
+    """Pick a default video duration covering one cycle of the slowest layer.
+
+    For each layer, the cyclic period along an axis is
+    ``screen_dim / |wind_along_axis|``. The slowest layer's period (across
+    both axes) sets the natural "loop length".
+
+    Args:
+        heat_haze_cfg: Active HeatHazeConfig.
+
+    Returns:
+        float: Default duration in seconds, no less than 4 s.
+    """
+    if not heat_haze_cfg.layers:
+        return 10.0
+    longest = 0.0
+    for lc in heat_haze_cfg.layers:
+        if abs(lc.wind_y_pxs) > 1e-9:
+            longest = max(longest, heat_haze_cfg.screen_height_px / abs(lc.wind_y_pxs))
+        if abs(lc.wind_x_pxs) > 1e-9:
+            longest = max(longest, heat_haze_cfg.screen_width_px / abs(lc.wind_x_pxs))
+    return max(4.0, longest)
+
+
+def _record_haze(haze: HeatHaze, fps: int, n_frames: int, out_path: Path) -> None:
+    """Stream-render N frames of heat haze to an MP4 file.
+
+    Args:
+        haze (HeatHaze): Active haze pipeline (depth + base frame already set).
+        fps (int): Frame rate.
+        n_frames (int): Total frames to render.
+        out_path (Path): Output MP4 path.
+    """
+    writer = _open_video_writer(out_path, fps)
+    try:
+        for i in range(n_frames):
+            t = i / fps
+            writer.append_data(haze.apply(t))
+            _print_record_progress(i + 1, n_frames)
+    finally:
+        writer.close()
+
+
+def _record_haze_seamless(
+    haze: HeatHaze, fps: int, n_frames: int, crossfade_frames: int, out_path: Path,
+) -> None:
+    """Stream-render N frames with a crossfade tail blending back to frame 0.
+
+    Pre-renders the first ``crossfade_frames`` into memory; while writing the
+    final ``crossfade_frames`` of the output, blends each with its mirrored
+    counterpart so that output[N-1] equals frame[0] and the loop is visually
+    continuous.
+
+    Args:
+        haze (HeatHaze): Active haze pipeline.
+        fps (int): Frame rate.
+        n_frames (int): Total output frames.
+        crossfade_frames (int): Length of the crossfade tail in frames.
+        out_path (Path): Output MP4 path.
+    """
+    print(f"Pre-rendering {crossfade_frames} crossfade frames...")
+    head = [haze.apply(i / fps) for i in range(crossfade_frames)]
+
+    writer = _open_video_writer(out_path, fps)
+    try:
+        for i in range(n_frames):
+            t = i / fps
+            frame = haze.apply(t)
+            if i >= n_frames - crossfade_frames:
+                j = i - (n_frames - crossfade_frames)
+                alpha = j / max(1, crossfade_frames - 1)
+                mirror = head[crossfade_frames - 1 - j]
+                frame = (
+                    (1.0 - alpha) * frame.astype(np.float32)
+                    + alpha * mirror.astype(np.float32)
+                ).astype(np.uint8)
+            writer.append_data(frame)
+            _print_record_progress(i + 1, n_frames)
+    finally:
+        writer.close()
+
+
+def _open_video_writer(out_path: Path, fps: int):
+    """Open an imageio MP4 writer with H.264 + yuv420p settings.
+
+    Returns:
+        imageio writer: Object supporting ``append_data`` and ``close``.
+    """
+    import imageio.v2 as imageio
+
+    return imageio.get_writer(
+        str(out_path),
+        fps=fps,
+        codec="libx264",
+        quality=8,
+        pixelformat="yuv420p",
+        macro_block_size=1,
+        ffmpeg_params=["-preset", "medium"],
+    )
+
+
+def _print_record_progress(done: int, total: int) -> None:
+    """Print a compact progress line every ~5 % of total frames."""
+    step = max(1, total // 20)
+    if done % step == 0 or done == total:
+        pct = 100.0 * done / total
+        print(f"  {done}/{total} ({pct:.0f}%)")
+
+
+def _save_animate_frame(haze: HeatHaze, elapsed_t: float) -> None:
+    """Save the current heat haze frame to disk.
+
+    Args:
+        haze (HeatHaze): Active haze pipeline.
+        elapsed_t (float): Current elapsed time for the haze effect.
+    """
+    frame = haze.apply(elapsed_t)
+    out_path = Path(f"output/animate_{int(time.time())}.png")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(frame).save(str(out_path))
+    print(f"Frame saved: {out_path}")
+
+
+def _compute_preview_depth(
+    camera: t.Any,
+    heat_haze_cfg: t.Any,
+    width: int,
+    height: int,
+) -> np.ndarray:
+    """Compute the per-pixel depth map for the live preview camera.
+
+    Args:
+        camera (Camera): Active scene camera.
+        heat_haze_cfg (HeatHazeConfig): Active heat haze config.
+        width (int): Preview width in pixels.
+        height (int): Preview height in pixels.
+
+    Returns:
+        np.ndarray: (H, W) float32 depth map in meters.
+    """
+    return compute_depth_map(
+        camera, width, height,
+        heat_haze_cfg.max_distance_m, heat_haze_cfg.sky_distance_factor,
+    )
 
 
 def cmd_render(

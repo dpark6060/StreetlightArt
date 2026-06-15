@@ -1,0 +1,13 @@
+size: 1280x720
+camera_pos_enu: [-658.958100170421, 7017.229647844564, 1580.6928]
+camera_alt_m: 1580.7
+horizon_row_y: 312
+horizon_max_depth_m: 38845.5
+ground_count: 588800
+sky_count: 332800
+min_m: 4026.1
+median_m: 8110.2
+mean_m: 37388.2
+p90_m: 40493.6
+p99_m: 417995.4
+max_m: 6078695.5

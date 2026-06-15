@@ -290,16 +290,20 @@ def test_load_config_heat_haze_defaults_match_defaults_dict(empty_toml: Path):
 
     # Assert
     assert result.heat_haze.enabled == DEFAULTS["heat_haze"]["enabled"]
-    assert result.heat_haze.amplitude == DEFAULTS["heat_haze"]["amplitude"]
-    assert result.heat_haze.freq1 == DEFAULTS["heat_haze"]["freq1"]
+    assert result.heat_haze.amplitude_px == DEFAULTS["heat_haze"]["amplitude_px"]
+    assert result.heat_haze.max_distance_m == DEFAULTS["heat_haze"]["max_distance_m"]
     assert result.heat_haze.distance_exponent == DEFAULTS["heat_haze"]["distance_exponent"]
+    assert result.heat_haze.sky_distance_factor == DEFAULTS["heat_haze"]["sky_distance_factor"]
+    assert result.heat_haze.screen_width_px == DEFAULTS["heat_haze"]["screen_width_px"]
+    assert result.heat_haze.screen_height_px == DEFAULTS["heat_haze"]["screen_height_px"]
+    assert len(result.heat_haze.layers) == len(DEFAULTS["heat_haze"]["layers"])
 
 
 @pytest.fixture
 def heat_haze_override_toml(tmp_path: Path) -> Path:
-    """TOML with heat_haze.amplitude overridden."""
+    """TOML with heat_haze.amplitude_px overridden."""
     toml_file = tmp_path / "heat_haze.toml"
-    toml_file.write_text("[heat_haze]\namplitude = 8.0\n")
+    toml_file.write_text("[heat_haze]\namplitude_px = 1.25\n")
     return toml_file
 
 
@@ -308,9 +312,9 @@ def test_load_config_heat_haze_amplitude_override(heat_haze_override_toml: Path)
     result = load_config(heat_haze_override_toml)
 
     # Assert — overridden field changed
-    assert result.heat_haze.amplitude == 8.0
+    assert result.heat_haze.amplitude_px == 1.25
     # Non-overridden fields stay at defaults
-    assert result.heat_haze.freq1 == DEFAULTS["heat_haze"]["freq1"]
+    assert result.heat_haze.distance_exponent == DEFAULTS["heat_haze"]["distance_exponent"]
 
 
 def test_load_config_heat_haze_absent_section_uses_defaults(empty_toml: Path):
@@ -319,4 +323,35 @@ def test_load_config_heat_haze_absent_section_uses_defaults(empty_toml: Path):
 
     # Assert — still gets a populated config object, not None
     assert result.heat_haze is not None
-    assert result.heat_haze.speed1 == DEFAULTS["heat_haze"]["speed1"]
+    assert result.heat_haze.sky_distance_factor == DEFAULTS["heat_haze"]["sky_distance_factor"]
+
+
+@pytest.fixture
+def heat_haze_layers_override_toml(tmp_path: Path) -> Path:
+    """TOML with the heat_haze.layers list overridden."""
+    toml_file = tmp_path / "heat_haze_layers.toml"
+    toml_file.write_text(
+        "[[heat_haze.layers]]\n"
+        "r0 = 0.2\n"
+        "L0 = 1.0\n"
+        "pixel_scale_m = 0.1\n"
+        "weight = 0.5\n"
+        "wind_x_pxs = 50.0\n"
+        "wind_y_pxs = 5.0\n"
+    )
+    return toml_file
+
+
+def test_load_config_heat_haze_layers_override(heat_haze_layers_override_toml: Path):
+    # Act
+    result = load_config(heat_haze_layers_override_toml)
+
+    # Assert — single user-defined layer replaces the multi-layer default list
+    assert len(result.heat_haze.layers) == 1
+    layer = result.heat_haze.layers[0]
+    assert layer.r0 == 0.2
+    assert layer.L0 == 1.0
+    assert layer.pixel_scale_m == 0.1
+    assert layer.weight == 0.5
+    assert layer.wind_x_pxs == 50.0
+    assert layer.wind_y_pxs == 5.0

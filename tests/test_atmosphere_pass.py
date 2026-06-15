@@ -5,14 +5,13 @@ from unittest import mock
 
 import numpy as np
 import pytest
-from PIL import Image
 
 from streets_at_night.config.defaults import DEFAULTS
 from streets_at_night.config.loader import _build_atmosphere_config
 from streets_at_night.config.schema import AtmosphereConfig
 from streets_at_night.rendering.atmosphere_pass import (
-    _haze_alpha_for_row,
-    _parse_hex_color,
+    _column_alpha_to_linear_layer,
+    _haze_alpha_column,
     _render_distance_haze,
     _render_horizon_glow,
     render_atmosphere,
@@ -33,10 +32,9 @@ def default_atmosphere() -> AtmosphereConfig:
 
 @pytest.fixture
 def mock_backend() -> mock.MagicMock:
-    """Return a mock RenderBackend with a known surface size and layer factory."""
+    """Return a mock RenderBackend with a known surface size."""
     backend = mock.MagicMock(spec=RenderBackend)
     backend.get_surface_size.return_value = (640, 360)
-    backend.create_layer.return_value = Image.new("RGBA", (640, 360), (0, 0, 0, 0))
     return backend
 
 
@@ -64,21 +62,17 @@ def mock_camera() -> mock.MagicMock:
 # ---------------------------------------------------------------------------
 
 
-def test_render_atmosphere_calls_composite_additive(mock_scene, mock_camera, mock_backend):
-    # Arrange — patch compute_horizon_y so it returns a fixed value
+def test_render_atmosphere_accumulates_linear(mock_scene, mock_camera, mock_backend):
     with mock.patch(
         "streets_at_night.rendering.atmosphere_pass.compute_horizon_y",
         return_value=180,
     ):
-        # Act
         render_atmosphere(mock_scene, mock_camera, mock_backend)
 
-    # Assert — composite_additive called at least once (glow layer + haze layer)
-    assert mock_backend.composite_additive.call_count >= 1
+    assert mock_backend.add_linear.call_count >= 1
 
 
 def test_render_atmosphere_calls_horizon_glow(mock_scene, mock_camera, mock_backend):
-    # Arrange
     with mock.patch(
         "streets_at_night.rendering.atmosphere_pass.compute_horizon_y",
         return_value=180,
@@ -87,15 +81,12 @@ def test_render_atmosphere_calls_horizon_glow(mock_scene, mock_camera, mock_back
     ) as mock_glow, mock.patch(
         "streets_at_night.rendering.atmosphere_pass._render_distance_haze"
     ):
-        # Act
         render_atmosphere(mock_scene, mock_camera, mock_backend)
 
-    # Assert
     mock_glow.assert_called_once()
 
 
 def test_render_atmosphere_calls_haze_when_enabled(mock_scene, mock_camera, mock_backend):
-    # Arrange — haze_enabled defaults to True
     mock_scene.config.atmosphere.haze_enabled = True
 
     with mock.patch(
@@ -106,15 +97,12 @@ def test_render_atmosphere_calls_haze_when_enabled(mock_scene, mock_camera, mock
     ), mock.patch(
         "streets_at_night.rendering.atmosphere_pass._render_distance_haze"
     ) as mock_haze:
-        # Act
         render_atmosphere(mock_scene, mock_camera, mock_backend)
 
-    # Assert
     mock_haze.assert_called_once()
 
 
 def test_render_atmosphere_skips_haze_when_disabled(mock_scene, mock_camera, mock_backend):
-    # Arrange
     mock_scene.config.atmosphere.haze_enabled = False
 
     with mock.patch(
@@ -125,10 +113,8 @@ def test_render_atmosphere_skips_haze_when_disabled(mock_scene, mock_camera, moc
     ), mock.patch(
         "streets_at_night.rendering.atmosphere_pass._render_distance_haze"
     ) as mock_haze:
-        # Act
         render_atmosphere(mock_scene, mock_camera, mock_backend)
 
-    # Assert
     mock_haze.assert_not_called()
 
 
@@ -137,124 +123,106 @@ def test_render_atmosphere_skips_haze_when_disabled(mock_scene, mock_camera, moc
 # ---------------------------------------------------------------------------
 
 
-def test_render_horizon_glow_composites_additive(mock_backend, default_atmosphere):
-    # Act
+def test_render_horizon_glow_adds_linear_layer(mock_backend, default_atmosphere):
     _render_horizon_glow(mock_backend, 640, 360, 180, default_atmosphere)
 
-    # Assert
-    mock_backend.composite_additive.assert_called_once()
-    layer_arg = mock_backend.composite_additive.call_args[0][0]
-    assert isinstance(layer_arg, Image.Image)
-    assert layer_arg.mode == "RGBA"
+    mock_backend.add_linear.assert_called_once()
+    layer_arg = mock_backend.add_linear.call_args[0][0]
+    assert layer_arg.shape == (360, 640, 3)
 
 
-def test_render_horizon_glow_horizon_row_has_nonzero_alpha(default_atmosphere):
-    # Arrange — build a real 10x10 layer to check pixel values
+def test_render_horizon_glow_horizon_row_has_nonzero_intensity(default_atmosphere):
     fake_backend = mock.MagicMock(spec=RenderBackend)
     fake_backend.get_surface_size.return_value = (10, 10)
-    captured_layer = []
-    fake_backend.composite_additive.side_effect = lambda img: captured_layer.append(img)
+    captured = []
+    fake_backend.add_linear.side_effect = lambda layer: captured.append(layer)
 
-    # Act
     _render_horizon_glow(fake_backend, 10, 10, 5, default_atmosphere)
 
-    # Assert — pixel at horizon_y row has non-zero alpha
-    arr = np.asarray(captured_layer[0])
-    assert arr[5, 5, 3] > 0
+    assert captured[0][5, 5, :].sum() > 0
 
 
-def test_render_horizon_glow_far_from_horizon_has_zero_alpha(default_atmosphere):
-    # Arrange — use large image so row 0 is far from horizon at center
+def test_render_horizon_glow_far_from_horizon_is_zero(default_atmosphere):
     fake_backend = mock.MagicMock(spec=RenderBackend)
     fake_backend.get_surface_size.return_value = (640, 360)
-    captured_layer = []
-    fake_backend.composite_additive.side_effect = lambda img: captured_layer.append(img)
-
-    # Use a narrow glow width so row 0 is outside the band
+    captured = []
+    fake_backend.add_linear.side_effect = lambda layer: captured.append(layer)
     default_atmosphere.horizon_glow_width_px = 10
 
-    # Act — horizon at y=180; row 0 is 180 rows away, far beyond half_width=5
     _render_horizon_glow(fake_backend, 640, 360, 180, default_atmosphere)
 
-    # Assert — alpha at row 0 should be 0
-    arr = np.asarray(captured_layer[0])
-    assert arr[0, 320, 3] == 0
+    assert captured[0][0, 320, :].sum() == 0
+
+
+def test_render_horizon_glow_skips_when_width_is_zero(mock_backend, default_atmosphere):
+    default_atmosphere.horizon_glow_width_px = 1  # // 2 == 0
+
+    _render_horizon_glow(mock_backend, 640, 360, 180, default_atmosphere)
+
+    mock_backend.add_linear.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# _render_distance_haze — haze disabled path
+# _render_distance_haze
 # ---------------------------------------------------------------------------
 
 
-def test_render_distance_haze_composites_additive(mock_backend, default_atmosphere):
-    # Act
+def test_render_distance_haze_adds_linear_layer(mock_backend, default_atmosphere):
     _render_distance_haze(mock_backend, 640, 360, 180, default_atmosphere)
 
-    # Assert
-    mock_backend.composite_additive.assert_called_once()
-
-
-def test_render_distance_haze_layer_is_rgba(mock_backend, default_atmosphere):
-    # Arrange
-    captured_layer = []
-    mock_backend.composite_additive.side_effect = lambda img: captured_layer.append(img)
-
-    # Act
-    _render_distance_haze(mock_backend, 640, 360, 180, default_atmosphere)
-
-    # Assert
-    assert captured_layer[0].mode == "RGBA"
+    mock_backend.add_linear.assert_called_once()
+    layer_arg = mock_backend.add_linear.call_args[0][0]
+    assert layer_arg.shape == (360, 640, 3)
 
 
 # ---------------------------------------------------------------------------
-# _haze_alpha_for_row — alpha calculation logic
+# _haze_alpha_column — vectorized alpha calculation
 # ---------------------------------------------------------------------------
 
 
-def test_haze_alpha_at_horizon_row_equals_peak_alpha():
-    # At exactly the horizon row, ground section starts: alpha = peak * (1 - 0) = peak
-    result = _haze_alpha_for_row(
-        row=100, horizon_y=100, ground_fade_bottom=133, sky_fade_top=50, peak_alpha=30
+def test_haze_alpha_column_at_horizon_row_equals_peak():
+    alpha = _haze_alpha_column(
+        height=200, horizon_y=100, ground_fade_bottom=133, sky_fade_top=50, peak=30.0
     )
-    assert result == 30
+
+    assert alpha[100] == pytest.approx(30.0)
 
 
-def test_haze_alpha_at_ground_fade_bottom_is_zero():
-    # At the fade bottom, t=1 so alpha = peak * (1 - 1) = 0
-    result = _haze_alpha_for_row(
-        row=133, horizon_y=100, ground_fade_bottom=133, sky_fade_top=50, peak_alpha=30
+def test_haze_alpha_column_at_ground_fade_bottom_is_zero():
+    alpha = _haze_alpha_column(
+        height=200, horizon_y=100, ground_fade_bottom=133, sky_fade_top=50, peak=30.0
     )
-    assert result == 0
+
+    assert alpha[133] == pytest.approx(0.0, abs=1e-5)
 
 
-def test_haze_alpha_above_sky_fade_top_is_zero():
-    # Well above sky_fade_top, the fade reaches 0
-    result = _haze_alpha_for_row(
-        row=0, horizon_y=100, ground_fade_bottom=133, sky_fade_top=50, peak_alpha=30
+def test_haze_alpha_column_above_sky_fade_top_is_zero():
+    alpha = _haze_alpha_column(
+        height=200, horizon_y=100, ground_fade_bottom=133, sky_fade_top=50, peak=30.0
     )
-    assert result == 0
+
+    assert alpha[0] == pytest.approx(0.0, abs=1e-5)
+
+
+def test_haze_alpha_column_sky_peaks_at_half():
+    alpha = _haze_alpha_column(
+        height=200, horizon_y=100, ground_fade_bottom=133, sky_fade_top=50, peak=30.0
+    )
+
+    # Just above the horizon (sky side), alpha ramps from peak/2 downward.
+    assert alpha[99] == pytest.approx(15.0, abs=1.0)
 
 
 # ---------------------------------------------------------------------------
-# _parse_hex_color — hex string parsing
+# _column_alpha_to_linear_layer
 # ---------------------------------------------------------------------------
 
 
-def test_parse_hex_color_with_hash_prefix():
-    # Act
-    r, g, b = _parse_hex_color("#28180A")
+def test_column_alpha_to_linear_layer_scales_color_by_alpha():
+    alpha = np.array([0.0, 1.0], dtype=np.float32)
 
-    # Assert
-    assert r == 0x28
-    assert g == 0x18
-    assert b == 0x0A
+    layer = _column_alpha_to_linear_layer(alpha, width=3, color_linear=(0.2, 0.4, 0.6))
 
-
-def test_parse_hex_color_without_hash_prefix():
-    # Act
-    r, g, b = _parse_hex_color("FF8040")
-
-    # Assert
-    assert r == 255
-    assert g == 128
-    assert b == 64
+    assert layer.shape == (2, 3, 3)
+    np.testing.assert_allclose(layer[0], 0.0)
+    np.testing.assert_allclose(layer[1, 0], [0.2, 0.4, 0.6], atol=1e-6)

@@ -196,7 +196,7 @@ def test_render_lights_export_no_lights_skips_draw(mock_backend, mock_camera):
 
 
 @mock.patch("streets_at_night.rendering.light_pass.project_points")
-def test_render_lights_export_draws_core_and_composites_glow(
+def test_render_lights_export_accumulates_linear_for_visible_light(
     mock_project, mock_backend, mock_camera, sample_light
 ):
     # Arrange
@@ -208,17 +208,16 @@ def test_render_lights_export_draws_core_and_composites_glow(
     # Act
     result = render_lights_export(scene, mock_camera, mock_backend)
 
-    # Assert — core drawn (via draw_circle or draw_point) and glow composited
-    core_drawn = (
-        mock_backend.draw_circle.call_count + mock_backend.draw_point.call_count
-    ) == 1
-    assert core_drawn, "Expected exactly one core draw call (draw_circle or draw_point)"
-    mock_backend.composite_additive.assert_called_once()
+    # Assert — emission (core + glow) added to the linear buffer; cores no
+    # longer drawn opaque, so draw_circle/draw_point are never called.
+    mock_backend.add_linear.assert_called_once()
+    mock_backend.draw_circle.assert_not_called()
+    mock_backend.draw_point.assert_not_called()
     assert result["lights_drawn"] == 1
 
 
 @mock.patch("streets_at_night.rendering.light_pass.project_points")
-def test_render_lights_export_always_composites_even_with_no_visible_lights(
+def test_render_lights_export_adds_linear_even_with_no_visible_lights(
     mock_project, mock_backend, mock_camera, sample_light
 ):
     # Arrange — light exists but is off-screen (invalid mask)
@@ -230,9 +229,9 @@ def test_render_lights_export_always_composites_even_with_no_visible_lights(
     # Act
     result = render_lights_export(scene, mock_camera, mock_backend)
 
-    # Assert — composite is still called (empty glow buffer), but no core drawn
+    # Assert — add_linear still called (with an all-zero buffer), nothing drawn
     mock_backend.draw_circle.assert_not_called()
-    mock_backend.composite_additive.assert_called_once()
+    mock_backend.add_linear.assert_called_once()
     assert result["lights_drawn"] == 0
 
 
@@ -484,10 +483,11 @@ def test_render_lights_export_glow_expansion_enabled_calls_expansion(
 
 
 @mock.patch("streets_at_night.rendering.light_pass.project_points")
-def test_render_lights_export_uses_draw_point_for_small_lights(
+def test_render_lights_export_accumulates_tiny_far_light(
     mock_project, mock_backend, mock_camera
 ):
-    # Arrange — light very far away so core_radius < 2.0 (triggering draw_point)
+    # Arrange — light very far away so its core is sub-pixel. The linear path
+    # accumulates it via the coverage term rather than a separate point-draw.
     far_light = LightSource(
         position=np.array([0.0, 60000.0, 5.0]),
         color=(255, 200, 100),
@@ -516,11 +516,13 @@ def test_render_lights_export_uses_draw_point_for_small_lights(
     scene = _make_scene_with_lights([far_light], atmosphere=atmos)
 
     # Act
-    render_lights_export(scene, mock_camera, mock_backend)
+    result = render_lights_export(scene, mock_camera, mock_backend)
 
-    # Assert — draw_point used for tiny core, draw_circle not called
-    mock_backend.draw_point.assert_called_once()
+    # Assert — accumulated into the linear buffer, no opaque draw calls
+    mock_backend.add_linear.assert_called_once()
+    mock_backend.draw_point.assert_not_called()
     mock_backend.draw_circle.assert_not_called()
+    assert result["lights_drawn"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -534,7 +536,7 @@ def test_accumulate_glow_adds_to_buffer_at_center():
     cx, cy = 50.0, 50.0
 
     # Act
-    _accumulate_glow(buffer, cx, cy, (255, 255, 255), radius_px=10.0, max_alpha=200, steepness=1.0)
+    _accumulate_glow(buffer, cx, cy, (1.0, 1.0, 1.0), radius_px=10.0, peak=0.8, steepness=1.0)
 
     # Assert — center pixels are greater than zero
     assert buffer[50, 50, 0] > 0.0
@@ -547,7 +549,7 @@ def test_accumulate_glow_falls_off_with_distance():
     buffer = np.zeros((100, 100, 3), dtype=np.float32)
 
     # Act
-    _accumulate_glow(buffer, 50.0, 50.0, (255, 0, 0), radius_px=10.0, max_alpha=200, steepness=1.0)
+    _accumulate_glow(buffer, 50.0, 50.0, (1.0, 0.0, 0.0), radius_px=10.0, peak=0.8, steepness=1.0)
 
     # Assert — pixel near center brighter than pixel near edge of glow
     center_val = buffer[50, 50, 0]
@@ -561,20 +563,20 @@ def test_accumulate_glow_two_lights_accumulate_additively():
     buffer_double = np.zeros((100, 100, 3), dtype=np.float32)
 
     # Act — same position called once vs twice
-    _accumulate_glow(buffer_single, 50.0, 50.0, (100, 0, 0), radius_px=10.0, max_alpha=200, steepness=1.0)
-    _accumulate_glow(buffer_double, 50.0, 50.0, (100, 0, 0), radius_px=10.0, max_alpha=200, steepness=1.0)
-    _accumulate_glow(buffer_double, 50.0, 50.0, (100, 0, 0), radius_px=10.0, max_alpha=200, steepness=1.0)
+    _accumulate_glow(buffer_single, 50.0, 50.0, (0.4, 0.0, 0.0), radius_px=10.0, peak=0.8, steepness=1.0)
+    _accumulate_glow(buffer_double, 50.0, 50.0, (0.4, 0.0, 0.0), radius_px=10.0, peak=0.8, steepness=1.0)
+    _accumulate_glow(buffer_double, 50.0, 50.0, (0.4, 0.0, 0.0), radius_px=10.0, peak=0.8, steepness=1.0)
 
     # Assert — double accumulation produces roughly double the value
     assert buffer_double[50, 50, 0] == pytest.approx(buffer_single[50, 50, 0] * 2.0, rel=1e-5)
 
 
-def test_accumulate_glow_respects_max_alpha_zero():
+def test_accumulate_glow_respects_peak_zero():
     # Arrange
     buffer = np.zeros((100, 100, 3), dtype=np.float32)
 
-    # Act — max_alpha=0 should contribute nothing
-    _accumulate_glow(buffer, 50.0, 50.0, (255, 255, 255), radius_px=10.0, max_alpha=0, steepness=1.0)
+    # Act — peak=0 should contribute nothing
+    _accumulate_glow(buffer, 50.0, 50.0, (1.0, 1.0, 1.0), radius_px=10.0, peak=0.0, steepness=1.0)
 
     # Assert — buffer remains all zeros
     assert np.all(buffer == 0.0)

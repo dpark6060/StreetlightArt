@@ -16,8 +16,10 @@ from .schema import (
     DevmodeCameraConfig,
     DevmodeConfig,
     FixturePoolEntry,
+    GradeConfig,
     FixtureProfileConfig,
     HeatHazeConfig,
+    HeatHazeLayerConfig,
     HouseConfig,
     HouseLightConfig,
     LightConfig,
@@ -98,6 +100,7 @@ def _build_scene_config(data: dict) -> SceneConfig:
     lights = _build_light_config(data["lights"])
     roads = _build_roads_config(data["roads"])
     atmosphere = _build_atmosphere_config(data["atmosphere"])
+    grade = _build_grade_config(data.get("grade", {}))
     stars = _build_stars_config(data.get("stars", {}))
     devmode = _build_devmode_config(data["devmode"]) if "devmode" in data else None
     heat_haze = _build_heat_haze_config(data.get("heat_haze", {}))
@@ -110,9 +113,11 @@ def _build_scene_config(data: dict) -> SceneConfig:
         lights=lights,
         roads=roads,
         atmosphere=atmosphere,
+        grade=grade,
         stars=stars,
         devmode=devmode,
         heat_haze=heat_haze,
+        region_name=data.get("region_name"),
     )
 
 
@@ -533,6 +538,24 @@ def _build_atmosphere_config(data: dict) -> AtmosphereConfig:
     )
 
 
+def _build_grade_config(data: dict) -> GradeConfig:
+    """Build a GradeConfig from the grade section of the config.
+
+    When called with an empty dict (no grade section in the TOML), values fall
+    back to the defaults in DEFAULTS["grade"].
+
+    Args:
+        data (dict): Grade section from the config, or empty dict if absent.
+
+    Returns:
+        GradeConfig: Populated grade config.
+    """
+    return GradeConfig(
+        exposure=data.get("exposure", 0.0),
+        tonemap=data.get("tonemap", "aces"),
+    )
+
+
 def _build_stars_config(data: dict) -> StarsConfig:
     """Build a StarsConfig from the stars section of the config.
 
@@ -558,7 +581,10 @@ def _build_stars_config(data: dict) -> StarsConfig:
 def _build_heat_haze_config(data: dict) -> HeatHazeConfig:
     """Build a HeatHazeConfig from the heat_haze section of the config.
 
-    All fields use .get() with defaults so an empty or absent section is valid.
+    All scalar fields use .get() with defaults so an empty or absent section
+    is valid. The ``layers`` key (a list of per-layer dicts) is mapped to a
+    list of HeatHazeLayerConfig dataclasses; if absent or empty, a single
+    minimal layer is constructed so the haze pipeline still runs.
 
     Args:
         data (dict): Heat haze section from the config, or empty dict if absent.
@@ -566,14 +592,38 @@ def _build_heat_haze_config(data: dict) -> HeatHazeConfig:
     Returns:
         HeatHazeConfig: Populated heat haze config.
     """
+    layers_data = data.get("layers", [])
+    layers = [_build_heat_haze_layer_config(entry) for entry in layers_data]
     return HeatHazeConfig(
         enabled=data.get("enabled", True),
-        amplitude=data.get("amplitude", 3.0),
-        freq1=data.get("freq1", 0.003),
-        freq2=data.get("freq2", 0.007),
-        speed1=data.get("speed1", 0.4),
-        speed2=data.get("speed2", 0.6),
+        amplitude_px=data.get("amplitude_px", 0.5),
+        max_distance_m=data.get("max_distance_m", 20000.0),
         distance_exponent=data.get("distance_exponent", 1.5),
+        sky_distance_factor=data.get("sky_distance_factor", 0.5),
+        seed=int(data.get("seed", 42)),
+        screen_width_px=int(data.get("screen_width_px", 2048)),
+        screen_height_px=int(data.get("screen_height_px", 4096)),
+        layers=layers,
+    )
+
+
+def _build_heat_haze_layer_config(data: dict) -> HeatHazeLayerConfig:
+    """Build one HeatHazeLayerConfig from a single layer dict.
+
+    Args:
+        data (dict): Layer entry with r0, L0, pixel_scale_m, weight,
+            wind_x_pxs, wind_y_pxs.
+
+    Returns:
+        HeatHazeLayerConfig: Populated layer config.
+    """
+    return HeatHazeLayerConfig(
+        r0=float(data["r0"]),
+        L0=float(data["L0"]),
+        pixel_scale_m=float(data["pixel_scale_m"]),
+        weight=float(data["weight"]),
+        wind_x_pxs=float(data["wind_x_pxs"]),
+        wind_y_pxs=float(data["wind_y_pxs"]),
     )
 
 

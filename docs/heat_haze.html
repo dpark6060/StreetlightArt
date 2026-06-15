@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Heat Haze Simulation — How It Works</title>
+<script>
+  MathJax = {
+    tex: { inlineMath: [['$', '$'], ['\\(', '\\)']],
+           displayMath: [['$$', '$$'], ['\\[', '\\]']] },
+    svg: { fontCache: 'global' }
+  };
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js" async></script>
+<style>
+  :root {
+    --bg: #0d0e12;
+    --bg-panel: #15171c;
+    --fg: #e8e6e0;
+    --fg-dim: #a8a59a;
+    --accent: #ffa040;
+    --accent-2: #88c8ff;
+    --accent-3: #ff66aa;
+    --rule: #2a2c33;
+    --code-bg: #1a1c21;
+    --warn: #ffa040;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    line-height: 1.55;
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 5rem;
+    font-size: 16px;
+  }
+  h1, h2, h3 { color: var(--accent); font-weight: 600; }
+  h1 { font-size: 2rem; border-bottom: 1px solid var(--rule); padding-bottom: 0.5rem; margin-bottom: 0.4rem; }
+  h2 { font-size: 1.4rem; margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid var(--rule); }
+  h3 { font-size: 1.1rem; color: var(--accent-2); margin-top: 1.5rem; }
+  .lede { color: var(--fg-dim); font-style: italic; margin-bottom: 1rem; }
+  a { color: var(--accent-2); }
+  code, pre {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 0.92em;
+  }
+  code { background: var(--code-bg); padding: 0.1em 0.3em; border-radius: 3px; }
+  pre {
+    background: var(--code-bg);
+    border-left: 3px solid var(--accent);
+    padding: 0.8rem 1rem;
+    overflow-x: auto;
+    border-radius: 3px;
+  }
+  pre code { background: none; padding: 0; }
+  .panel {
+    background: var(--bg-panel);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 1rem 1.2rem;
+    margin: 1rem 0;
+  }
+  .panel-warn { border-left: 3px solid var(--warn); }
+  .panel-note { border-left: 3px solid var(--accent-2); }
+  table { border-collapse: collapse; margin: 1rem 0; width: 100%; }
+  th, td { padding: 0.4rem 0.7rem; border-bottom: 1px solid var(--rule); text-align: left; }
+  th { color: var(--accent-2); font-weight: 600; }
+  td.num { font-family: ui-monospace, monospace; text-align: right; }
+  figure { margin: 1.5rem 0; text-align: center; }
+  figcaption { color: var(--fg-dim); font-size: 0.9em; margin-top: 0.4rem; font-style: italic; }
+  svg { background: var(--bg-panel); border-radius: 4px; max-width: 100%; height: auto; }
+  img { max-width: 100%; border-radius: 4px; border: 1px solid var(--rule); }
+  .toc {
+    background: var(--bg-panel);
+    border: 1px solid var(--rule);
+    padding: 0.8rem 1.2rem;
+    margin: 1.5rem 0;
+    border-radius: 4px;
+    font-size: 0.92em;
+  }
+  .toc ol { margin: 0.3rem 0 0 1rem; padding: 0; }
+  .toc li { margin: 0.2rem 0; }
+  .footnotes {
+    color: var(--fg-dim);
+    font-size: 0.88em;
+    margin-top: 3rem;
+    border-top: 1px solid var(--rule);
+    padding-top: 1rem;
+  }
+  /* SVG node helper styles */
+  .node-fill { fill: #1f2128; }
+  .node-stroke { stroke: var(--accent-2); stroke-width: 1.5; fill: none; }
+  .node-stroke-warm { stroke: var(--accent); stroke-width: 1.5; fill: none; }
+  .arrow { stroke: var(--fg-dim); stroke-width: 1.4; fill: none; marker-end: url(#arrow); }
+  .label { fill: var(--fg); font-family: ui-monospace, monospace; font-size: 12px; }
+  .label-dim { fill: var(--fg-dim); font-size: 11px; }
+  .label-accent { fill: var(--accent); font-size: 12px; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<h1>Heat Haze Simulation</h1>
+<p class="lede">How <em>Streets at Night</em> turns Kolmogorov atmospheric turbulence into a per-pixel displacement field, then warps a rendered city image with it. Aimed at someone comfortable with linear systems and Fourier analysis.</p>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#phenomenon">The phenomenon</a></li>
+    <li><a href="#math">The math: Kolmogorov &amp; the Von Karman PSD</a></li>
+    <li><a href="#pipeline">Pipeline overview</a></li>
+    <li><a href="#phase-screen">Generating a phase screen (FFT-filtered noise)</a></li>
+    <li><a href="#multilayer">Multi-layer atmosphere</a></li>
+    <li><a href="#frozen-flow">Frozen-flow animation (Taylor's hypothesis)</a></li>
+    <li><a href="#depth">Depth-aware distortion scaling</a></li>
+    <li><a href="#warp">Image warping (PyTorch + Apple MPS)</a></li>
+    <li><a href="#shortcuts">Shortcuts &amp; limitations</a></li>
+    <li><a href="#refs">Code references &amp; further reading</a></li>
+  </ol>
+</div>
+
+<!-- =========================================================== -->
+<h2 id="phenomenon">1. What we're actually simulating</h2>
+
+<p>Atmospheric heat shimmer (the wavy distortion you see above hot pavement, jet exhaust, or distant scenery on a hot day) is an <strong>optical refraction</strong> phenomenon. The atmosphere is a stack of air parcels at slightly different temperatures and densities. Refractive index $n$ varies with density:</p>
+
+\[ n(\mathbf{r}, t) - 1 \;\propto\; \rho(\mathbf{r}, t) \;\propto\; \frac{P}{T(\mathbf{r}, t)} \]
+
+<p>where $P$ is pressure (≈ constant), $T$ is local temperature, and $\rho$ is air density. Hot air is less dense, so $n$ drops. Light passing through these inhomogeneities accumulates a small, position-dependent <strong>phase delay</strong>; the resulting wavefront is no longer planar, so when we project the image onto the focal plane each pixel appears to come from a slightly displaced location.</p>
+
+<p>If the atmosphere were static this would just be a fixed geometric distortion — a constant lens. What makes it shimmer is that the refractive-index field is <strong>turbulent and time-varying</strong>, and crucially, <em>statistically self-similar across a wide range of scales</em>. That self-similarity is the property we exploit.</p>
+
+<div class="panel panel-note">
+<strong>What this project is not doing.</strong> We are not solving the eikonal equation, ray-tracing through a 3D refractive medium, or computing a wave-optics propagation integral. We approximate the cumulative effect of refraction along the optical path as a single 2D image warp $(x, y) \to (x + \delta x,\, y + \delta y)$ whose displacement field $(\delta x, \delta y)$ has the correct statistical signature.
+</div>
+
+<!-- =========================================================== -->
+<h2 id="math">2. Kolmogorov and the Von Karman PSD</h2>
+
+<p>Kolmogorov's 1941 theory of homogeneous isotropic turbulence (K41) predicts that, in the <strong>inertial subrange</strong> (between the energy-injection scale and the viscous dissipation scale), the energy spectrum follows</p>
+
+\[ E(k) \;=\; C\, \varepsilon^{2/3}\, k^{-5/3} \]
+
+<p>where $k = |\mathbf{k}|$ is the spatial wavenumber and $\varepsilon$ is the energy dissipation rate. This is the celebrated $-5/3$ law. For atmospheric optics what matters is not the velocity spectrum but the <strong>refractive-index structure function</strong>, which inherits the same scaling, leading to a <strong>2D phase power spectral density</strong></p>
+
+\[ \Phi_\phi(k) \;=\; 0.023\, r_0^{-5/3}\, k^{-11/3} \]
+
+<p>(The $-11/3$ rather than $-5/3$ comes from the fact that we are looking at the spectrum of integrated phase along a ray, and at the radial distribution of 2D power.) The constant $r_0$ is the <strong>Fried parameter</strong> — the diameter over which the rms wavefront error reaches one radian. Smaller $r_0$ ⇒ stronger turbulence.</p>
+
+<p>Pure $k^{-11/3}$ diverges at $k \to 0$ (energy-injection scale → infinity), so we use the <strong>Von Karman</strong> form which adds a finite outer scale $L_0$:</p>
+
+\[ \boxed{\;\Phi_\phi(k) \;=\; 0.023\, r_0^{-5/3}\, \left(k^2 + \tfrac{1}{L_0^2}\right)^{-11/6}\;} \]
+
+<p>Below $k \sim 1/L_0$ the spectrum flattens into a plateau; above it the spectrum follows the inertial-range $-11/3$ slope. This single equation is the engine behind everything that follows.</p>
+
+<figure>
+  <img src="../investigation/out/phase_screen_psd.png" alt="PSD comparison: Kolmogorov vs sine">
+  <figcaption>Radial power-spectral density from our generated phase screen (blue) compared to the previous two-octave sine implementation (red). The dashed line is the theoretical $k^{-11/3}$ slope. The sine field has sharp spikes at the carrier frequencies — the "fake" tell. The Kolmogorov screen is broadband.</figcaption>
+</figure>
+
+<!-- =========================================================== -->
+<h2 id="pipeline">3. Pipeline overview</h2>
+
+<figure>
+<svg viewBox="0 0 820 360" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Pipeline diagram">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#a8a59a"/>
+    </marker>
+  </defs>
+
+  <!-- One-time -->
+  <text class="label-accent" x="10" y="22">ONE-TIME (startup / camera move)</text>
+  <rect class="node-fill node-stroke" x="10" y="35" width="180" height="50" rx="4"/>
+  <text class="label" x="100" y="58" text-anchor="middle">Camera + screen size</text>
+  <text class="label-dim" x="100" y="73" text-anchor="middle">pos, target, FOV, W×H</text>
+
+  <rect class="node-fill node-stroke" x="220" y="35" width="180" height="50" rx="4"/>
+  <text class="label" x="310" y="58" text-anchor="middle">Per-pixel raycast</text>
+  <text class="label-dim" x="310" y="73" text-anchor="middle">depth map (m)</text>
+
+  <rect class="node-fill node-stroke" x="430" y="35" width="180" height="50" rx="4"/>
+  <text class="label" x="520" y="58" text-anchor="middle">distance_scale</text>
+  <text class="label-dim" x="520" y="73" text-anchor="middle">(d / d_max)^p, sky clamp</text>
+
+  <path class="arrow" d="M195,60 L218,60"/>
+  <path class="arrow" d="M405,60 L428,60"/>
+
+  <!-- Layers / phase screens -->
+  <rect class="node-fill node-stroke-warm" x="10" y="120" width="180" height="50" rx="4"/>
+  <text class="label" x="100" y="143" text-anchor="middle">N layer configs</text>
+  <text class="label-dim" x="100" y="158" text-anchor="middle">r₀, L₀, ps, weight, wind</text>
+
+  <rect class="node-fill node-stroke-warm" x="220" y="120" width="180" height="50" rx="4"/>
+  <text class="label" x="310" y="143" text-anchor="middle">FFT phase screens</text>
+  <text class="label-dim" x="310" y="158" text-anchor="middle">2 wide screens / layer</text>
+  <path class="arrow" d="M195,145 L218,145"/>
+
+  <!-- Per-frame -->
+  <text class="label-accent" x="10" y="210">EACH FRAME (t)</text>
+
+  <rect class="node-fill node-stroke" x="10" y="225" width="180" height="50" rx="4"/>
+  <text class="label" x="100" y="248" text-anchor="middle">Frozen-flow slide</text>
+  <text class="label-dim" x="100" y="263" text-anchor="middle">window @ wind·t</text>
+
+  <rect class="node-fill node-stroke" x="220" y="225" width="180" height="50" rx="4"/>
+  <text class="label" x="310" y="248" text-anchor="middle">Σ layers × A × scale</text>
+  <text class="label-dim" x="310" y="263" text-anchor="middle">(δx, δy) field</text>
+
+  <rect class="node-fill node-stroke" x="430" y="225" width="180" height="50" rx="4"/>
+  <text class="label" x="520" y="248" text-anchor="middle">grid_sample (MPS)</text>
+  <text class="label-dim" x="520" y="263" text-anchor="middle">bilinear warp</text>
+
+  <rect class="node-fill node-stroke" x="640" y="225" width="170" height="50" rx="4"/>
+  <text class="label" x="725" y="248" text-anchor="middle">Output frame</text>
+  <text class="label-dim" x="725" y="263" text-anchor="middle">uint8 H×W×3</text>
+
+  <path class="arrow" d="M195,250 L218,250"/>
+  <path class="arrow" d="M405,250 L428,250"/>
+  <path class="arrow" d="M615,250 L638,250"/>
+
+  <!-- Cross-flow arrows -->
+  <path class="arrow" d="M310,170 L310,220"/>
+  <path class="arrow" d="M520,85 C 520,150 425,160 405,225" stroke-dasharray="3 3"/>
+
+  <rect class="node-fill node-stroke" x="640" y="120" width="170" height="50" rx="4"/>
+  <text class="label" x="725" y="143" text-anchor="middle">Base frame (GPU)</text>
+  <text class="label-dim" x="725" y="158" text-anchor="middle">uploaded once</text>
+  <path class="arrow" d="M725,170 L725,220" stroke-dasharray="3 3"/>
+
+  <text class="label-dim" x="10" y="320">Solid arrows: per-frame data flow.  Dashed: state that persists across frames.</text>
+  <text class="label-dim" x="10" y="338">Phase screens are built once at startup; depth + distance_scale + base frame change only when the camera moves.</text>
+</svg>
+<figcaption>The full pipeline. Three categories of work: one-time (depth map, phase screens), per-camera-move (re-upload base frame, recompute distance scale), and per-frame (slide windows, sum layers, warp).</figcaption>
+</figure>
+
+<!-- =========================================================== -->
+<h2 id="phase-screen">4. Generating a phase screen — FFT-filtered noise</h2>
+
+<p>The recipe to produce a 2D random field with prescribed power spectrum $\Phi(k)$ is a textbook trick:</p>
+
+<ol>
+  <li>Generate complex white Gaussian noise $W(\mathbf{k})$ — independent real and imaginary parts, unit variance, on the same FFT grid as the desired output.</li>
+  <li>Multiply by $\sqrt{\Phi_\phi(\mathbf{k})}$ pointwise. This colors the noise so its periodogram matches the target PSD.</li>
+  <li>Inverse FFT, take the real part. The result is a real-valued, spatially correlated random field with the desired statistics.</li>
+</ol>
+
+\[ \phi(\mathbf{r}) \;=\; \mathrm{Re}\Big\{\,\mathcal{F}^{-1}\big[\,W(\mathbf{k})\, \sqrt{\Phi_\phi(\mathbf{k})}\,\big]\,\Big\} \]
+
+<p>Concretely (lifted from <code>kolmogorov_screen_fft</code>):</p>
+
+<pre><code>fy, fx = np.fft.fftfreq(H, ps)[:,None], np.fft.fftfreq(W, ps)[None,:]
+k2 = (2π·fx)² + (2π·fy)²
+psd = 0.023 · r0^(-5/3) · (k2 + 1/L0²)^(-11/6)
+psd[0,0] = 0          # zero-mean field
+noise = randn(H,W) + 1j·randn(H,W)
+field = ifft2( noise · sqrt(psd) ) · const
+return field.real</code></pre>
+
+<p>The <code>ps</code> (pixel scale, m/px) is critical: it is what ties the physical Von Karman parameters $r_0, L_0$ to the pixel grid. The <strong>eddy size in pixels is approximately</strong> $L_0 / \mathrm{ps}$. We exploit this aggressively when picking layer parameters.</p>
+
+<div class="panel panel-warn">
+<strong>Key tuning constraint.</strong> If $L_0 / \mathrm{ps} \gtrsim$ image extent, the entire visible region sits in the PSD's flat low-$k$ plateau, and the result is a single huge eddy bulging across the screen. We learned this the hard way during the investigation. Keep all layers with eddy size in pixels $\ll W_\mathrm{img}$.
+</div>
+
+<figure>
+  <img src="../investigation/out/layer_tuning_compare.png" alt="Layer tuning before/after">
+  <figcaption>Top row: each layer of an early config — $L_0/\mathrm{ps}$ values of 2000, 1200, and 1000 pixels (bigger than the image) yield slow blob-like fields and a globally bulging sum.  Bottom row: corrected — eddy sizes 10, 10, 6 px give localized shimmer that reads as turbulence.</figcaption>
+</figure>
+
+<h3>Why not <code>aotools.PhaseScreenKolmogorov</code>?</h3>
+
+<p>The <a href="https://github.com/AOtools/aotools">aotools</a> library implements an <em>infinite</em> phase screen via a Cholesky-factored autoregressive process: generate one column at a time, conditional on a window of previous columns. Beautiful for adaptive-optics simulations, but the constructor's matrix factorization is $\mathcal{O}(n^3)$. At our 2048×2048 working size it took 23 seconds; at 4096 it would have been minutes. The pure-FFT approach above generates a 4096×720 screen in ~120 ms because all the heavy lifting is one inverse FFT.</p>
+
+<!-- =========================================================== -->
+<h2 id="multilayer">5. Multi-layer atmosphere</h2>
+
+<p>Real atmospheric turbulence isn't a single homogeneous medium. Distinct layers — boundary layer, free atmosphere, jet stream, etc. — sit at different altitudes, each with its own effective $r_0$, outer scale $L_0$, and <em>wind vector</em>. They contribute additively to the total integrated phase along the optical path:</p>
+
+\[ \phi_\mathrm{total}(\mathbf{r}, t) \;=\; \sum_{\ell=1}^{N} w_\ell\, \phi_\ell\!\left(\mathbf{r} - \mathbf{v}_\ell\, t\right) \]
+
+<p>where $\mathbf{v}_\ell$ is the layer's wind vector and $w_\ell$ is a relative weight (we just normalise each layer's screen to unit standard deviation, then scale by $w_\ell$, so the weights act like dimensionless mix coefficients).</p>
+
+<p>In <code>scene_config.toml</code> the three layers are:</p>
+
+<table>
+<tr><th>Layer</th><th>$r_0$ (m)</th><th>$L_0$ (m)</th><th>ps (m/px)</th><th>eddy size</th><th>weight</th><th>wind (px/s)</th></tr>
+<tr><td>1 (slow, mid-scale)</td><td class="num">0.10</td><td class="num">2.5</td><td class="num">0.5</td><td class="num">5 px</td><td class="num">0.6</td><td class="num">(35, 4)</td></tr>
+<tr><td>2 (mid)</td><td class="num">0.10</td><td class="num">1.0</td><td class="num">0.2</td><td class="num">5 px</td><td class="num">0.8</td><td class="num">(70, –3)</td></tr>
+<tr><td>3 (fast, fine)</td><td class="num">0.10</td><td class="num">0.3</td><td class="num">0.1</td><td class="num">3 px</td><td class="num">1.0</td><td class="num">(120, 8)</td></tr>
+</table>
+
+<p>The layers' winds blow in different directions, so the summed field has no preferred propagation direction — exactly what kills the "wave-front giveaway" the old sine implementation had.</p>
+
+<!-- =========================================================== -->
+<h2 id="frozen-flow">6. Frozen-flow animation (Taylor's hypothesis)</h2>
+
+<p>Generating a fresh phase screen per frame is expensive (~120 ms each, for three layers × two screens — too slow). Instead we use <strong>Taylor's frozen-turbulence hypothesis</strong>: turbulent eddies are advected by the mean wind faster than they evolve internally, so</p>
+
+\[ \phi(\mathbf{r}, t) \;\approx\; \phi(\mathbf{r} - \mathbf{v}\, t,\; 0) \]
+
+<p>over time intervals comparable to one eddy turnover. We exploit this by generating one <strong>wide</strong> phase screen per layer (4096 × 720 in our config) at startup, then sliding a 1280-pixel window across it at each frame:</p>
+
+<figure>
+<svg viewBox="0 0 820 200" xmlns="http://www.w3.org/2000/svg" aria-label="Frozen flow window slide">
+  <defs>
+    <linearGradient id="screen-grad" x1="0" x2="1">
+      <stop offset="0" stop-color="#1f2128"/>
+      <stop offset="0.5" stop-color="#2a2c33"/>
+      <stop offset="1" stop-color="#1f2128"/>
+    </linearGradient>
+  </defs>
+
+  <!-- The wide phase screen -->
+  <rect x="20" y="60" width="780" height="50" fill="url(#screen-grad)" stroke="#a8a59a" stroke-width="1"/>
+  <text class="label-dim" x="20" y="55">wide phase screen — 4096 × 720</text>
+
+  <!-- Window at t -->
+  <rect x="100" y="55" width="200" height="60" fill="none" stroke="#88c8ff" stroke-width="2"/>
+  <text class="label" x="200" y="135" text-anchor="middle" fill="#88c8ff">visible window @ t</text>
+  <text class="label-dim" x="200" y="150" text-anchor="middle">x_off = (wind · t) mod W</text>
+
+  <!-- Window at t+dt -->
+  <rect x="350" y="55" width="200" height="60" fill="none" stroke="#ffa040" stroke-width="2" stroke-dasharray="4 3"/>
+  <text class="label" x="450" y="135" text-anchor="middle" fill="#ffa040">window @ t + Δt</text>
+
+  <!-- Wind arrow -->
+  <path d="M280,170 L520,170" class="arrow"/>
+  <text class="label-dim" x="400" y="190" text-anchor="middle">wind direction · time</text>
+
+  <!-- Bilinear sub-pixel hint -->
+  <text class="label-dim" x="20" y="35">Bilinear interpolation between adjacent screen rows/columns gives sub-pixel offsets.</text>
+</svg>
+<figcaption>One wide phase screen per layer; each frame we extract the window at the layer's current advected position. The screen wraps around so the loop period at wind = 80 px/s on a 4096 px screen is ~51 s.</figcaption>
+</figure>
+
+<p>Cost per frame, per layer: one <code>numpy</code> fancy-index slice plus four-tap bilinear interpolation between adjacent rows and columns of the screen — a few milliseconds total. The screen is built once.</p>
+
+<!-- =========================================================== -->
+<h2 id="depth">7. Depth-aware distortion scaling</h2>
+
+<p>A pixel imaging the foreground (e.g. a road 4 km from the camera) sees a much shorter atmospheric path than a pixel imaging the horizon (~20 km). Cumulative phase variance scales with path length, so distortion magnitude should scale with depth.</p>
+
+<p>For each screen pixel we cast a ray $\mathbf{r}(\tau) = \mathbf{c} + \tau\, \mathbf{d}$ from camera position $\mathbf{c}$ in direction $\mathbf{d}$ (computed from the inverse view & projection matrices) and intersect with the ground plane $z = 0$:</p>
+
+\[ \tau^* \;=\; -\frac{c_z}{d_z}\quad\text{(if $d_z<0$, otherwise sky)} \]
+
+<p>The atmospheric path length to the ground hit is $\tau^*$. We clamp to <code>max_distance_m</code> (default 20 km — beyond this the existing atmospheric haze pass already fades the scene to nothing, so heat shimmer should saturate there) and form</p>
+
+\[ s(x,y) \;=\; \left(\frac{\min(\tau^*, d_\max)}{d_\max}\right)^p \quad\in[0,1] \]
+
+<p>with exponent $p$ (default 1.5) controlling the falloff curve. The final per-pixel displacement is</p>
+
+\[ \big(\delta x, \delta y\big) \;=\; A \cdot s(x,y) \cdot \sum_\ell \phi_\ell(\mathbf{r} - \mathbf{v}_\ell t) \]
+
+<p>where $A$ is the <code>amplitude_px</code> knob (default 0.5 px at the horizon).</p>
+
+<figure>
+<svg viewBox="0 0 820 240" xmlns="http://www.w3.org/2000/svg" aria-label="Camera and atmospheric path">
+  <!-- Ground plane -->
+  <rect x="0" y="180" width="820" height="60" fill="#0a1010"/>
+  <line x1="0" y1="180" x2="820" y2="180" stroke="#888" stroke-width="0.8"/>
+  <text class="label-dim" x="10" y="230">ground plane (z = 0)</text>
+
+  <!-- Camera -->
+  <circle cx="100" cy="60" r="6" fill="#ffa040"/>
+  <text class="label" x="115" y="55">camera</text>
+  <text class="label-dim" x="115" y="70">altitude ≈ 1.6 km</text>
+
+  <!-- Rays -->
+  <line x1="100" y1="60" x2="200" y2="180" stroke="#88c8ff" stroke-width="1"/>
+  <line x1="100" y1="60" x2="350" y2="180" stroke="#88c8ff" stroke-width="1"/>
+  <line x1="100" y1="60" x2="600" y2="180" stroke="#88c8ff" stroke-width="1"/>
+  <line x1="100" y1="60" x2="780" y2="178" stroke="#88c8ff" stroke-width="1"/>
+
+  <!-- Sky ray -->
+  <line x1="100" y1="60" x2="780" y2="40" stroke="#ff66aa" stroke-width="1" stroke-dasharray="3 2"/>
+  <text class="label-dim" x="700" y="35" fill="#ff66aa">sky ray (no ground hit)</text>
+
+  <!-- t_val labels along rays -->
+  <text class="label-dim" x="170" y="155">τ* small</text>
+  <text class="label-dim" x="450" y="155">τ* medium</text>
+  <text class="label-dim" x="650" y="155">τ* ≈ d_max</text>
+
+  <!-- Atmospheric layers (turbulent regions) -->
+  <ellipse cx="200" cy="120" rx="45" ry="14" fill="none" stroke="#a8a59a" stroke-dasharray="2 2"/>
+  <ellipse cx="350" cy="100" rx="80" ry="20" fill="none" stroke="#a8a59a" stroke-dasharray="2 2"/>
+  <ellipse cx="550" cy="90" rx="120" ry="22" fill="none" stroke="#a8a59a" stroke-dasharray="2 2"/>
+  <text class="label-dim" x="400" y="20">turbulent atmosphere (longer path = more accumulated phase)</text>
+
+  <!-- Sky pixel handling -->
+  <text class="label" x="700" y="100">sky pixels:</text>
+  <text class="label-dim" x="700" y="115">τ ← f · d_max</text>
+  <text class="label-dim" x="700" y="128">(f = sky_distance_factor)</text>
+</svg>
+<figcaption>Ground rays terminate at $\tau^*$, capped at $d_\max$. Sky rays (which never intersect $z=0$) get an artificial distance of <code>sky_distance_factor × max_distance_m</code> — letting stars and the upper atmosphere shimmer at a controllable level (default ½ × max ⇒ ~35% of max ground shimmer, since 0.5<sup>1.5</sup> ≈ 0.354).</figcaption>
+</figure>
+
+<!-- =========================================================== -->
+<h2 id="warp">8. Image warping — PyTorch <code>grid_sample</code> on Apple MPS</h2>
+
+<p>Given the per-pixel displacement field $(\delta x, \delta y)$, we warp the base image $I$ by</p>
+
+\[ I_\mathrm{out}(x, y) \;=\; I\!\left(x + \delta x(x,y),\; y + \delta y(x,y)\right) \]
+
+<p>using bilinear interpolation. The base frame is uploaded once to the GPU when the camera moves; only the displacement field crosses the host-device boundary each frame. Apple's MPS backend hits ~150 fps end-to-end at 1280×720, with the warp itself taking ~1.2 ms.</p>
+
+<p>Why bilinear and not nearest neighbour? With sub-pixel displacements (we live in the 0.1–1 px range most of the time), nearest-neighbour rounding causes visible step artifacts on diagonal edges. Bilinear smooths these out and the speed cost on MPS is negligible.</p>
+
+<p>The benchmark from the investigation:</p>
+
+<table>
+<tr><th>Method</th><th>Median ms</th><th>fps</th><th>Quality</th></tr>
+<tr><td>numpy fancy index (old)</td><td class="num">17.0</td><td class="num">59</td><td>nearest, jaggy</td></tr>
+<tr><td>scipy.ndimage.map_coordinates</td><td class="num">58.5</td><td class="num">17</td><td>bilinear</td></tr>
+<tr><td>torch grid_sample CPU</td><td class="num">8.5</td><td class="num">118</td><td>bilinear</td></tr>
+<tr><td><strong>torch grid_sample MPS (preloaded)</strong></td><td class="num"><strong>1.2</strong></td><td class="num"><strong>805</strong></td><td>bilinear</td></tr>
+</table>
+
+<!-- =========================================================== -->
+<h2 id="shortcuts">9. Shortcuts &amp; physical compromises</h2>
+
+<p>Several things are deliberately wrong in service of a tractable real-time pipeline. None of these matter for an artistic still or short loop, but it's worth being explicit about them.</p>
+
+<ul>
+  <li><strong>2D phase screen, not 3D ray integration.</strong> A correct treatment would integrate $\int n(\mathbf{r}, t)\,d\ell$ along each ray through a 3D refractive-index field. We replace this with a single 2D phase screen per layer placed at infinity. For ground-level shimmer at km-range scenes this is a good approximation; for near-field effects (e.g. heat above visible exhaust) it would be wrong.</li>
+  <li><strong>Phase ⇒ image displacement, directly.</strong> Strictly the wavefront phase $\phi$ relates to apparent angular displacement via the wavefront <em>gradient</em>: $\delta\theta = \lambda/(2\pi)\, \nabla\phi$. We skip the gradient and use the phase screen itself as the displacement field, then renormalise to the pixel-amplitude scale we want. The visual result is statistically indistinguishable for our purposes; only the absolute scale physical interpretation is lost (and our amplitude knob is empirical anyway).</li>
+  <li><strong>Two independent phase screens for $\delta x$ and $\delta y$.</strong> Real wavefront tilt is a vector field with rotational/divergence structure ($\nabla\phi$). We instead use two independent Kolmogorov fields, one per axis. This drops a small amount of cross-correlation but keeps the math trivial.</li>
+  <li><strong>Frozen flow ignores eddy lifetime.</strong> Turbulent eddies do evolve internally, not just advect. Over a 51-second loop you'd notice no evolution, only translation. Acceptable for short clips; for long sequences you'd want to also slowly mutate the screen (or generate a fresh one and crossfade).</li>
+  <li><strong>No wavelength dependence.</strong> Real heat shimmer is mildly chromatic (refractive index has weak dispersion), and at extreme scales you can see colour fringing on bright distant lights. We use a single achromatic warp.</li>
+  <li><strong>Sky pixels get an arbitrary distance.</strong> A sky ray's atmospheric path is not really $f \cdot d_\max$; it's some integrated quantity that depends on viewing angle and atmospheric vertical structure. We use a single tunable factor as a controllable knob, not a derivation.</li>
+  <li><strong>Per-pixel <em>independent</em> sampling.</strong> We re-look up each output pixel independently. A correct image-formation model would integrate the warp over the pixel's solid angle (anti-aliasing). Bilinear interpolation gives some of this for free; a more correct model would supersample.</li>
+</ul>
+
+<!-- =========================================================== -->
+<h2 id="refs">10. Code references &amp; further reading</h2>
+
+<h3>Code</h3>
+<ul>
+  <li><code>src/streets_at_night/rendering/heat_haze.py</code> — phase screen, depth map, distance scale, HazeField, TorchWarper, HeatHaze orchestrator.</li>
+  <li><code>src/streets_at_night/config/schema.py</code> — <code>HeatHazeConfig</code>, <code>HeatHazeLayerConfig</code>.</li>
+  <li><code>src/streets_at_night/main.py</code> — <code>cmd_preview</code> (live preview wiring) and <code>cmd_animate</code> (static-image animation).</li>
+  <li><code>tests/test_heat_haze.py</code> — unit tests for each component.</li>
+  <li><code>investigation/</code> — the prototype scripts and visualisations that drove the design decisions; <code>investigation/FINDINGS.md</code> has the full investigation notes.</li>
+</ul>
+
+<h3>External libraries</h3>
+<ul>
+  <li><strong>numpy</strong> — FFT, fancy indexing, the entire phase-screen path.</li>
+  <li><strong>PyTorch (MPS backend)</strong> — <code>torch.nn.functional.grid_sample</code> is the workhorse for the per-frame bilinear warp on the Apple GPU. The base frame stays resident on-device between frames.</li>
+  <li><strong>Pillow</strong> — base-frame I/O and resizing.</li>
+  <li><strong>pygame</strong> — preview/animate window.</li>
+</ul>
+
+<h3>Theory</h3>
+<ul>
+  <li>Kolmogorov, A. N. (1941). <em>The Local Structure of Turbulence in Incompressible Viscous Fluid for Very Large Reynolds Numbers.</em> Dokl. Akad. Nauk SSSR.</li>
+  <li>Fried, D. L. (1966). <em>Optical Resolution Through a Randomly Inhomogeneous Medium for Very Long and Very Short Exposures.</em> JOSA 56(10).</li>
+  <li>Roddier, F. (1981). <em>The effects of atmospheric turbulence in optical astronomy.</em> Progress in Optics 19. — comprehensive reference, including the Von Karman PSD form we use.</li>
+  <li>Townson, M. et al. <em>aotools: a Python package for adaptive optics modelling and analysis.</em> Optics Express 27, 31316 (2019). — the package we benchmarked against and consciously did not use.</li>
+  <li>Taylor, G. I. (1938). <em>The spectrum of turbulence.</em> Proc. R. Soc. A 164(919). — origin of the frozen-flow hypothesis.</li>
+</ul>
+
+<div class="footnotes">
+<p>If something in here is wrong or unclear, the prototypes in <code>investigation/</code> are the ground-truth derivation: each numbered script tackled one piece of the pipeline and produced a measurable artifact (PSD plots, timing tables, side-by-side animations). The final implementation is just a tidied-up version of those.</p>
+</div>
+
+</body>
+</html>

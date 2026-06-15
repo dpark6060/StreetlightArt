@@ -512,7 +512,7 @@ def get_tile_cache_dir(cache_dir: Path, config: "SceneConfig") -> Path:
         Path: Path to the config-specific tile cache subdirectory.
     """
     key = _config_cache_key(config)
-    return cache_dir / f"ground_tiles_{key}"
+    return cache_dir / "ground_tiles" / key
 
 
 def _config_cache_key(config: "SceneConfig") -> str:

@@ -123,8 +123,10 @@ def _strip_cache_path(cache_dir: Path, strip_half_width_deg: float) -> Path:
     Returns:
         Path: Path to the debug strip .gpkg file.
     """
+    osm_dir = cache_dir / "osm"
+    osm_dir.mkdir(parents=True, exist_ok=True)
     width_tag = f"{strip_half_width_deg:.4f}".replace(".", "p")
-    return cache_dir / f"debug_strip_{width_tag}.gpkg"
+    return osm_dir / f"debug_strip_{width_tag}.gpkg"
 
 
 def _compute_origin(config: SceneConfig) -> t.Tuple[float, float]:

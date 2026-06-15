@@ -13,11 +13,13 @@ def load_roads(bbox: t.Tuple[float, float, float, float], cache_dir: Path) -> gp
 
     Args:
         bbox (tuple): (north, south, east, west) bounding box in WGS84 degrees.
-        cache_dir (Path): Directory for .gpkg cache files.
+        cache_dir (Path): Region cache directory; osm/ and osmnx/ subdirs are
+            created automatically.
 
     Returns:
         GeoDataFrame: Road network edges with OSM tags.
     """
+    _configure_osmnx_cache(cache_dir)
     cache_path = _cache_path(cache_dir, "roads", bbox)
     if cache_path.exists():
         return gpd.read_file(cache_path)
@@ -31,11 +33,13 @@ def load_land_use(bbox: t.Tuple[float, float, float, float], cache_dir: Path) ->
 
     Args:
         bbox (tuple): (north, south, east, west) bounding box in WGS84 degrees.
-        cache_dir (Path): Directory for .gpkg cache files.
+        cache_dir (Path): Region cache directory; osm/ and osmnx/ subdirs are
+            created automatically.
 
     Returns:
         GeoDataFrame: Land use polygons with OSM tags.
     """
+    _configure_osmnx_cache(cache_dir)
     cache_path = _cache_path(cache_dir, "land_use", bbox)
     if cache_path.exists():
         return gpd.read_file(cache_path)
@@ -49,11 +53,13 @@ def load_buildings(bbox: t.Tuple[float, float, float, float], cache_dir: Path) -
 
     Args:
         bbox (tuple): (north, south, east, west) bounding box in WGS84 degrees.
-        cache_dir (Path): Directory for .gpkg cache files.
+        cache_dir (Path): Region cache directory; osm/ and osmnx/ subdirs are
+            created automatically.
 
     Returns:
         GeoDataFrame: Building footprint polygons with OSM tags.
     """
+    _configure_osmnx_cache(cache_dir)
     cache_path = _cache_path(cache_dir, "buildings", bbox)
     if cache_path.exists():
         return gpd.read_file(cache_path)
@@ -165,16 +171,30 @@ def _save_to_gpkg(
     gdf[present].to_file(path, driver="GPKG")
 
 
-def _cache_path(cache_dir: Path, prefix: str, bbox: t.Tuple[float, float, float, float]) -> Path:
-    """Build the cache file path for a given prefix and bounding box.
+def _configure_osmnx_cache(cache_dir: Path) -> None:
+    """Point osmnx's HTTP response cache at cache_dir/osmnx/.
 
     Args:
-        cache_dir (Path): Cache directory.
+        cache_dir (Path): Region cache directory.
+    """
+    osmnx_dir = cache_dir / "osmnx"
+    osmnx_dir.mkdir(parents=True, exist_ok=True)
+    ox.settings.cache_folder = str(osmnx_dir)
+    ox.settings.use_cache = True
+
+
+def _cache_path(cache_dir: Path, prefix: str, bbox: t.Tuple[float, float, float, float]) -> Path:
+    """Build the .gpkg cache file path under cache_dir/osm/.
+
+    Args:
+        cache_dir (Path): Region cache directory.
         prefix (str): File name prefix (e.g. "roads", "land_use").
         bbox (tuple): Bounding box used as the cache key.
 
     Returns:
         Path: Full path to the .gpkg cache file.
     """
+    osm_dir = cache_dir / "osm"
+    osm_dir.mkdir(parents=True, exist_ok=True)
     key = hashlib.md5(str(bbox).encode()).hexdigest()[:8]
-    return cache_dir / f"{prefix}_{key}.gpkg"
+    return osm_dir / f"{prefix}_{key}.gpkg"

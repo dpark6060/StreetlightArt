@@ -49,8 +49,10 @@ def cmd_devmode(args: argparse.Namespace, config: SceneConfig) -> None:
     """
     _ensure_devmode_config(config)
 
+    from ..main import _resolve_cache_dir
+
     use_real_tiles: bool = getattr(args, "real_tiles", False)
-    cache_dir: Path = getattr(args, "cache_dir", Path("cache"))
+    cache_dir: Path = _resolve_cache_dir(getattr(args, "cache_dir", Path("cache")), config)
 
     pygame.init()
     window = pygame.display.set_mode((_WINDOW_WIDTH, _WINDOW_HEIGHT))

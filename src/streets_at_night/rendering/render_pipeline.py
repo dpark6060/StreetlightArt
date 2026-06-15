@@ -21,6 +21,7 @@ from ..camera.camera import Camera
 from ..config.schema import QualityPreset
 from .backend import RenderBackend
 from .flat_map import FlatMapMeta
+from .raycast import build_ground_gbuffer
 
 if t.TYPE_CHECKING:
     from ..scene.scene import Scene
@@ -118,10 +119,26 @@ def get_export_passes(
     from .ground_pass import render_ground_export
     from .road_pass import render_roads_export
 
+    # The ground export and illumination passes both raycast every screen pixel
+    # to z=0 with the same camera and size. Compute that G-buffer once per frame
+    # and share it. Keyed on (camera identity, surface size); for a single
+    # export frame both are constant, so this builds exactly once.
+    gbuffer_cache: t.Dict[str, t.Any] = {}
+
+    def _shared_gbuffer(camera: Camera, backend: RenderBackend) -> t.Any:
+        width, height = backend.get_surface_size()
+        sig = (id(camera), width, height)
+        if gbuffer_cache.get("sig") != sig:
+            gbuffer_cache["sig"] = sig
+            gbuffer_cache["gb"] = build_ground_gbuffer(camera, width, height)
+        return gbuffer_cache["gb"]
+
     def _ground_export_pass(
         scene: "Scene", camera: Camera, backend: RenderBackend
     ) -> None:
-        render_ground_export(scene, camera, backend, cache_dir)
+        render_ground_export(
+            scene, camera, backend, cache_dir, gbuffer=_shared_gbuffer(camera, backend)
+        )
 
     passes: t.List[RenderPass] = [_ground_export_pass, render_roads_export]
     if not no_lights:
@@ -137,7 +154,9 @@ def get_export_passes(
         def _illumination_pass(
             scene: "Scene", camera: Camera, backend: RenderBackend
         ) -> t.Dict[str, t.Any]:
-            return render_illumination(scene, camera, backend, multiplier)
+            return render_illumination(
+                scene, camera, backend, multiplier, gbuffer=_shared_gbuffer(camera, backend)
+            )
 
         passes.extend([_illumination_pass, render_lights_export])
 

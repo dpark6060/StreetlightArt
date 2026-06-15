@@ -168,6 +168,31 @@ class RenderBackend(ABC):
             layer (PIL.Image.Image): RGBA layer to blend additively onto the surface.
         """
 
+    def add_linear(self, layer: np.ndarray) -> None:
+        """Add a linear-radiance (H, W, 3) float array to the light buffer.
+
+        Default implementation is a no-op. Override in backends that run the
+        linear-light pipeline (PillowBackend). This is the canonical, unclamped
+        accumulation entry point for the light passes.
+
+        Args:
+            layer (np.ndarray): (H, W, 3) float linear-radiance contribution.
+        """
+
+    def resolve_linear(self) -> np.ndarray:
+        """Return the combined linear frame (substrate plus accumulated light).
+
+        Default implementation raises — only backends running the linear-light
+        pipeline support it.
+
+        Returns:
+            np.ndarray: (H, W, 3) float32 linear radiance.
+
+        Raises:
+            NotImplementedError: If the backend does not support linear resolve.
+        """
+        raise NotImplementedError("This backend does not support resolve_linear().")
+
     @abstractmethod
     def present(self) -> None:
         """Display the frame (pygame: flip; Pillow: no-op)."""

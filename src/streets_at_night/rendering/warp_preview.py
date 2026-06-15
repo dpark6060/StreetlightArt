@@ -14,9 +14,11 @@ import numpy as np
 from PIL import Image
 
 from ..camera.camera import Camera
-from ..config.schema import HeatHazeConfig
 from .backend import RenderBackend
 from .flat_map import FlatMapMeta
+# Re-exported under the historical private name so heat_haze and the warp-preview
+# tests keep importing it from here; the implementation lives in raycast.py.
+from .raycast import build_ray_directions as _build_ray_directions
 
 if t.TYPE_CHECKING:
     from ..scene.scene import Scene
@@ -56,53 +58,6 @@ def render_warp_preview(
     )
     output = _sample_flat_map(flat_map, flat_px, flat_py, ground_mask, width, height)
     backend.blit_pil_image(output)
-
-
-def _build_ray_directions(
-    width: int,
-    height: int,
-    inv_proj: np.ndarray,
-    inv_view: np.ndarray,
-) -> np.ndarray:
-    """Build a world-space ray direction for every screen pixel.
-
-    Args:
-        width (int): Screen width in pixels.
-        height (int): Screen height in pixels.
-        inv_proj (np.ndarray): (4, 4) inverse projection matrix.
-        inv_view (np.ndarray): (4, 4) inverse view matrix.
-
-    Returns:
-        np.ndarray: (H, W, 3) normalized ray directions in world space.
-    """
-    sx, sy = np.meshgrid(
-        np.arange(width, dtype=np.float64),
-        np.arange(height, dtype=np.float64),
-    )
-    ndc_x = 2.0 * sx / width - 1.0
-    ndc_y = 1.0 - 2.0 * sy / height
-
-    n_pixels = width * height
-    ndc_x_flat = ndc_x.ravel()
-    ndc_y_flat = ndc_y.ravel()
-
-    clip = np.stack([
-        ndc_x_flat,
-        ndc_y_flat,
-        np.full(n_pixels, -1.0),
-        np.ones(n_pixels),
-    ], axis=1)
-
-    eye = (inv_proj @ clip.T).T
-    eye_dir = np.column_stack([eye[:, 0], eye[:, 1], np.full(n_pixels, -1.0), np.zeros(n_pixels)])
-
-    world_dir = (inv_view @ eye_dir.T).T[:, :3]
-
-    norms = np.linalg.norm(world_dir, axis=1, keepdims=True)
-    norms = np.where(norms < 1e-10, 1.0, norms)
-    world_dir /= norms
-
-    return world_dir.reshape(height, width, 3)
 
 
 def _raycast_to_flat_map(
@@ -180,54 +135,3 @@ def _sample_flat_map(
     return Image.fromarray(output, "RGB")
 
 
-def apply_heat_haze(
-    frame: np.ndarray,
-    t: float,
-    config: HeatHazeConfig,
-) -> np.ndarray:
-    """Apply atmospheric heat haze distortion to a composited frame.
-
-    Shifts pixels using a two-octave sine wave displacement field. Pixels near
-    the top of the frame (horizon / distant ground) shimmer more than pixels
-    near the bottom (close ground), using screen_y as a distance proxy.
-
-    The input array is not mutated. Meshgrids are computed internally; at
-    1280×720 this costs under 1ms and avoids coupling the function to any
-    animation state object.
-
-    Args:
-        frame (np.ndarray): (H, W, 3) uint8 composited frame.
-        t (float): Elapsed time in seconds, drives wave animation.
-        config (HeatHazeConfig): Heat haze parameters.
-
-    Returns:
-        np.ndarray: New (H, W, 3) uint8 array with haze distortion applied.
-    """
-    h, w = frame.shape[:2]
-    screen_y, screen_x = np.meshgrid(
-        np.arange(h, dtype=np.float32),
-        np.arange(w, dtype=np.float32),
-        indexing="ij",
-    )
-
-    # 0.0 at bottom of frame (near ground), 1.0 at top (horizon / sky)
-    norm_y = (h - 1 - screen_y) / (h - 1)
-    distance_scale = norm_y ** config.distance_exponent
-
-    f1, f2 = config.freq1, config.freq2
-    s1, s2 = config.speed1, config.speed2
-    a = config.amplitude
-
-    dx = a * distance_scale * (
-        np.sin(f1 * screen_y + s1 * t)
-        + 0.5 * np.sin(f2 * screen_y + 0.7 * screen_x + s2 * t)
-    )
-    dy = a * distance_scale * 0.4 * (
-        np.cos(f1 * screen_x + s1 * t * 0.8)
-        + 0.5 * np.cos(f2 * screen_x + s2 * t)
-    )
-
-    src_y = np.clip(screen_y + dy, 0, h - 1).astype(np.int32)
-    src_x = np.clip(screen_x + dx, 0, w - 1).astype(np.int32)
-
-    return frame[src_y, src_x]

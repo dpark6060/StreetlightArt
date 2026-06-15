@@ -12,6 +12,7 @@ from ..config.schema import SceneConfig
 from ..models.zones import CommercialZone, DarkZone, ResidentialZone
 from ..utils.colors import hex_to_rgb
 from .backend import RenderBackend
+from .raycast import GroundHit, build_ground_gbuffer
 from .render_utils import compute_horizon_y
 
 if t.TYPE_CHECKING:
@@ -59,13 +60,14 @@ def render_ground_export(
     camera: Camera,
     backend: RenderBackend,
     cache_dir: Path = Path("cache"),
+    gbuffer: t.Optional[GroundHit] = None,
 ) -> None:
     """Render ground using tiled textures for high-res export.
 
     Draws the sky/ground/horizon base first (via render_ground), then
-    composites per-tile ground colors over the ground region using a
-    per-pixel raycast approach. This provides per-house color variation
-    that the flat zone-polygon pass cannot produce.
+    composites per-tile ground colors over the ground region using the shared
+    per-pixel ground raycast. This provides per-house color variation that the
+    flat zone-polygon pass cannot produce.
 
     The tile cache directory is derived from a hash of the scene's color
     config so that stale tiles are bypassed automatically when colors change.
@@ -75,100 +77,27 @@ def render_ground_export(
         camera (Camera): Configured 3D camera.
         backend (RenderBackend): Target render surface (must support paste_image).
         cache_dir (Path): Root cache directory; tile subdirectory is chosen automatically.
+        gbuffer (GroundHit | None): Precomputed ground raycast for this camera and
+            size. When None, it is computed here. The pipeline shares one G-buffer
+            between this pass and the illumination pass to avoid raycasting twice.
     """
     from ..scene.ground_tiles import create_tile_grid, get_tile_cache_dir
 
     render_ground(scene, camera, backend)
 
     width, height = backend.get_surface_size()
-    inv_proj = np.linalg.inv(camera.get_projection_matrix())
-    inv_view = np.linalg.inv(camera.get_view_matrix())
+    if gbuffer is None:
+        gbuffer = build_ground_gbuffer(camera, width, height)
 
     grid = create_tile_grid(scene)
     tile_cache_dir = get_tile_cache_dir(cache_dir, scene.config)
-    ray_dirs = _build_export_ray_directions(width, height, inv_proj, inv_view)
-    world_x, world_y, ground_mask = _raycast_ground_plane(camera.position, ray_dirs)
 
     current_image = backend.get_image()
     composited = _sample_tiles(
-        current_image, world_x, world_y, ground_mask, grid, scene, tile_cache_dir, width, height
+        current_image, gbuffer.hit_x, gbuffer.hit_y, gbuffer.ground_mask,
+        grid, scene, tile_cache_dir, width, height,
     )
     backend.paste_image(composited)
-
-
-def _build_export_ray_directions(
-    width: int,
-    height: int,
-    inv_proj: np.ndarray,
-    inv_view: np.ndarray,
-) -> np.ndarray:
-    """Build a world-space ray direction for every screen pixel.
-
-    Args:
-        width (int): Screen width in pixels.
-        height (int): Screen height in pixels.
-        inv_proj (np.ndarray): (4, 4) inverse projection matrix.
-        inv_view (np.ndarray): (4, 4) inverse view matrix.
-
-    Returns:
-        np.ndarray: (H, W, 3) normalized ray directions in world space.
-    """
-    sx, sy = np.meshgrid(
-        np.arange(width, dtype=np.float64),
-        np.arange(height, dtype=np.float64),
-    )
-    ndc_x = 2.0 * sx / width - 1.0
-    ndc_y = 1.0 - 2.0 * sy / height
-
-    n_pixels = width * height
-    clip = np.stack([
-        ndc_x.ravel(),
-        ndc_y.ravel(),
-        np.full(n_pixels, -1.0),
-        np.ones(n_pixels),
-    ], axis=1)
-
-    eye = (inv_proj @ clip.T).T
-    eye_dir = np.column_stack([
-        eye[:, 0],
-        eye[:, 1],
-        np.full(n_pixels, -1.0),
-        np.zeros(n_pixels),
-    ])
-    world_dir = (inv_view @ eye_dir.T).T[:, :3]
-
-    norms = np.linalg.norm(world_dir, axis=1, keepdims=True)
-    norms = np.where(norms < 1e-10, 1.0, norms)
-    world_dir /= norms
-
-    return world_dir.reshape(height, width, 3)
-
-
-def _raycast_ground_plane(
-    cam_pos: np.ndarray,
-    ray_dirs: np.ndarray,
-) -> t.Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Intersect all rays with the z=0 ground plane.
-
-    Args:
-        cam_pos (np.ndarray): (3,) camera position in world ENU.
-        ray_dirs (np.ndarray): (H, W, 3) normalized ray directions.
-
-    Returns:
-        tuple[np.ndarray, np.ndarray, np.ndarray]:
-            - world_x: (H, W) float array of ENU x hit positions.
-            - world_y: (H, W) float array of ENU y hit positions.
-            - ground_mask: (H, W) bool array, True where ray hits z=0 (t > 0).
-    """
-    dz = ray_dirs[:, :, 2]
-    ray_hits = np.abs(dz) > 1e-10
-    t_val = np.where(ray_hits, -cam_pos[2] / np.where(ray_hits, dz, 1.0), -1.0)
-    ground_mask = ray_hits & (t_val > 0.0)
-
-    world_x = cam_pos[0] + t_val * ray_dirs[:, :, 0]
-    world_y = cam_pos[1] + t_val * ray_dirs[:, :, 1]
-
-    return world_x, world_y, ground_mask
 
 
 def _sample_tiles(

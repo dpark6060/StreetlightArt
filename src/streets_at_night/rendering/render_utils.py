@@ -35,7 +35,19 @@ def compute_horizon_y(
     """
     from ..camera.projection import project_points
 
-    far_ahead = camera.position + np.array([0.0, camera.far * 0.9, 0.0])
+    # Move far ahead in the camera's actual horizontal look direction.
+    # Using +Y (north) was wrong for south-facing cameras: the point ended up
+    # behind the camera, project_points returned invalid, and the fallback
+    # height//4 placed the horizon ~25% from the top regardless of camera tilt.
+    forward = camera.get_forward()
+    horiz = np.array([forward[0], forward[1], 0.0])
+    horiz_len = np.linalg.norm(horiz)
+    if horiz_len > 1e-10:
+        horiz /= horiz_len
+    else:
+        horiz = np.array([0.0, 1.0, 0.0])  # camera pointing straight down
+
+    far_ahead = camera.position + horiz * camera.far * 0.9
     far_ahead[2] = 0.0
     coords, valid = project_points(
         far_ahead.reshape(1, 3), view_matrix, proj_matrix, (width, height)

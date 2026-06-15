@@ -9,13 +9,13 @@ from PIL import Image
 
 from streets_at_night.config.defaults import DEFAULTS
 from streets_at_night.config.loader import _build_atmosphere_config, _build_stars_config
-from streets_at_night.config.schema import AtmosphereConfig, StarsConfig
+from streets_at_night.config.schema import AtmosphereConfig, GradeConfig, StarsConfig
 from streets_at_night.rendering.backend import RenderBackend
 from streets_at_night.rendering.compositor import (
-    _apply_scalar_to_image,
+    _add_stars,
+    _apply_color_grade,
+    _apply_vignette,
     _build_vignette_scalar,
-    _render_stars,
-    _render_vignette,
     render_composite,
 )
 
@@ -38,6 +38,12 @@ def default_stars() -> StarsConfig:
 
 
 @pytest.fixture
+def default_grade() -> GradeConfig:
+    """Return a default GradeConfig (neutral exposure, ACES)."""
+    return GradeConfig(exposure=0.0, tonemap="aces")
+
+
+@pytest.fixture
 def enabled_stars() -> StarsConfig:
     """Return a StarsConfig with stars enabled and a small count for speed."""
     return StarsConfig(
@@ -51,26 +57,21 @@ def enabled_stars() -> StarsConfig:
 
 
 @pytest.fixture
-def white_image() -> Image.Image:
-    """Return a small solid-white RGB image for vignette testing."""
-    return Image.new("RGB", (100, 100), (255, 255, 255))
-
-
-@pytest.fixture
-def mock_backend(white_image) -> mock.MagicMock:
-    """Return a mock RenderBackend returning a white image from get_image."""
+def mock_backend() -> mock.MagicMock:
+    """Return a mock RenderBackend resolving to a mid-gray linear frame."""
     backend = mock.MagicMock(spec=RenderBackend)
     backend.get_surface_size.return_value = (100, 100)
-    backend.get_image.return_value = white_image
+    backend.resolve_linear.return_value = np.full((100, 100, 3), 0.2, dtype=np.float32)
     return backend
 
 
 @pytest.fixture
-def mock_scene(default_atmosphere, default_stars) -> mock.MagicMock:
-    """Return a mock Scene with default atmosphere and disabled stars."""
+def mock_scene(default_atmosphere, default_stars, default_grade) -> mock.MagicMock:
+    """Return a mock Scene with default atmosphere, grade, and disabled stars."""
     scene = mock.MagicMock()
     scene.config.atmosphere = default_atmosphere
     scene.config.stars = default_stars
+    scene.config.grade = default_grade
     scene.config.seed = 42
     return scene
 
@@ -91,125 +92,84 @@ def mock_camera() -> mock.MagicMock:
 # ---------------------------------------------------------------------------
 
 
-def test_render_composite_always_calls_vignette(mock_scene, mock_camera, mock_backend):
-    # Arrange
+def test_render_composite_applies_vignette_and_grade(mock_scene, mock_camera, mock_backend):
     with mock.patch(
-        "streets_at_night.rendering.compositor._render_vignette"
+        "streets_at_night.rendering.compositor._apply_vignette"
     ) as mock_vignette, mock.patch(
-        "streets_at_night.rendering.compositor.compute_horizon_y",
-        return_value=50,
-    ):
-        # Act
+        "streets_at_night.rendering.compositor._apply_color_grade"
+    ) as mock_grade:
         render_composite(mock_scene, mock_camera, mock_backend)
 
-    # Assert
     mock_vignette.assert_called_once()
+    mock_grade.assert_called_once()
 
 
 def test_render_composite_skips_stars_when_disabled(mock_scene, mock_camera, mock_backend):
-    # Arrange — default_stars has stars_enabled=False
     with mock.patch(
-        "streets_at_night.rendering.compositor._render_vignette"
+        "streets_at_night.rendering.compositor._apply_vignette"
     ), mock.patch(
-        "streets_at_night.rendering.compositor._render_stars"
+        "streets_at_night.rendering.compositor._apply_color_grade"
+    ), mock.patch(
+        "streets_at_night.rendering.compositor._add_stars"
     ) as mock_stars:
-        # Act
         render_composite(mock_scene, mock_camera, mock_backend)
 
-    # Assert
     mock_stars.assert_not_called()
 
 
-def test_render_composite_calls_stars_when_enabled(mock_scene, mock_camera, mock_backend, enabled_stars):
-    # Arrange
+def test_render_composite_adds_stars_when_enabled(mock_scene, mock_camera, mock_backend, enabled_stars):
     mock_scene.config.stars = enabled_stars
 
     with mock.patch(
-        "streets_at_night.rendering.compositor._render_vignette"
+        "streets_at_night.rendering.compositor._apply_vignette"
     ), mock.patch(
-        "streets_at_night.rendering.compositor._render_stars"
+        "streets_at_night.rendering.compositor._apply_color_grade"
+    ), mock.patch(
+        "streets_at_night.rendering.compositor._add_stars"
     ) as mock_stars, mock.patch(
         "streets_at_night.rendering.compositor.compute_horizon_y",
         return_value=50,
     ):
-        # Act
         render_composite(mock_scene, mock_camera, mock_backend)
 
-    # Assert
     mock_stars.assert_called_once()
 
 
 def test_render_composite_skips_stars_when_stars_config_is_none(mock_scene, mock_camera, mock_backend):
-    # Arrange — stars is None
     mock_scene.config.stars = None
 
     with mock.patch(
-        "streets_at_night.rendering.compositor._render_vignette"
+        "streets_at_night.rendering.compositor._apply_vignette"
     ), mock.patch(
-        "streets_at_night.rendering.compositor._render_stars"
+        "streets_at_night.rendering.compositor._apply_color_grade"
+    ), mock.patch(
+        "streets_at_night.rendering.compositor._add_stars"
     ) as mock_stars:
-        # Act
         render_composite(mock_scene, mock_camera, mock_backend)
 
-    # Assert
     mock_stars.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
-# _render_vignette — darkens edges via paste_image
+# _apply_vignette — multiply in linear
 # ---------------------------------------------------------------------------
 
 
-def test_render_vignette_calls_get_image_and_paste_image(mock_backend, default_atmosphere):
-    # Act
-    _render_vignette(mock_backend, 100, 100, default_atmosphere)
+def test_apply_vignette_darkens_edges(default_atmosphere):
+    linear = np.ones((100, 100, 3), dtype=np.float32)
 
-    # Assert
-    mock_backend.get_image.assert_called_once()
-    mock_backend.paste_image.assert_called_once()
+    _apply_vignette(linear, 100, 100, default_atmosphere)
 
-
-def test_render_vignette_darkens_edges(default_atmosphere):
-    # Arrange — real white image; apply real vignette
-    width, height = 100, 100
-    white_img = Image.new("RGB", (width, height), (255, 255, 255))
-
-    real_backend = mock.MagicMock(spec=RenderBackend)
-    real_backend.get_surface_size.return_value = (width, height)
-    real_backend.get_image.return_value = white_img
-
-    captured = []
-    real_backend.paste_image.side_effect = lambda img: captured.append(img)
-
-    # Act
-    _render_vignette(real_backend, width, height, default_atmosphere)
-
-    # Assert — corner pixel should be darker than center pixel
-    result_arr = np.asarray(captured[0])
-    center_val = int(result_arr[50, 50, 0])
-    corner_val = int(result_arr[0, 0, 0])
-    assert corner_val < center_val
+    assert linear[0, 0, 0] < linear[50, 50, 0]
 
 
-def test_render_vignette_center_pixel_unchanged(default_atmosphere):
-    # Arrange
-    width, height = 100, 100
-    white_img = Image.new("RGB", (width, height), (255, 255, 255))
-
-    real_backend = mock.MagicMock(spec=RenderBackend)
-    real_backend.get_surface_size.return_value = (width, height)
-    real_backend.get_image.return_value = white_img
-
-    captured = []
-    real_backend.paste_image.side_effect = lambda img: captured.append(img)
-
-    # Act — use vignette_radius=1.0 so darkening starts at the very edge only
+def test_apply_vignette_center_unchanged_with_full_radius(default_atmosphere):
+    linear = np.ones((100, 100, 3), dtype=np.float32)
     default_atmosphere.vignette_radius = 1.0
-    _render_vignette(real_backend, width, height, default_atmosphere)
 
-    # Assert — center pixel at (50, 50) should be at or near 255
-    result_arr = np.asarray(captured[0])
-    assert result_arr[50, 50, 0] >= 250
+    _apply_vignette(linear, 100, 100, default_atmosphere)
+
+    assert linear[50, 50, 0] == pytest.approx(1.0, abs=0.02)
 
 
 # ---------------------------------------------------------------------------
@@ -218,110 +178,89 @@ def test_render_vignette_center_pixel_unchanged(default_atmosphere):
 
 
 def test_build_vignette_scalar_center_is_one():
-    # Act
     scalar = _build_vignette_scalar(100, 100, strength=0.5, radius=0.7)
 
-    # Assert — center pixel (50, 50) should be 1.0 (no darkening)
     assert abs(scalar[50, 50] - 1.0) < 0.01
 
 
 def test_build_vignette_scalar_corners_are_darkened():
-    # Act
     scalar = _build_vignette_scalar(100, 100, strength=0.5, radius=0.0)
 
-    # Assert — corner scalar must be less than 1.0
     assert scalar[0, 0] < 1.0
 
 
 def test_build_vignette_scalar_zero_strength_returns_all_ones():
-    # Act
     scalar = _build_vignette_scalar(100, 100, strength=0.0, radius=0.7)
 
-    # Assert — no darkening at any pixel
     assert np.all(scalar >= 0.999)
 
 
 # ---------------------------------------------------------------------------
-# _apply_scalar_to_image — channel multiplication
+# _apply_color_grade — tone-map and encode
 # ---------------------------------------------------------------------------
 
 
-def test_apply_scalar_to_image_full_scalar_preserves_values():
-    # Arrange — scalar of 1.0 everywhere should leave image unchanged
-    image = Image.new("RGB", (10, 10), (200, 150, 100))
-    scalar = np.ones((10, 10), dtype=np.float32)
+def test_apply_color_grade_pastes_rgb_uint8_image(default_grade):
+    linear = np.full((8, 8, 3), 0.2, dtype=np.float32)
+    backend = mock.MagicMock(spec=RenderBackend)
+    captured = []
+    backend.paste_image.side_effect = lambda img: captured.append(img)
 
-    # Act
-    result = _apply_scalar_to_image(image, scalar)
+    _apply_color_grade(backend, linear, default_grade)
 
-    # Assert
-    arr = np.asarray(result)
-    assert arr[5, 5, 0] == 200
-    assert arr[5, 5, 1] == 150
-    assert arr[5, 5, 2] == 100
+    assert captured[0].mode == "RGB"
+    assert captured[0].size == (8, 8)
 
 
-def test_apply_scalar_to_image_zero_scalar_produces_black():
-    # Arrange
-    image = Image.new("RGB", (10, 10), (200, 150, 100))
-    scalar = np.zeros((10, 10), dtype=np.float32)
+def test_apply_color_grade_rolls_off_bright_without_clip(default_grade):
+    # A bright (>1.0) linear pixel must map below pure white, not hard-clip.
+    linear = np.zeros((4, 4, 3), dtype=np.float32)
+    linear[1, 1, :] = 1.2
+    backend = mock.MagicMock(spec=RenderBackend)
+    captured = []
+    backend.paste_image.side_effect = lambda img: captured.append(img)
 
-    # Act
-    result = _apply_scalar_to_image(image, scalar)
+    _apply_color_grade(backend, linear, default_grade)
 
-    # Assert
-    arr = np.asarray(result)
-    assert np.all(arr == 0)
+    arr = np.asarray(captured[0])
+    assert 0 < arr[1, 1, 0] < 255
+    assert arr[0, 0, 0] == 0
+
+
+def test_apply_color_grade_exposure_brightens():
+    linear = np.full((4, 4, 3), 0.1, dtype=np.float32)
+    backend_low = mock.MagicMock(spec=RenderBackend)
+    backend_high = mock.MagicMock(spec=RenderBackend)
+    low, high = [], []
+    backend_low.paste_image.side_effect = lambda img: low.append(img)
+    backend_high.paste_image.side_effect = lambda img: high.append(img)
+
+    _apply_color_grade(backend_low, linear, GradeConfig(exposure=0.0, tonemap="aces"))
+    _apply_color_grade(backend_high, linear, GradeConfig(exposure=2.0, tonemap="aces"))
+
+    assert int(np.asarray(high[0])[0, 0, 0]) > int(np.asarray(low[0])[0, 0, 0])
 
 
 # ---------------------------------------------------------------------------
-# _render_stars — draws only above horizon
+# _add_stars — adds emission only above horizon
 # ---------------------------------------------------------------------------
 
 
-def test_render_stars_draws_only_above_horizon(enabled_stars):
-    # Arrange
-    fake_backend = mock.MagicMock(spec=RenderBackend)
+def test_add_stars_only_above_horizon(enabled_stars):
+    linear = np.zeros((100, 100, 3), dtype=np.float32)
     rng = np.random.default_rng(42)
 
-    # Act — horizon at y=50, surface 100px tall
-    _render_stars(fake_backend, 100, 100, horizon_y=50, config=enabled_stars, rng=rng)
+    _add_stars(linear, 100, 100, horizon_y=50, config=enabled_stars, rng=rng)
 
-    # Assert — all draw_point calls have y < 50
-    for call in fake_backend.draw_point.call_args_list:
-        center = call[0][0]
-        assert center[1] < 50
+    lit_rows = np.where(linear.sum(axis=2) > 0)[0]
+    assert lit_rows.size > 0
+    assert np.all(lit_rows < 50)
 
 
-def test_render_stars_skips_rendering_when_horizon_at_zero(enabled_stars):
-    # Arrange — horizon_y=0 means no sky pixels available
-    fake_backend = mock.MagicMock(spec=RenderBackend)
+def test_add_stars_skips_when_horizon_at_zero(enabled_stars):
+    linear = np.zeros((640, 360, 3), dtype=np.float32)
     rng = np.random.default_rng(42)
 
-    # Act
-    _render_stars(fake_backend, 640, 360, horizon_y=0, config=enabled_stars, rng=rng)
+    _add_stars(linear, 360, 640, horizon_y=0, config=enabled_stars, rng=rng)
 
-    # Assert — nothing drawn
-    fake_backend.draw_point.assert_not_called()
-    fake_backend.draw_circle.assert_not_called()
-
-
-def test_render_stars_uses_draw_circle_for_large_radius():
-    # Arrange
-    stars = StarsConfig(
-        stars_enabled=True,
-        count=5,
-        brightness_min=0.5,
-        brightness_max=0.8,
-        color_variation=0,
-        radius=3.0,
-    )
-    fake_backend = mock.MagicMock(spec=RenderBackend)
-    rng = np.random.default_rng(42)
-
-    # Act
-    _render_stars(fake_backend, 640, 360, horizon_y=200, config=stars, rng=rng)
-
-    # Assert — draw_circle used, not draw_point
-    assert fake_backend.draw_circle.call_count > 0
-    fake_backend.draw_point.assert_not_called()
+    assert np.all(linear == 0)

@@ -27,6 +27,7 @@ def mock_camera():
     camera.position = np.array([0.0, 0.0, 500.0])
     camera.far = 10000.0
     camera.fov_deg = 60.0
+    camera.get_forward.return_value = np.array([0.0, 1.0, 0.0])
     return camera
 
 

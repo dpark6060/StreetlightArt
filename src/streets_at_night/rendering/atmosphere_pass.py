@@ -1,8 +1,9 @@
 """Atmosphere render pass — horizon glow gradient and distance haze overlay.
 
 Adds image-space atmospheric effects after the light pass. Both effects are
-built as RGBA numpy arrays and composited additively, matching the pattern used
-by the light glow pass in light_pass.py.
+built as linear-radiance ``(H, W, 3)`` arrays and accumulated into the backend's
+linear light buffer via ``add_linear`` (additive emission, unclamped), matching
+the light and illumination passes.
 
 This pass runs after all geometry and light passes so it correctly overlays on
 top of the fully composited scene.
@@ -11,10 +12,10 @@ top of the fully composited scene.
 import typing as t
 
 import numpy as np
-from PIL import Image
 
 from ..camera.camera import Camera
 from .backend import RenderBackend
+from .color_space import hex_to_linear, srgb255_to_linear
 from .render_utils import compute_horizon_y
 
 if t.TYPE_CHECKING:
@@ -28,9 +29,9 @@ def render_atmosphere(
 ) -> None:
     """Apply horizon glow and distance haze overlays to the current frame.
 
-    Computes the horizon screen-y position, then renders a warm gradient band
-    centered on the horizon (horizon glow) and optionally a distance haze
-    overlay. Both effects are composited additively onto the backend.
+    Computes the horizon screen-y position, then accumulates a warm gradient
+    band centered on the horizon (horizon glow) and optionally a distance haze
+    overlay. Both effects are added into the backend's linear light buffer.
 
     Args:
         scene (Scene): The world scene containing config.
@@ -56,11 +57,12 @@ def _render_horizon_glow(
     horizon_y: int,
     config: t.Any,
 ) -> None:
-    """Build and composite a warm gradient band centered on the horizon.
+    """Accumulate a warm gradient band centered on the horizon, in linear light.
 
     The glow is centered at horizon_y and extends horizon_glow_width_px // 2
-    pixels above and below, with alpha peaking at horizon_glow_peak_alpha at
-    the center row and fading to 0 at the band edges.
+    pixels above and below, with intensity peaking at horizon_glow_peak_alpha
+    (on a 0-255 scale, mapped to linear) at the center row and fading to 0 at
+    the band edges.
 
     Args:
         backend (RenderBackend): Target render surface.
@@ -70,25 +72,20 @@ def _render_horizon_glow(
         config: AtmosphereConfig with horizon_glow_color, horizon_glow_width_px,
             and horizon_glow_peak_alpha fields.
     """
-    glow_color = _parse_hex_color(config.horizon_glow_color)
     half_width = config.horizon_glow_width_px // 2
-    peak_alpha = config.horizon_glow_peak_alpha
+    if half_width <= 0:
+        return
 
-    rgba = np.zeros((height, width, 4), dtype=np.uint8)
+    glow_color = hex_to_linear(config.horizon_glow_color)
+    peak = config.horizon_glow_peak_alpha / 255.0
 
-    for row in range(height):
-        offset = abs(row - horizon_y)
-        if offset > half_width:
-            continue
-        fade = 1.0 - offset / (half_width + 1)
-        alpha = int(peak_alpha * fade)
-        rgba[row, :, 0] = glow_color[0]
-        rgba[row, :, 1] = glow_color[1]
-        rgba[row, :, 2] = glow_color[2]
-        rgba[row, :, 3] = alpha
+    rows = np.arange(height, dtype=np.float32)
+    offset = np.abs(rows - horizon_y)
+    fade = np.where(offset < half_width, (1.0 - offset / half_width) ** 2, 0.0)
+    alpha = (peak * fade).astype(np.float32)
 
-    layer = Image.fromarray(rgba, "RGBA")
-    backend.composite_additive(layer)
+    layer = _column_alpha_to_linear_layer(alpha, width, glow_color)
+    backend.add_linear(layer)
 
 
 def _render_distance_haze(
@@ -98,12 +95,12 @@ def _render_distance_haze(
     horizon_y: int,
     config: t.Any,
 ) -> None:
-    """Build and composite a screen-space distance haze overlay.
+    """Accumulate a screen-space distance haze overlay, in linear light.
 
-    Applies a haze tint that is strongest at the horizon and fades to zero
-    about one-third of the way down the image. The sky region above the
-    horizon also receives a reduced haze tint. The haze color comes from
-    AtmosphereConfig.haze_color (already parsed to an RGB tuple).
+    The haze is strongest at the horizon and fades to zero about one-third of
+    the way down the image. The sky region above the horizon receives a reduced
+    haze tint. The haze color comes from AtmosphereConfig.haze_color (an RGB
+    0-255 tuple), linearized.
 
     Args:
         backend (RenderBackend): Target render surface.
@@ -112,79 +109,74 @@ def _render_distance_haze(
         horizon_y (int): Screen y-coordinate of the horizon line.
         config: AtmosphereConfig with haze_color, haze_alpha fields.
     """
-    haze_color = config.haze_color
-    peak_alpha = config.haze_alpha
-
-    rgba = np.zeros((height, width, 4), dtype=np.uint8)
+    haze_color = srgb255_to_linear(config.haze_color)
+    peak = config.haze_alpha / 255.0
 
     ground_fade_bottom = horizon_y + max(1, int((height - horizon_y) * 0.33))
     sky_fade_top = max(0, horizon_y - max(1, int(horizon_y * 0.5)))
 
-    for row in range(height):
-        alpha = _haze_alpha_for_row(
-            row, horizon_y, ground_fade_bottom, sky_fade_top, peak_alpha
-        )
-        if alpha <= 0:
-            continue
-        rgba[row, :, 0] = haze_color[0]
-        rgba[row, :, 1] = haze_color[1]
-        rgba[row, :, 2] = haze_color[2]
-        rgba[row, :, 3] = alpha
+    alpha = _haze_alpha_column(
+        height, horizon_y, ground_fade_bottom, sky_fade_top, peak
+    )
 
-    layer = Image.fromarray(rgba, "RGBA")
-    backend.composite_additive(layer)
+    layer = _column_alpha_to_linear_layer(alpha, width, haze_color)
+    backend.add_linear(layer)
 
 
-def _haze_alpha_for_row(
-    row: int,
+def _haze_alpha_column(
+    height: int,
     horizon_y: int,
     ground_fade_bottom: int,
     sky_fade_top: int,
-    peak_alpha: int,
-) -> int:
-    """Compute the haze alpha for a single screen row.
+    peak: float,
+) -> np.ndarray:
+    """Compute the per-row haze alpha for every screen row, vectorized.
 
-    Ground rows: alpha decreases linearly from peak_alpha at horizon_y to 0 at
+    Ground rows: alpha decreases linearly from peak at horizon_y to 0 at
     ground_fade_bottom. Sky rows: alpha decreases linearly from half the peak
     at horizon_y to 0 at sky_fade_top. Rows beyond the fade boundaries get 0.
 
     Args:
-        row (int): The screen row index.
+        height (int): Number of screen rows.
         horizon_y (int): Screen y of the horizon.
         ground_fade_bottom (int): Row at which ground haze fades to zero.
         sky_fade_top (int): Row at which sky haze fades to zero.
-        peak_alpha (int): Maximum alpha value at the horizon line.
+        peak (float): Maximum linear intensity at the horizon line.
 
     Returns:
-        int: Alpha value for this row, in range [0, peak_alpha].
+        np.ndarray: (H,) float32 alpha per row, each in [0, peak].
     """
-    if row >= horizon_y:
-        fade_range = ground_fade_bottom - horizon_y
-        if fade_range <= 0:
-            return 0
-        t = (row - horizon_y) / fade_range
-        return max(0, int(peak_alpha * (1.0 - t)))
+    rows = np.arange(height, dtype=np.float32)
 
-    sky_fade_range = horizon_y - sky_fade_top
-    if sky_fade_range <= 0:
-        return 0
-    t = (horizon_y - row) / sky_fade_range
-    sky_peak = peak_alpha // 2
-    return max(0, int(sky_peak * (1.0 - t)))
+    ground_range = float(ground_fade_bottom - horizon_y)
+    ground_t = (rows - horizon_y) / ground_range if ground_range > 0 else np.ones_like(rows)
+    ground_alpha = np.clip(peak * (1.0 - ground_t), 0.0, None)
+
+    sky_range = float(horizon_y - sky_fade_top)
+    sky_t = (horizon_y - rows) / sky_range if sky_range > 0 else np.ones_like(rows)
+    sky_alpha = np.clip((peak * 0.5) * (1.0 - sky_t), 0.0, None)
+
+    alpha = np.where(rows >= horizon_y, ground_alpha, sky_alpha)
+    return alpha.astype(np.float32)
 
 
-def _parse_hex_color(hex_color: str) -> t.Tuple[int, int, int]:
-    """Parse a '#RRGGBB' hex color string to an (R, G, B) int tuple.
+def _column_alpha_to_linear_layer(
+    alpha: np.ndarray,
+    width: int,
+    color_linear: t.Tuple[float, float, float],
+) -> np.ndarray:
+    """Expand a per-row alpha column into an (H, W, 3) linear color layer.
 
     Args:
-        hex_color (str): Hex color string, with or without leading '#'.
+        alpha (np.ndarray): (H,) per-row linear weight.
+        width (int): Surface width in pixels.
+        color_linear (tuple[float, float, float]): Linear RGB color in [0, 1].
 
     Returns:
-        tuple[int, int, int]: RGB color values.
+        np.ndarray: (H, W, 3) float32 linear contribution.
     """
-    stripped = hex_color.lstrip("#")
-    return (
-        int(stripped[0:2], 16),
-        int(stripped[2:4], 16),
-        int(stripped[4:6], 16),
-    )
+    height = alpha.shape[0]
+    layer = np.empty((height, width, 3), dtype=np.float32)
+    for c in range(3):
+        layer[:, :, c] = color_linear[c] * alpha[:, None]
+    return layer

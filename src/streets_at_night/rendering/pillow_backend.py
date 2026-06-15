@@ -1,18 +1,32 @@
-"""Pillow-based render backend for static export images."""
+"""Pillow-based render backend for static export images.
+
+The backend holds two surfaces that together form a linear-light HDR pipeline:
+
+  - ``_image`` — uint8 sRGB PIL image, the opaque substrate. Ground and roads
+    draw here through the normal PIL primitives (keeping anti-aliasing).
+  - ``_light`` — float32 ``(H, W, 3)`` linear-radiance buffer, unbounded, where
+    all additive light (illumination, glow, cores, atmosphere) accumulates with
+    no clamp.
+
+``resolve_linear()`` combines the linearized substrate with the light buffer;
+the compositor tone-maps that result and pastes the final uint8 frame back into
+``_image`` so ``get_image()`` returns the graded image.
+"""
 
 import typing as t
 
 import numpy as np
-from PIL import Image, ImageChops, ImageDraw
+from PIL import Image, ImageDraw
 
 from .backend import RenderBackend
+from .color_space import srgb_to_linear
 
 
 class PillowBackend(RenderBackend):
     """Pillow-based render backend for static export images."""
 
     def __init__(self, width: int, height: int) -> None:
-        """Initialise the backend with a blank RGB surface.
+        """Initialise the backend with a blank RGB surface and light buffer.
 
         Args:
             width (int): Surface width in pixels.
@@ -22,6 +36,7 @@ class PillowBackend(RenderBackend):
         self._height = height
         self._image = Image.new("RGB", (width, height), (0, 0, 0))
         self._draw = ImageDraw.Draw(self._image, "RGBA")
+        self._light = np.zeros((height, width, 3), dtype=np.float32)
 
     def get_surface_size(self) -> t.Tuple[int, int]:
         """Return (width, height) of the render surface.
@@ -127,6 +142,17 @@ class PillowBackend(RenderBackend):
         """
         return self._image.copy()
 
+    def blit_pil_image(self, img: Image.Image) -> None:
+        """Paste a PIL Image onto the surface at (0, 0).
+
+        Used by the warp preview pass to write the raycast result into
+        the surface. Delegates to paste_image.
+
+        Args:
+            img (PIL.Image.Image): RGB image to blit onto the surface.
+        """
+        self.paste_image(img)
+
     def paste_image(self, img: Image.Image) -> None:
         """Paste a PIL Image over the current internal surface at (0, 0).
 
@@ -148,37 +174,42 @@ class PillowBackend(RenderBackend):
         return Image.new("RGBA", (self._width, self._height), (0, 0, 0, 0))
 
     def composite_additive(self, layer: Image.Image) -> None:
-        """Additively blend an RGBA layer onto the internal RGB surface.
+        """Accumulate an sRGB RGBA layer into the linear light buffer.
 
-        Converts the RGBA layer to RGB (alpha pre-multiplied), then uses
-        PIL's ImageChops.add to clamp-add each channel. The result replaces
-        the internal surface and the draw context is refreshed.
+        The layer's RGB is decoded sRGB->linear, weighted by its alpha (treated
+        as a linear coverage), and added to ``_light`` with no clamp. This is a
+        convenience wrapper around ``add_linear`` for passes that build PIL RGBA
+        layers; passes that already hold a float array should call ``add_linear``
+        directly to avoid the 8-bit quantization round-trip.
 
         Args:
-            layer (PIL.Image.Image): RGBA glow layer to blend onto the surface.
+            layer (PIL.Image.Image): RGBA layer (sRGB, 0-255) to add.
         """
-        layer_rgb = _rgba_to_additive_rgb(layer)
-        blended = ImageChops.add(self._image, layer_rgb)
-        self._image.paste(blended, (0, 0))
-        self._draw = ImageDraw.Draw(self._image, "RGBA")
+        arr = np.asarray(layer, dtype=np.float32)
+        linear_rgb = srgb_to_linear(arr[:, :, :3] / 255.0)
+        alpha = arr[:, :, 3:4] / 255.0
+        self.add_linear(linear_rgb * alpha)
+
+    def add_linear(self, layer: np.ndarray) -> None:
+        """Add a linear-radiance ``(H, W, 3)`` float array to the light buffer.
+
+        The canonical accumulation entry point for the light passes. Values are
+        unbounded — bright overlaps build past 1.0 and are rolled off later by
+        the tone map, never hard-clipped here.
+
+        Args:
+            layer (np.ndarray): (H, W, 3) float linear-radiance contribution.
+        """
+        self._light += np.asarray(layer, dtype=np.float32)
+
+    def resolve_linear(self) -> np.ndarray:
+        """Return the combined linear frame: linearized substrate plus light.
+
+        Returns:
+            np.ndarray: (H, W, 3) float32 linear radiance, unbounded.
+        """
+        base = srgb_to_linear(np.asarray(self._image, dtype=np.float32) / 255.0)
+        return base + self._light
 
     def present(self) -> None:
         """No-op for the Pillow backend (no display to flip)."""
-
-
-def _rgba_to_additive_rgb(layer: Image.Image) -> Image.Image:
-    """Convert an RGBA layer to RGB by pre-multiplying alpha for additive blending.
-
-    Each RGB channel is scaled by alpha/255 so that transparent pixels contribute
-    nothing and opaque pixels contribute their full color value.
-
-    Args:
-        layer (PIL.Image.Image): RGBA image to convert.
-
-    Returns:
-        PIL.Image.Image: RGB image ready for additive blending.
-    """
-    arr = np.asarray(layer, dtype=np.float32)
-    alpha = arr[:, :, 3:4] / 255.0
-    rgb = (arr[:, :, :3] * alpha).clip(0, 255).astype(np.uint8)
-    return Image.fromarray(rgb, "RGB")

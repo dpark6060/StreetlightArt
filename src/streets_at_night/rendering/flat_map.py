@@ -105,11 +105,12 @@ def get_flat_map(
         tuple[Image.Image, FlatMapMeta]: The flat map image (RGB) and its
             world-coordinate metadata.
     """
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    flat_map_dir = cache_dir / "flat_map"
+    flat_map_dir.mkdir(parents=True, exist_ok=True)
     meta = _compute_meta(scene, resolution)
     cache_key = _compute_cache_key(meta, len(scene.road_segments))
-    img_path = cache_dir / f"flat_map_{cache_key}.png"
-    json_path = cache_dir / f"flat_map_{cache_key}.json"
+    img_path = flat_map_dir / f"flat_map_{cache_key}.png"
+    json_path = flat_map_dir / f"flat_map_{cache_key}.json"
 
     if img_path.exists() and json_path.exists():
         loaded_meta = _load_meta(json_path)

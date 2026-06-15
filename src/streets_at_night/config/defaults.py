@@ -510,6 +510,10 @@ DEFAULTS: dict = {
         "vignette_strength": 0.35,
         "vignette_radius": 0.7,
     },
+    "grade": {
+        "exposure": 0.0,
+        "tonemap": "aces",
+    },
     "stars": {
         "stars_enabled": False,
         "count": 200,
@@ -520,12 +524,43 @@ DEFAULTS: dict = {
     },
     "heat_haze": {
         "enabled": True,
-        "amplitude": 3.0,
-        "freq1": 0.003,
-        "freq2": 0.007,
-        "speed1": 0.4,
-        "speed2": 0.6,
+        "amplitude_px": 0.5,
+        "max_distance_m": 20000.0,
         "distance_exponent": 1.5,
+        "sky_distance_factor": 0.5,
+        "seed": 42,
+        "screen_width_px": 2048,
+        "screen_height_px": 4096,
+        # Each layer's eddy size in pixels ≈ L0 / pixel_scale_m. Keep all
+        # layers well below image width or the whole frame will bulge as one
+        # big eddy. wind_y_pxs > 0 makes features rise (bottom-to-top), which
+        # is what real heat shimmer looks like — hot air rising.
+        "layers": [
+            {
+                "r0": 0.10,
+                "L0": 2.5,
+                "pixel_scale_m": 0.5,
+                "weight": 0.6,
+                "wind_x_pxs": 4.0,
+                "wind_y_pxs": 35.0,
+            },
+            {
+                "r0": 0.10,
+                "L0": 1.0,
+                "pixel_scale_m": 0.2,
+                "weight": 0.8,
+                "wind_x_pxs": -3.0,
+                "wind_y_pxs": 70.0,
+            },
+            {
+                "r0": 0.10,
+                "L0": 0.3,
+                "pixel_scale_m": 0.1,
+                "weight": 1.0,
+                "wind_x_pxs": 8.0,
+                "wind_y_pxs": 120.0,
+            },
+        ],
     },
     "devmode": {
         "render_width": 896,

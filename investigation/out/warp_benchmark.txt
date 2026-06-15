@@ -1,0 +1,10 @@
+Resolution: 1280x720
+PyTorch: 2.11.0
+MPS available: True
+Iterations: 30 (after 5 warmup)
+
+numpy fancy index (nearest)                             median  17.02ms  (   59 fps median,    59 fps mean)
+scipy.ndimage map_coords (bilinear)                     median  58.50ms  (   17 fps median,    17 fps mean)
+torch grid_sample CPU (bilinear)                        median   8.47ms  (  118 fps median,   118 fps mean)
+torch grid_sample MPS (bilinear, full pipeline)         median   6.70ms  (  149 fps median,   174 fps mean)
+torch grid_sample MPS (preloaded compute only)          median   1.24ms  (  805 fps median,   788 fps mean)

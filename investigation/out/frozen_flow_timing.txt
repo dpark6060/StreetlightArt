@@ -1,0 +1,7 @@
+FFT screen generation (4096x720):
+  mean: 119.4 ms
+  min:  112.5 ms
+
+Sliding window per frame (1280 window): 3.22 ms
+
+Loop period at 80.0 px/s: 51.2s

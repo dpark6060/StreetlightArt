@@ -18,10 +18,11 @@ horizon are handled automatically by the raycast — no special-casing needed.
 import typing as t
 
 import numpy as np
-from PIL import Image
 
 from ..camera.camera import Camera
 from .backend import RenderBackend
+from .color_space import srgb255_to_linear
+from .raycast import GroundHit, build_ground_gbuffer
 from .render_utils import apply_brightness_falloff, camera_distance
 
 if t.TYPE_CHECKING:
@@ -42,14 +43,15 @@ def render_illumination(
     camera: Camera,
     backend: RenderBackend,
     illumination_resolution_multiplier: float = 1.0,
+    gbuffer: t.Optional[GroundHit] = None,
 ) -> t.Dict[str, t.Any]:
     """Render ground-plane illumination from light sources via world-space map.
 
-    Builds a float32 illumination map by painting per-light cone-model blobs at
-    their world positions. Each blob's brightness is attenuated by exponential
-    distance falloff using the same formula as the glow pass. Each screen pixel
-    is then raycast to the z=0 ground plane; the hit world coordinate is looked
-    up in the illumination map and composited additively onto the render surface.
+    Builds a float32 linear illumination map by painting per-light cone-model
+    blobs at their world positions. Each blob's brightness is attenuated by
+    exponential distance falloff. Each screen pixel is raycast to the z=0 ground
+    plane; the hit world coordinate is sampled from the map and added to the
+    backend's linear light buffer.
 
     Returns an empty dict if there are no lights.
 
@@ -57,11 +59,13 @@ def render_illumination(
         scene (Scene): World scene containing lights, road segments, and config.
             Uses scene.config.atmosphere.falloff_distance for distance attenuation.
         camera (Camera): Active camera providing position and matrices.
-        backend (RenderBackend): Target render surface (must support
-            composite_additive).
+        backend (RenderBackend): Target render surface (must support add_linear).
         illumination_resolution_multiplier (float): Quality multiplier from the
             active QualityPreset. Higher values produce a finer illumination map.
             Defaults to 1.0.
+        gbuffer (GroundHit | None): Precomputed ground raycast for this camera and
+            size. When None, it is computed here. The pipeline shares one G-buffer
+            between this pass and the ground export pass to avoid raycasting twice.
 
     Returns:
         dict[str, Any]: Stats dict (currently empty, reserved for future use).
@@ -80,19 +84,15 @@ def render_illumination(
     )
 
     width, height = backend.get_surface_size()
-    inv_proj = np.linalg.inv(camera.get_projection_matrix())
-    inv_view = np.linalg.inv(camera.get_view_matrix())
-
-    ray_dirs = _build_ray_directions(width, height, inv_proj, inv_view)
-    hit_x, hit_y, ground_mask = _raycast_to_ground(camera.position, ray_dirs)
+    if gbuffer is None:
+        gbuffer = build_ground_gbuffer(camera, width, height)
 
     min_x, max_y, res = map_info
     illum_img = _sample_illumination_map(
-        illum_map, hit_x, hit_y, ground_mask, min_x, max_y, res
+        illum_map, gbuffer.hit_x, gbuffer.hit_y, gbuffer.ground_mask, min_x, max_y, res
     )
 
-    pil_layer = _float_to_pil_rgba(illum_img)
-    backend.composite_additive(pil_layer)
+    backend.add_linear(illum_img)
 
     return {}
 
@@ -176,10 +176,8 @@ def _build_illumination_map(
             camera_position, falloff_distance,
         )
 
-    clipped = np.clip(illum_map, 0.0, 255.0)
-
     map_info = (min_x, max_y, resolution)
-    return clipped, map_info
+    return illum_map, map_info
 
 
 def _paint_illumination_blob(
@@ -257,96 +255,15 @@ def _paint_illumination_blob(
 
     dist = camera_distance(light.position, camera_position)
     effective_brightness = apply_brightness_falloff(light.brightness, dist, falloff_distance)
-    peak = illumination_brightness * light.illumination_intensity * effective_brightness
+    # illumination_brightness is authored on a 0-255 scale; /255 maps it into
+    # linear radiance so the painted values are linear-light, not sRGB codes.
+    peak = (illumination_brightness / 255.0) * light.illumination_intensity * effective_brightness
     intensity = peak * falloff
 
-    r, g, b = light.color
-    illum_map[y0:y1, x0:x1, 0] += intensity * (r / 255.0)
-    illum_map[y0:y1, x0:x1, 1] += intensity * (g / 255.0)
-    illum_map[y0:y1, x0:x1, 2] += intensity * (b / 255.0)
-
-
-def _build_ray_directions(
-    width: int,
-    height: int,
-    inv_proj: np.ndarray,
-    inv_view: np.ndarray,
-) -> np.ndarray:
-    """Build a world-space ray direction for every screen pixel.
-
-    Constructs an NDC meshgrid for the full screen, transforms through the
-    inverse projection matrix to get view-space directions, then through the
-    inverse view matrix to get world-space directions. All rays are normalized.
-
-    Args:
-        width (int): Screen width in pixels.
-        height (int): Screen height in pixels.
-        inv_proj (np.ndarray): (4, 4) inverse projection matrix.
-        inv_view (np.ndarray): (4, 4) inverse view matrix.
-
-    Returns:
-        np.ndarray: (H, W, 3) normalized ray directions in world ENU space.
-    """
-    sx, sy = np.meshgrid(
-        np.arange(width, dtype=np.float64),
-        np.arange(height, dtype=np.float64),
-    )
-    ndc_x = 2.0 * sx / width - 1.0
-    ndc_y = 1.0 - 2.0 * sy / height
-
-    n_pixels = width * height
-    clip = np.stack([
-        ndc_x.ravel(),
-        ndc_y.ravel(),
-        np.full(n_pixels, -1.0),
-        np.ones(n_pixels),
-    ], axis=1)
-
-    eye = (inv_proj @ clip.T).T
-    eye_dir = np.column_stack([
-        eye[:, 0],
-        eye[:, 1],
-        np.full(n_pixels, -1.0),
-        np.zeros(n_pixels),
-    ])
-    world_dir = (inv_view @ eye_dir.T).T[:, :3]
-
-    norms = np.linalg.norm(world_dir, axis=1, keepdims=True)
-    norms = np.where(norms < 1e-10, 1.0, norms)
-    world_dir /= norms
-
-    return world_dir.reshape(height, width, 3)
-
-
-def _raycast_to_ground(
-    cam_pos: np.ndarray,
-    ray_dirs: np.ndarray,
-) -> t.Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Intersect all rays with the z=0 ground plane.
-
-    For each screen pixel ray, computes t = -cam_pos[2] / ray_dirs[z] and
-    the resulting hit position on z=0. Pixels where the ray is parallel to
-    the ground or points upward are masked out.
-
-    Args:
-        cam_pos (np.ndarray): (3,) camera position in world ENU meters.
-        ray_dirs (np.ndarray): (H, W, 3) normalized ray directions.
-
-    Returns:
-        tuple[np.ndarray, np.ndarray, np.ndarray]:
-            - hit_x: (H, W) ENU x positions of ground intersections.
-            - hit_y: (H, W) ENU y positions of ground intersections.
-            - ground_mask: (H, W) bool, True where the ray hits z=0 in front of camera.
-    """
-    dz = ray_dirs[:, :, 2]
-    ray_hits = np.abs(dz) > 1e-10
-    t_val = np.where(ray_hits, -cam_pos[2] / np.where(ray_hits, dz, 1.0), -1.0)
-    ground_mask = ray_hits & (t_val > 0.0)
-
-    hit_x = cam_pos[0] + t_val * ray_dirs[:, :, 0]
-    hit_y = cam_pos[1] + t_val * ray_dirs[:, :, 1]
-
-    return hit_x, hit_y, ground_mask
+    lin_r, lin_g, lin_b = srgb255_to_linear(light.color)
+    illum_map[y0:y1, x0:x1, 0] += intensity * lin_r
+    illum_map[y0:y1, x0:x1, 1] += intensity * lin_g
+    illum_map[y0:y1, x0:x1, 2] += intensity * lin_b
 
 
 def _sample_illumination_map(
@@ -416,23 +333,3 @@ def _sample_illumination_map(
     )
 
     return result
-
-
-def _float_to_pil_rgba(illum_img: np.ndarray) -> Image.Image:
-    """Convert a float32 (H, W, 3) illumination image to a PIL RGBA image.
-
-    Clips values to [0, 255], converts to uint8, and sets alpha to a constant
-    255. Additive blending does not require variable alpha — black pixels
-    contribute nothing (0 + x = x), so a flat alpha of 255 lets the
-    pre-multiply step in composite_additive pass RGB values through unchanged.
-
-    Args:
-        illum_img (np.ndarray): (H, W, 3) float32 RGB illumination image.
-
-    Returns:
-        PIL.Image.Image: RGBA image with alpha = 255 for all pixels.
-    """
-    rgb = np.clip(illum_img, 0.0, 255.0).astype(np.uint8)
-    alpha = np.full(rgb.shape[:2], 255, dtype=np.uint8)
-    rgba = np.dstack([rgb, alpha])
-    return Image.fromarray(rgba, "RGBA")

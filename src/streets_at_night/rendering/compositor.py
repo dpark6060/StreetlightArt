@@ -1,10 +1,15 @@
-"""Compositor render pass — vignette, optional stars, and color grade stub.
+"""Compositor render pass — final grade: stars, vignette, tone-map, sRGB encode.
 
-This is the final pass in the export pipeline. It applies post-composition
-effects that depend on the fully rendered scene:
-  - Vignette: radial edge darkening via numpy multiply on the full image.
-  - Stars: faint point lights drawn into sky pixels above the horizon.
-  - Color grade: no-op stub for future LUT/curve adjustments.
+This is the final pass in the export pipeline. It resolves the backend's
+combined linear frame (linearized substrate + accumulated light), applies
+post-composition effects in linear space, then tone-maps and encodes to sRGB:
+
+  - Stars: faint emissive points added into sky pixels above the horizon.
+  - Vignette: radial edge darkening (multiply in linear).
+  - Color grade: exposure -> ACES tone map -> linear->sRGB encode -> uint8.
+
+The graded uint8 frame is pasted back into the backend so get_image() returns
+the final image.
 """
 
 import typing as t
@@ -14,6 +19,7 @@ from PIL import Image
 
 from ..camera.camera import Camera
 from .backend import RenderBackend
+from .color_space import linear_to_srgb, srgb255_to_linear, tonemap_aces
 from .render_utils import compute_horizon_y
 
 if t.TYPE_CHECKING:
@@ -25,10 +31,11 @@ def render_composite(
     camera: Camera,
     backend: RenderBackend,
 ) -> None:
-    """Apply vignette, optional stars, and color grade to the current frame.
+    """Resolve, grade, and encode the final frame.
 
-    Always applies vignette. Stars are drawn only when stars_enabled is True
-    in the scene config. Color grading is a no-op placeholder.
+    Resolves the combined linear frame, adds stars and applies the vignette in
+    linear space, then tone-maps and encodes to sRGB. Stars are added only when
+    stars_enabled is True in the scene config.
 
     Args:
         scene (Scene): The world scene containing config and seed.
@@ -38,43 +45,37 @@ def render_composite(
     width, height = backend.get_surface_size()
     config = scene.config
 
-    _render_vignette(backend, width, height, config.atmosphere)
+    linear = backend.resolve_linear()
 
     if config.stars is not None and config.stars.stars_enabled:
         view_matrix = camera.get_view_matrix()
         proj_matrix = camera.get_projection_matrix()
         horizon_y = compute_horizon_y(camera, view_matrix, proj_matrix, width, height)
         rng = np.random.default_rng(scene.config.seed)
-        _render_stars(backend, width, height, horizon_y, config.stars, rng)
+        _add_stars(linear, width, height, horizon_y, config.stars, rng)
 
-    _apply_color_grade(backend)
+    _apply_vignette(linear, width, height, config.atmosphere)
+    _apply_color_grade(backend, linear, config.grade)
 
 
-def _render_vignette(
-    backend: RenderBackend,
+def _apply_vignette(
+    linear: np.ndarray,
     width: int,
     height: int,
     config: t.Any,
 ) -> None:
-    """Darken image edges with a radial vignette applied via numpy multiply.
-
-    Builds a scalar field where the center is 1.0 (no change) and the edges
-    are darkened by vignette_strength. The scalar field is applied by getting
-    the current image, multiplying RGB channels, and pasting the result back.
+    """Darken the frame edges with a radial vignette, multiplied in linear.
 
     Args:
-        backend (RenderBackend): Target render surface (must support get_image
-            and paste_image).
+        linear (np.ndarray): (H, W, 3) float32 linear frame, modified in place.
         width (int): Surface width in pixels.
         height (int): Surface height in pixels.
         config: AtmosphereConfig with vignette_strength and vignette_radius.
     """
-    scalar_field = _build_vignette_scalar(
+    scalar = _build_vignette_scalar(
         width, height, config.vignette_strength, config.vignette_radius
     )
-    image = backend.get_image()
-    darkened = _apply_scalar_to_image(image, scalar_field)
-    backend.paste_image(darkened)
+    linear *= scalar[:, :, np.newaxis]
 
 
 def _build_vignette_scalar(
@@ -114,39 +115,23 @@ def _build_vignette_scalar(
     return scalar.astype(np.float32)
 
 
-def _apply_scalar_to_image(image: Image.Image, scalar: np.ndarray) -> Image.Image:
-    """Multiply the RGB channels of a PIL image by a scalar field.
-
-    Args:
-        image (PIL.Image.Image): Source RGB image.
-        scalar (np.ndarray): (H, W) float32 scalar field, values in [0, 1].
-
-    Returns:
-        PIL.Image.Image: New RGB image with channels scaled and clamped to uint8.
-    """
-    arr = np.asarray(image, dtype=np.float32)
-    darkened = arr * scalar[:, :, np.newaxis]
-    clamped = np.clip(darkened, 0.0, 255.0).astype(np.uint8)
-    return Image.fromarray(clamped, "RGB")
-
-
-def _render_stars(
-    backend: RenderBackend,
+def _add_stars(
+    linear: np.ndarray,
     width: int,
     height: int,
     horizon_y: int,
     config: t.Any,
     rng: np.random.Generator,
 ) -> None:
-    """Draw faint point stars in the sky region above the horizon.
+    """Add faint emissive stars into the sky region above the horizon.
 
-    Stars are placed uniformly at random in the sky area (y < horizon_y).
-    Each star is near-white with small random color variation and brightness
-    drawn from the configured range. Stars with radius <= 1 are drawn as
-    single pixels; larger radii use draw_circle.
+    Stars are placed uniformly at random in the sky area (y < horizon_y), each
+    near-white with small random color variation and brightness drawn from the
+    configured range. Star colors are linearized before being added so they
+    accumulate as linear emission like every other light.
 
     Args:
-        backend (RenderBackend): Target render surface.
+        linear (np.ndarray): (H, W, 3) float32 linear frame, modified in place.
         width (int): Surface width in pixels.
         height (int): Surface height in pixels.
         horizon_y (int): Screen y-coordinate of the horizon. Stars go above this.
@@ -157,32 +142,78 @@ def _render_stars(
     if horizon_y <= 0:
         return
 
-    sky_height = horizon_y
     xs = rng.integers(0, width, size=config.count)
-    ys = rng.integers(0, sky_height, size=config.count)
+    ys = rng.integers(0, horizon_y, size=config.count)
     brightnesses = rng.uniform(config.brightness_min, config.brightness_max, size=config.count)
-    variations = rng.integers(-config.color_variation, config.color_variation + 1, size=(config.count, 3))
+    variations = rng.integers(
+        -config.color_variation, config.color_variation + 1, size=(config.count, 3)
+    )
+
+    base = (brightnesses[:, np.newaxis] * 255.0).astype(np.int32)
+    rgb = np.clip(base + variations, 0, 255)
 
     for i in range(config.count):
-        base_val = int(brightnesses[i] * 255)
-        r = int(np.clip(base_val + variations[i, 0], 0, 255))
-        g = int(np.clip(base_val + variations[i, 1], 0, 255))
-        b = int(np.clip(base_val + variations[i, 2], 0, 255))
-        color = (r, g, b)
-        center = (float(xs[i]), float(ys[i]))
-
-        if config.radius <= 1.0:
-            backend.draw_point(center, color)
-        else:
-            backend.draw_circle(center, config.radius, color)
+        color = srgb255_to_linear((int(rgb[i, 0]), int(rgb[i, 1]), int(rgb[i, 2])))
+        _add_star_point(linear, int(xs[i]), int(ys[i]), config.radius, color)
 
 
-def _apply_color_grade(backend: RenderBackend) -> None:
-    """Apply global color grading to the final image.
+def _add_star_point(
+    linear: np.ndarray,
+    x: int,
+    y: int,
+    radius: float,
+    color_linear: t.Tuple[float, float, float],
+) -> None:
+    """Add a single star's linear emission at (x, y).
 
-    Currently a no-op placeholder. Future implementations may apply LUT
-    transformations or curve adjustments here.
+    Stars with radius <= 1 light a single pixel; larger radii fill a small disc.
 
     Args:
-        backend (RenderBackend): Target render surface.
+        linear (np.ndarray): (H, W, 3) float32 frame, modified in place.
+        x (int): Screen x.
+        y (int): Screen y.
+        radius (float): Star radius in pixels.
+        color_linear (tuple[float, float, float]): Linear RGB color.
     """
+    if radius <= 1.0:
+        linear[y, x, :] += color_linear
+        return
+
+    h, w, _ = linear.shape
+    r = int(radius)
+    x0, x1 = max(0, x - r), min(w, x + r + 1)
+    y0, y1 = max(0, y - r), min(h, y + r + 1)
+    if x0 >= x1 or y0 >= y1:
+        return
+    yy, xx = np.mgrid[y0:y1, x0:x1]
+    mask = ((xx - x) ** 2 + (yy - y) ** 2) <= radius ** 2
+    for c in range(3):
+        linear[y0:y1, x0:x1, c] += color_linear[c] * mask
+
+
+def _apply_color_grade(
+    backend: RenderBackend,
+    linear: np.ndarray,
+    config: t.Any,
+) -> None:
+    """Tone-map and encode the linear frame to sRGB, writing the final image.
+
+    Applies exposure (in stops) before the tone-map curve, runs the configured
+    operator (ACES filmic by default), encodes linear->sRGB, and pastes the
+    resulting uint8 frame back into the backend.
+
+    Args:
+        backend (RenderBackend): Target render surface (receives the final paste).
+        linear (np.ndarray): (H, W, 3) float32 linear frame.
+        config: GradeConfig with exposure (stops) and tonemap (operator name).
+    """
+    scaled = linear * (2.0 ** config.exposure)
+
+    if config.tonemap == "aces":
+        mapped = tonemap_aces(scaled)
+    else:
+        mapped = np.clip(scaled, 0.0, 1.0)
+
+    srgb = linear_to_srgb(mapped)
+    uint8 = (srgb * 255.0 + 0.5).astype(np.uint8)
+    backend.paste_image(Image.fromarray(uint8, "RGB"))
