@@ -16,6 +16,7 @@ import numpy as np
 from ..camera.camera import Camera
 from .backend import RenderBackend
 from .color_space import hex_to_linear, srgb255_to_linear
+from .raycast import GroundHit
 from .render_utils import compute_horizon_y
 
 if t.TYPE_CHECKING:
@@ -26,17 +27,22 @@ def render_atmosphere(
     scene: "Scene",
     camera: Camera,
     backend: RenderBackend,
+    gbuffer: GroundHit,
 ) -> None:
-    """Apply horizon glow and distance haze overlays to the current frame.
+    """Apply horizon glow and depth-based airlight to the current frame.
 
-    Computes the horizon screen-y position, then accumulates a warm gradient
-    band centered on the horizon (horizon glow) and optionally a distance haze
-    overlay. Both effects are added into the backend's linear light buffer.
+    Computes the horizon screen-y position and accumulates a warm gradient band
+    centered on the horizon (horizon glow). If haze is enabled, also accumulates
+    the airlight veil — path radiance that grows with the line-of-sight distance
+    to the ground, using the same extinction coefficient that dims the lights.
+    Both effects are added into the backend's linear light buffer.
 
     Args:
         scene (Scene): The world scene containing config.
         camera (Camera): The active camera.
         backend (RenderBackend): Target render surface.
+        gbuffer (GroundHit): Shared per-pixel ground raycast for this camera and
+            size, used to derive per-pixel line-of-sight distance for airlight.
     """
     width, height = backend.get_surface_size()
     view_matrix = camera.get_view_matrix()
@@ -47,7 +53,7 @@ def render_atmosphere(
 
     _render_horizon_glow(backend, width, height, horizon_y, config)
     if config.haze_enabled:
-        _render_distance_haze(backend, width, height, horizon_y, config)
+        _render_airlight(backend, gbuffer, camera, config)
 
 
 def _render_horizon_glow(
@@ -88,76 +94,47 @@ def _render_horizon_glow(
     backend.add_linear(layer)
 
 
-def _render_distance_haze(
+def _render_airlight(
     backend: RenderBackend,
-    width: int,
-    height: int,
-    horizon_y: int,
+    gbuffer: GroundHit,
+    camera: Camera,
     config: t.Any,
 ) -> None:
-    """Accumulate a screen-space distance haze overlay, in linear light.
+    """Accumulate the airlight veil from per-pixel line-of-sight distance.
 
-    The haze is strongest at the horizon and fades to zero about one-third of
-    the way down the image. The sky region above the horizon receives a reduced
-    haze tint. The haze color comes from AtmosphereConfig.haze_color (an RGB
-    0-255 tuple), linearized.
+    Airlight is the standard atmospheric path radiance: a pixel looking through
+    distance ``d`` of air picks up ``airlight·(1 - exp(-d/k))`` of haze color,
+    where ``k`` is the same extinction coefficient (``falloff_distance``) that
+    dims the lights. Ground pixels use their true 3D distance to the z=0 hit;
+    sky pixels (no hit) fade by elevation, saturating toward the horizon where
+    the air path is longest and clearing toward the zenith.
 
     Args:
         backend (RenderBackend): Target render surface.
-        width (int): Surface width in pixels.
-        height (int): Surface height in pixels.
-        horizon_y (int): Screen y-coordinate of the horizon line.
-        config: AtmosphereConfig with haze_color, haze_alpha fields.
+        gbuffer (GroundHit): Per-pixel ground raycast (hit positions, ray dirs,
+            and ground mask).
+        camera (Camera): Active camera, for the eye position.
+        config: AtmosphereConfig with haze_color, haze_alpha, falloff_distance.
     """
     haze_color = srgb255_to_linear(config.haze_color)
     peak = config.haze_alpha / 255.0
+    k = config.falloff_distance
 
-    ground_fade_bottom = horizon_y + max(1, int((height - horizon_y) * 0.33))
-    sky_fade_top = max(0, horizon_y - max(1, int(horizon_y * 0.5)))
+    cam = camera.position
+    dx = gbuffer.hit_x - cam[0]
+    dy = gbuffer.hit_y - cam[1]
+    ground_distance = np.sqrt(dx * dx + dy * dy + cam[2] * cam[2])
+    ground_strength = 1.0 - np.exp(-ground_distance / k)
 
-    alpha = _haze_alpha_column(
-        height, horizon_y, ground_fade_bottom, sky_fade_top, peak
-    )
+    elevation = np.clip(gbuffer.ray_dirs[:, :, 2], 0.0, 1.0)
+    sky_strength = (1.0 - elevation) ** 2
 
-    layer = _column_alpha_to_linear_layer(alpha, width, haze_color)
+    strength = np.where(gbuffer.ground_mask, ground_strength, sky_strength).astype(np.float32)
+
+    layer = np.empty((*strength.shape, 3), dtype=np.float32)
+    for c in range(3):
+        layer[:, :, c] = haze_color[c] * peak * strength
     backend.add_linear(layer)
-
-
-def _haze_alpha_column(
-    height: int,
-    horizon_y: int,
-    ground_fade_bottom: int,
-    sky_fade_top: int,
-    peak: float,
-) -> np.ndarray:
-    """Compute the per-row haze alpha for every screen row, vectorized.
-
-    Ground rows: alpha decreases linearly from peak at horizon_y to 0 at
-    ground_fade_bottom. Sky rows: alpha decreases linearly from half the peak
-    at horizon_y to 0 at sky_fade_top. Rows beyond the fade boundaries get 0.
-
-    Args:
-        height (int): Number of screen rows.
-        horizon_y (int): Screen y of the horizon.
-        ground_fade_bottom (int): Row at which ground haze fades to zero.
-        sky_fade_top (int): Row at which sky haze fades to zero.
-        peak (float): Maximum linear intensity at the horizon line.
-
-    Returns:
-        np.ndarray: (H,) float32 alpha per row, each in [0, peak].
-    """
-    rows = np.arange(height, dtype=np.float32)
-
-    ground_range = float(ground_fade_bottom - horizon_y)
-    ground_t = (rows - horizon_y) / ground_range if ground_range > 0 else np.ones_like(rows)
-    ground_alpha = np.clip(peak * (1.0 - ground_t), 0.0, None)
-
-    sky_range = float(horizon_y - sky_fade_top)
-    sky_t = (horizon_y - rows) / sky_range if sky_range > 0 else np.ones_like(rows)
-    sky_alpha = np.clip((peak * 0.5) * (1.0 - sky_t), 0.0, None)
-
-    alpha = np.where(rows >= horizon_y, ground_alpha, sky_alpha)
-    return alpha.astype(np.float32)
 
 
 def _column_alpha_to_linear_layer(

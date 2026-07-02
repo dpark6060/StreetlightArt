@@ -293,6 +293,7 @@ def _build_streetlight_config(data: dict) -> StreetLightConfig:
         collector=_build_fixture_pool_entries(data["collector"]),
         residential=_build_fixture_pool_entries(data["residential"]),
         service=_build_fixture_pool_entries(data["service"]),
+        color_temp_shift_k=data.get("color_temp_shift_k", 0.0),
     )
 
 
@@ -328,16 +329,15 @@ def _build_fixture_profile_config(
     if data is None:
         return None
     return FixtureProfileConfig(
-        color=data["color"],
+        color_temp_k=data["color_temp_k"],
+        saturation=data.get("saturation", 1.0),
         height_min=data["height_min"],
         height_max=data["height_max"],
         brightness_min=data["brightness_min"],
         brightness_max=data["brightness_max"],
         glow_radius=data["glow_radius"],
-        illumination_radius=data["illumination_radius"],
+        beam_angle_deg=data["beam_angle_deg"],
         illumination_intensity=data["illumination_intensity"],
-        illumination_falloff=data.get("illumination_falloff", 2.0),
-        illumination_inner_fraction=data.get("illumination_inner_fraction", 0.0),
         spacing_min=data["spacing_min"],
         spacing_max=data["spacing_max"],
         side=data["side"],
@@ -502,11 +502,12 @@ def _build_atmosphere_config(data: dict) -> AtmosphereConfig:
     vignette_radius) use .get() with defaults for backward compatibility.
 
     Args:
-        data (dict): Atmosphere section with falloff_distance, haze_color,
-            scatter_distance, max_distance, glow_expansion_enabled,
-            glow_max_alpha, glow_falloff_steepness, min_brightness_threshold,
+        data (dict): Atmosphere section with falloff_distance (the shared
+            extinction coefficient k), haze_color (airlight color),
+            scatter_distance, glow_expansion_enabled, glow_max_alpha,
+            glow_falloff_steepness, min_brightness_threshold,
             illumination_brightness, illumination_min_radius, and optional
-            Stage 6 atmosphere fields.
+            glow wing and Stage 6 atmosphere fields.
 
     Returns:
         AtmosphereConfig: Populated atmosphere config.
@@ -521,10 +522,12 @@ def _build_atmosphere_config(data: dict) -> AtmosphereConfig:
         falloff_distance=data["falloff_distance"],
         haze_color=haze_color,
         scatter_distance=data["scatter_distance"],
-        max_distance=data["max_distance"],
         glow_expansion_enabled=data["glow_expansion_enabled"],
         glow_max_alpha=data["glow_max_alpha"],
         glow_falloff_steepness=data["glow_falloff_steepness"],
+        glow_wing_exponent=data.get("glow_wing_exponent", 2.5),
+        glow_tail_strength=data.get("glow_tail_strength", 0.15),
+        glow_cutoff_mult=data.get("glow_cutoff_mult", 8.0),
         min_brightness_threshold=data["min_brightness_threshold"],
         illumination_brightness=data["illumination_brightness"],
         illumination_min_radius=data["illumination_min_radius"],

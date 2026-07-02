@@ -16,7 +16,6 @@ from streets_at_night.rendering.light_pass import (
     _accumulate_glow,
     _apply_brightness_falloff,
     _apply_glow_expansion,
-    _apply_haze_color,
     _preview_radius,
     render_lights_export,
     render_lights_preview,
@@ -291,52 +290,6 @@ def test_apply_brightness_falloff_at_falloff_distance_returns_roughly_37_percent
 
 
 # ---------------------------------------------------------------------------
-# _apply_haze_color
-# ---------------------------------------------------------------------------
-
-
-def test_apply_haze_color_at_zero_distance_returns_original_color():
-    # Arrange
-    color = (255, 200, 100)
-    haze_color = (58, 32, 16)
-
-    # Act
-    result = _apply_haze_color(color, 0.0, haze_color, 20000.0)
-
-    # Assert — t=0, full original color
-    assert result == color
-
-
-def test_apply_haze_color_at_max_distance_returns_haze_color():
-    # Arrange
-    color = (255, 200, 100)
-    haze_color = (58, 32, 16)
-    max_distance = 20000.0
-
-    # Act
-    result = _apply_haze_color(color, max_distance, haze_color, max_distance)
-
-    # Assert — t=1.0, fully blended to haze
-    assert result == haze_color
-
-
-def test_apply_haze_color_at_half_distance_interpolates():
-    # Arrange
-    color = (200, 100, 0)
-    haze_color = (0, 100, 200)
-    max_distance = 20000.0
-    half_distance = 10000.0
-
-    # Act
-    result = _apply_haze_color(color, half_distance, haze_color, max_distance)
-
-    # Assert — at t=0.5, each channel is midpoint between color and haze_color
-    assert result[0] == pytest.approx(100, abs=1)
-    assert result[1] == pytest.approx(100, abs=1)
-    assert result[2] == pytest.approx(100, abs=1)
-
-
-# ---------------------------------------------------------------------------
 # _apply_glow_expansion
 # ---------------------------------------------------------------------------
 
@@ -403,7 +356,6 @@ def test_render_lights_export_skips_light_below_brightness_threshold(
         falloff_distance=8000.0,
         haze_color=(58, 32, 16),
         scatter_distance=10000.0,
-        max_distance=20000.0,
         glow_expansion_enabled=False,
         glow_max_alpha=80,
         glow_falloff_steepness=1.0,
@@ -435,7 +387,6 @@ def test_render_lights_export_glow_expansion_disabled_uses_base_radius(
         falloff_distance=8000.0,
         haze_color=(58, 32, 16),
         scatter_distance=10000.0,
-        max_distance=20000.0,
         glow_expansion_enabled=False,
         glow_max_alpha=80,
         glow_falloff_steepness=1.0,
@@ -465,7 +416,6 @@ def test_render_lights_export_glow_expansion_enabled_calls_expansion(
         falloff_distance=8000.0,
         haze_color=(58, 32, 16),
         scatter_distance=10000.0,
-        max_distance=20000.0,
         glow_expansion_enabled=True,
         glow_max_alpha=80,
         glow_falloff_steepness=1.0,
@@ -506,7 +456,6 @@ def test_render_lights_export_accumulates_tiny_far_light(
         falloff_distance=8000.0,
         haze_color=(58, 32, 16),
         scatter_distance=10000.0,
-        max_distance=20000.0,
         glow_expansion_enabled=False,
         glow_max_alpha=80,
         glow_falloff_steepness=1.0,
@@ -536,7 +485,7 @@ def test_accumulate_glow_adds_to_buffer_at_center():
     cx, cy = 50.0, 50.0
 
     # Act
-    _accumulate_glow(buffer, cx, cy, (1.0, 1.0, 1.0), radius_px=10.0, peak=0.8, steepness=1.0)
+    _accumulate_glow(buffer, cx, cy, (1.0, 1.0, 1.0), radius_px=10.0, peak=0.8, steepness=1.0, wing_exponent=2.5, tail_strength=0.15, cutoff_mult=8.0)
 
     # Assert — center pixels are greater than zero
     assert buffer[50, 50, 0] > 0.0
@@ -549,7 +498,7 @@ def test_accumulate_glow_falls_off_with_distance():
     buffer = np.zeros((100, 100, 3), dtype=np.float32)
 
     # Act
-    _accumulate_glow(buffer, 50.0, 50.0, (1.0, 0.0, 0.0), radius_px=10.0, peak=0.8, steepness=1.0)
+    _accumulate_glow(buffer, 50.0, 50.0, (1.0, 0.0, 0.0), radius_px=10.0, peak=0.8, steepness=1.0, wing_exponent=2.5, tail_strength=0.15, cutoff_mult=8.0)
 
     # Assert — pixel near center brighter than pixel near edge of glow
     center_val = buffer[50, 50, 0]
@@ -563,9 +512,9 @@ def test_accumulate_glow_two_lights_accumulate_additively():
     buffer_double = np.zeros((100, 100, 3), dtype=np.float32)
 
     # Act — same position called once vs twice
-    _accumulate_glow(buffer_single, 50.0, 50.0, (0.4, 0.0, 0.0), radius_px=10.0, peak=0.8, steepness=1.0)
-    _accumulate_glow(buffer_double, 50.0, 50.0, (0.4, 0.0, 0.0), radius_px=10.0, peak=0.8, steepness=1.0)
-    _accumulate_glow(buffer_double, 50.0, 50.0, (0.4, 0.0, 0.0), radius_px=10.0, peak=0.8, steepness=1.0)
+    _accumulate_glow(buffer_single, 50.0, 50.0, (0.4, 0.0, 0.0), radius_px=10.0, peak=0.8, steepness=1.0, wing_exponent=2.5, tail_strength=0.15, cutoff_mult=8.0)
+    _accumulate_glow(buffer_double, 50.0, 50.0, (0.4, 0.0, 0.0), radius_px=10.0, peak=0.8, steepness=1.0, wing_exponent=2.5, tail_strength=0.15, cutoff_mult=8.0)
+    _accumulate_glow(buffer_double, 50.0, 50.0, (0.4, 0.0, 0.0), radius_px=10.0, peak=0.8, steepness=1.0, wing_exponent=2.5, tail_strength=0.15, cutoff_mult=8.0)
 
     # Assert — double accumulation produces roughly double the value
     assert buffer_double[50, 50, 0] == pytest.approx(buffer_single[50, 50, 0] * 2.0, rel=1e-5)
@@ -576,7 +525,44 @@ def test_accumulate_glow_respects_peak_zero():
     buffer = np.zeros((100, 100, 3), dtype=np.float32)
 
     # Act — peak=0 should contribute nothing
-    _accumulate_glow(buffer, 50.0, 50.0, (1.0, 1.0, 1.0), radius_px=10.0, peak=0.0, steepness=1.0)
+    _accumulate_glow(buffer, 50.0, 50.0, (1.0, 1.0, 1.0), radius_px=10.0, peak=0.0, steepness=1.0, wing_exponent=2.5, tail_strength=0.15, cutoff_mult=8.0)
 
     # Assert — buffer remains all zeros
     assert np.all(buffer == 0.0)
+
+
+def test_accumulate_glow_center_equals_peak():
+    # Arrange
+    buffer = np.zeros((100, 100, 3), dtype=np.float32)
+
+    # Act — core and tail both equal 1.0 at the center, so center == peak
+    _accumulate_glow(buffer, 50.0, 50.0, (1.0, 1.0, 1.0), radius_px=10.0, peak=0.8, steepness=1.0, wing_exponent=2.5, tail_strength=0.15, cutoff_mult=8.0)
+
+    # Assert
+    assert buffer[50, 50, 0] == pytest.approx(0.8, rel=1e-5)
+
+
+def test_accumulate_glow_wings_exceed_pure_gaussian():
+    # Arrange — a point 40px out, far beyond a sigma=5 gaussian's reach
+    buffer = np.zeros((100, 100, 3), dtype=np.float32)
+
+    # Act
+    _accumulate_glow(buffer, 50.0, 50.0, (1.0, 0.0, 0.0), radius_px=10.0, peak=1.0, steepness=1.0, wing_exponent=2.5, tail_strength=0.15, cutoff_mult=8.0)
+
+    # Assert — the power-law wing carries real energy where a gaussian is ~0
+    sigma = 10.0 / 2.0
+    gaussian_only = np.exp(-(40.0 ** 2) / (2.0 * sigma * sigma))
+    far_val = buffer[50, 90, 0]
+    assert far_val > 0.0
+    assert far_val > gaussian_only
+
+
+def test_accumulate_glow_zero_beyond_cutoff():
+    # Arrange — large buffer so the cutoff is the limiting factor, not the edge
+    buffer = np.zeros((200, 200, 3), dtype=np.float32)
+
+    # Act — cutoff_mult=4 with radius 5 bounds the paint to ~22px of center
+    _accumulate_glow(buffer, 100.0, 100.0, (1.0, 1.0, 1.0), radius_px=5.0, peak=1.0, steepness=1.0, wing_exponent=2.5, tail_strength=0.15, cutoff_mult=4.0)
+
+    # Assert — a pixel 50px away is outside the bounded region
+    assert buffer[100, 150, 0] == 0.0

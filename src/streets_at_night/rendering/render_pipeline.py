@@ -160,7 +160,14 @@ def get_export_passes(
 
         passes.extend([_illumination_pass, render_lights_export])
 
-    passes.extend([render_atmosphere, render_composite])
+    def _atmosphere_pass(
+        scene: "Scene", camera: Camera, backend: RenderBackend
+    ) -> None:
+        render_atmosphere(
+            scene, camera, backend, gbuffer=_shared_gbuffer(camera, backend)
+        )
+
+    passes.extend([_atmosphere_pass, render_composite])
     return passes
 
 

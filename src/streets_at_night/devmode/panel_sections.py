@@ -47,9 +47,12 @@ def build_atmosphere_section(
 ) -> int:
     """Build slider widgets for atmosphere configuration.
 
-    Adds sliders for falloff, max distance, scatter, glow parameters,
-    minimum brightness threshold, illumination brightness, a toggle button for
-    glow expansion, and a text entry for haze color.
+    Adds sliders for the extinction coefficient (falloff_distance, which drives
+    both light dimming and the airlight veil), scatter distance, the glow core
+    and power-law-wing parameters, airlight intensity (haze_alpha), minimum
+    brightness threshold, and illumination brightness; toggles for glow
+    expansion and airlight (haze_enabled); and a text entry for the haze
+    (airlight) color.
 
     Args:
         manager (pygame_gui.UIManager): The UI manager.
@@ -64,10 +67,13 @@ def build_atmosphere_section(
     y = y_offset
     sliders = [
         SliderDescriptor("falloff_distance", ("atmosphere", "falloff_distance"), 100.0, 50000.0),
-        SliderDescriptor("max_distance", ("atmosphere", "max_distance"), 1000.0, 100000.0),
         SliderDescriptor("scatter_distance", ("atmosphere", "scatter_distance"), 1000.0, 50000.0),
         SliderDescriptor("glow_max_alpha", ("atmosphere", "glow_max_alpha"), 0.0, 255.0, is_int=True),
         SliderDescriptor("glow_falloff_steepness", ("atmosphere", "glow_falloff_steepness"), 0.1, 5.0),
+        SliderDescriptor("glow_wing_exponent", ("atmosphere", "glow_wing_exponent"), 1.0, 5.0),
+        SliderDescriptor("glow_tail_strength", ("atmosphere", "glow_tail_strength"), 0.0, 1.0),
+        SliderDescriptor("glow_cutoff_mult", ("atmosphere", "glow_cutoff_mult"), 2.0, 20.0),
+        SliderDescriptor("haze_alpha", ("atmosphere", "haze_alpha"), 0.0, 255.0, is_int=True),
         SliderDescriptor("min_brightness_threshold", ("atmosphere", "min_brightness_threshold"), 0.0, 1.0),
         SliderDescriptor("illumination_brightness", ("atmosphere", "illumination_brightness"), 0.0, 255.0, is_int=True),
     ]
@@ -78,6 +84,10 @@ def build_atmosphere_section(
     y = _add_bool_button_row(
         manager, container, y, registry, config,
         "glow_expansion_enabled", ("atmosphere", "glow_expansion_enabled"),
+    )
+    y = _add_bool_button_row(
+        manager, container, y, registry, config,
+        "haze_enabled", ("atmosphere", "haze_enabled"),
     )
     y = _add_text_entry_row(
         manager, container, y, registry,
@@ -141,16 +151,16 @@ def build_streetlight_section(
         ]
 
     sliders = [
+        SliderDescriptor("color_temp_k", base_path + ("color_temp_k",), 1000.0, 8000.0,
+                         extra_config_paths=_make_extra_paths("color_temp_k")),
+        SliderDescriptor("saturation", base_path + ("saturation",), 0.0, 2.0,
+                         extra_config_paths=_make_extra_paths("saturation")),
         SliderDescriptor("glow_radius", base_path + ("glow_radius",), 0.0, 100.0,
                          extra_config_paths=_make_extra_paths("glow_radius")),
-        SliderDescriptor("illumination_radius", base_path + ("illumination_radius",), 0.0, 200.0,
-                         extra_config_paths=_make_extra_paths("illumination_radius")),
+        SliderDescriptor("beam_angle_deg", base_path + ("beam_angle_deg",), 10.0, 179.0,
+                         extra_config_paths=_make_extra_paths("beam_angle_deg")),
         SliderDescriptor("illumination_intensity", base_path + ("illumination_intensity",), 0.0, 5.0,
                          extra_config_paths=_make_extra_paths("illumination_intensity")),
-        SliderDescriptor("illumination_falloff", base_path + ("illumination_falloff",), 0.5, 6.0,
-                         extra_config_paths=_make_extra_paths("illumination_falloff")),
-        SliderDescriptor("illumination_inner_fraction", base_path + ("illumination_inner_fraction",), 0.0, 1.0,
-                         extra_config_paths=_make_extra_paths("illumination_inner_fraction")),
         SliderDescriptor("brightness_min", base_path + ("brightness_min",), 0.0, 1.0,
                          extra_config_paths=_make_extra_paths("brightness_min")),
         SliderDescriptor("brightness_max", base_path + ("brightness_max",), 0.0, 1.0,

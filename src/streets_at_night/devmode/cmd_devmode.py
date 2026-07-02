@@ -13,10 +13,13 @@ from PIL import Image
 from ..camera.controls import MouseDragState, handle_input
 from ..config.loader import _build_devmode_config, load_config
 from ..config.schema import SceneConfig
+from ..rendering.atmosphere_pass import render_atmosphere
+from ..rendering.compositor import render_composite
 from ..rendering.ground_pass import render_ground
 from ..rendering.illumination_pass import render_illumination
 from ..rendering.light_pass import render_lights_export
 from ..rendering.pillow_backend import PillowBackend
+from ..rendering.raycast import build_ground_gbuffer
 from ..rendering.render_pipeline import render_scene_frame
 from ..rendering.road_pass import render_roads_export
 from .config_bridge import apply_widgets_to_config, read_config_to_widgets
@@ -281,7 +284,11 @@ def _render_scene(
 ) -> Image.Image:
     """Render the scene using the Pillow backend and return the image.
 
-    Pass order: ground fill → roads → illumination → lights → (optional labels).
+    Mirrors the export pipeline so devmode shows the same result: ground →
+    roads → illumination → lights → atmosphere → composite, then optional
+    labels. The composite pass is essential — illumination and light passes
+    only accumulate into the backend's linear buffer, and composite is what
+    resolves that buffer (tone-map + sRGB encode) into the visible image.
 
     Args:
         scene: The scene to render.
@@ -294,16 +301,49 @@ def _render_scene(
     for car_pair in scene.car_pairs:
         car_pair.resolve_facing(scene.camera.get_forward())
     backend = PillowBackend(_RENDER_WIDTH, _WINDOW_HEIGHT)
+    gbuffer = build_ground_gbuffer(scene.camera, _RENDER_WIDTH, _WINDOW_HEIGHT)
+    passes = _build_render_passes(scene, gbuffer, use_labels)
+    render_scene_frame(scene, backend, passes=passes)
+    return backend.get_image()
+
+
+def _build_render_passes(
+    scene: t.Any,
+    gbuffer: t.Any,
+    use_labels: bool,
+) -> list:
+    """Build the devmode render pass list, matching the export pipeline order.
+
+    Illumination and atmosphere are wrapped to receive the shared G-buffer.
+    The composite pass must be present and after the light passes so the
+    accumulated linear light buffer is resolved into the visible image; labels
+    come last so they overlay the final composited frame.
+
+    Args:
+        scene: The scene to render (used for the label pass camera).
+        gbuffer: Shared ground raycast for illumination and atmosphere.
+        use_labels (bool): When True, append the synthetic-row label pass.
+
+    Returns:
+        list: Ordered render passes for render_scene_frame.
+    """
+    def _illumination_pass(s: t.Any, c: t.Any, b: t.Any) -> t.Any:
+        return render_illumination(s, c, b, gbuffer=gbuffer)
+
+    def _atmosphere_pass(s: t.Any, c: t.Any, b: t.Any) -> None:
+        render_atmosphere(s, c, b, gbuffer=gbuffer)
+
     passes = [
         render_ground,
         render_roads_export,
-        render_illumination,
+        _illumination_pass,
         render_lights_export,
+        _atmosphere_pass,
+        render_composite,
     ]
     if use_labels:
         passes.append(make_label_pass(ROW_LABELS, scene.camera))
-    render_scene_frame(scene, backend, passes=passes)
-    return backend.get_image()
+    return passes
 
 
 def _pil_to_pygame(image: Image.Image) -> pygame.Surface:

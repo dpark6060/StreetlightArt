@@ -30,6 +30,9 @@ uv run streets-at-night render --quality high
 
 # 4. Animate heat shimmer over the rendered image
 uv run streets-at-night animate --image output/render.png
+
+# Tune lighting/atmosphere live with sliders, then save a config
+uv run streets-at-night devmode
 ```
 
 ## Commands
@@ -42,6 +45,7 @@ Each subcommand has its own reference page:
 | `render` | Static perspective render to PNG/TIFF | [`docs/commands/render.md`](docs/commands/render.md) |
 | `preview` | Interactive pygame camera placement | [`docs/commands/preview.md`](docs/commands/preview.md) |
 | `animate` | Heat shimmer over a static render | [`docs/commands/animate.md`](docs/commands/animate.md) |
+| `devmode` | Live slider tuning of lights & atmosphere | [`docs/commands/devmode.md`](docs/commands/devmode.md) |
 
 All commands accept a global `--config` flag to point at an alternate TOML file (default: `scene_config.toml`).
 

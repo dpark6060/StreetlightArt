@@ -16,14 +16,11 @@ from streets_at_night.rendering.render_pipeline import (
 
 
 def test_get_export_passes_includes_atmosphere_pass():
-    # Arrange
-    from streets_at_night.rendering.atmosphere_pass import render_atmosphere
+    # Act — atmosphere is wrapped in a gbuffer-sharing closure, so check by name
+    names = get_export_pass_names()
 
-    # Act
-    passes = get_export_passes()
-
-    # Assert — atmosphere pass must be in the list
-    assert render_atmosphere in passes
+    # Assert — atmosphere pass must be present
+    assert "atmosphere" in names
 
 
 def test_get_export_passes_includes_compositor_pass():
@@ -38,44 +35,27 @@ def test_get_export_passes_includes_compositor_pass():
 
 
 def test_get_export_passes_atmosphere_after_lights():
-    # Arrange — atmosphere runs after light glow
-    from streets_at_night.rendering.atmosphere_pass import render_atmosphere
-    from streets_at_night.rendering.light_pass import render_lights_export
-
-    # Act
-    passes = get_export_passes()
-
-    lights_idx = passes.index(render_lights_export)
-    atmos_idx = passes.index(render_atmosphere)
+    # Act — atmosphere runs after light glow (check by name; both are wrapped)
+    names = get_export_pass_names()
 
     # Assert
-    assert lights_idx < atmos_idx
+    assert names.index("lights") < names.index("atmosphere")
 
 
 def test_get_export_passes_compositor_after_atmosphere():
-    # Arrange — compositor is the last pass
-    from streets_at_night.rendering.atmosphere_pass import render_atmosphere
-    from streets_at_night.rendering.compositor import render_composite
-
-    # Act
-    passes = get_export_passes()
-
-    atmos_idx = passes.index(render_atmosphere)
-    comp_idx = passes.index(render_composite)
+    # Act — compositor is the last pass (check by name; atmosphere is wrapped)
+    names = get_export_pass_names()
 
     # Assert
-    assert atmos_idx < comp_idx
+    assert names.index("atmosphere") < names.index("compositor")
 
 
 def test_get_export_passes_no_lights_still_includes_atmosphere():
-    # Arrange
-    from streets_at_night.rendering.atmosphere_pass import render_atmosphere
+    # Act — atmosphere always runs regardless of no_lights (check by name)
+    names = get_export_pass_names(no_lights=True)
 
-    # Act
-    passes = get_export_passes(no_lights=True)
-
-    # Assert — atmosphere always runs regardless of no_lights
-    assert render_atmosphere in passes
+    # Assert
+    assert "atmosphere" in names
 
 
 def test_get_export_passes_no_lights_still_includes_compositor():

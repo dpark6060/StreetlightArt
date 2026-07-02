@@ -1,5 +1,6 @@
 """FixtureProfile, FixturePool, and StreetLight factory for road-mounted lights."""
 
+import math
 import random
 import typing as t
 from dataclasses import dataclass
@@ -7,7 +8,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from ..config.schema import FixturePoolEntry, FixtureProfileConfig, StreetLightConfig
-from ..utils.colors import hex_to_rgb
+from ..utils.colors import kelvin_to_rgb
 from .light_source import LightSource
 from .road_types import RoadType
 
@@ -29,12 +30,9 @@ class FixtureProfile:
         height: Pole height in meters.
         brightness: Light intensity scalar in [0, 1].
         glow_radius: Atmospheric glow halo radius in meters.
-        illumination_radius: Ground illumination radius in meters.
+        beam_angle_deg: Full luminaire cone angle in degrees. The ground pool
+            radius and falloff are derived from this plus the pole height.
         illumination_intensity: Ground illumination strength in [0, 1].
-        illumination_falloff: Cone falloff exponent controlling the rate of
-            intensity drop from the inner edge to the outer radius.
-        illumination_inner_fraction: Fraction of illumination_radius at full
-            brightness before falloff begins, in [0, 1].
         spacing: Distance between consecutive lights in meters.
         side: Where lights are placed — "both", "one", or "alternating".
     """
@@ -43,10 +41,8 @@ class FixtureProfile:
     height: float
     brightness: float
     glow_radius: float
-    illumination_radius: float
+    beam_angle_deg: float
     illumination_intensity: float
-    illumination_falloff: float
-    illumination_inner_fraction: float
     spacing: float
     side: str
 
@@ -123,16 +119,22 @@ class StreetLight:
         Returns:
             LightSource: A fully configured light ready for rendering.
         """
+        half_angle = math.radians(fixture_profile.beam_angle_deg / 2.0)
+        derived_radius = fixture_profile.height * math.tan(half_angle)
         return LightSource(
             position=position,
             color=fixture_profile.fixture_color,
             brightness=fixture_profile.brightness,
             size=0.3,
             glow_radius=fixture_profile.glow_radius,
-            illumination_radius=fixture_profile.illumination_radius,
+            # illumination_radius is derived from height + beam angle and kept as
+            # a fallback; the physical branch in the illumination pass recomputes
+            # it. illumination_falloff / inner_fraction are unused when beam is set.
+            illumination_radius=derived_radius,
             illumination_intensity=fixture_profile.illumination_intensity,
-            illumination_falloff=fixture_profile.illumination_falloff,
-            illumination_inner_fraction=fixture_profile.illumination_inner_fraction,
+            illumination_falloff=2.0,
+            illumination_inner_fraction=0.0,
+            beam_angle_deg=fixture_profile.beam_angle_deg,
         )
 
 
@@ -175,7 +177,9 @@ def create_fixture_pool(
         FixturePool: Pool appropriate for the road type.
     """
     pool_entries = _get_pool_entries_for_road_type(road_type, config)
-    profiles_with_weights = _build_profiles_with_weights(pool_entries, rng)
+    profiles_with_weights = _build_profiles_with_weights(
+        pool_entries, rng, config.color_temp_shift_k
+    )
     return FixturePool(profiles_with_weights, rng)
 
 
@@ -199,12 +203,15 @@ def _get_pool_entries_for_road_type(
 def _build_profiles_with_weights(
     pool_entries: t.List[FixturePoolEntry],
     rng: random.Random,
+    color_temp_shift_k: float,
 ) -> t.List[t.Tuple[t.Optional[FixtureProfile], float]]:
     """Convert pool entries to (profile, weight) pairs for FixturePool.
 
     Args:
         pool_entries (List[FixturePoolEntry]): Weighted pool entries from config.
         rng (random.Random): Seeded RNG for sampling parameter ranges.
+        color_temp_shift_k (float): City-wide additive Kelvin offset applied to
+            every profile's authored color temperature.
 
     Returns:
         List[Tuple[Optional[FixtureProfile], float]]: Pairs ready for FixturePool.
@@ -214,7 +221,7 @@ def _build_profiles_with_weights(
         if entry.profile is None:
             result.append((None, entry.weight))
         else:
-            profile = _config_to_fixture_profile(entry.profile, rng)
+            profile = _config_to_fixture_profile(entry.profile, rng, color_temp_shift_k)
             result.append((profile, entry.weight))
     return result
 
@@ -222,28 +229,30 @@ def _build_profiles_with_weights(
 def _config_to_fixture_profile(
     cfg: FixtureProfileConfig,
     rng: random.Random,
+    color_temp_shift_k: float,
 ) -> FixtureProfile:
     """Convert a config profile to a runtime FixtureProfile, sampling ranges.
 
     Height, brightness, and spacing are sampled uniformly from their
-    [min, max] ranges defined in the config. All other fields are fixed values.
+    [min, max] ranges defined in the config. The fixture color is resolved
+    from its blackbody temperature (plus the city-wide shift) and saturation.
 
     Args:
         cfg (FixtureProfileConfig): Config profile with range fields.
         rng (random.Random): RNG used to sample range parameters.
+        color_temp_shift_k (float): Additive Kelvin offset applied to the
+            authored color temperature before conversion to RGB.
 
     Returns:
         FixtureProfile: Constructed fixture profile with sampled values.
     """
     return FixtureProfile(
-        fixture_color=hex_to_rgb(cfg.color),
+        fixture_color=kelvin_to_rgb(cfg.color_temp_k + color_temp_shift_k, cfg.saturation),
         height=rng.uniform(cfg.height_min, cfg.height_max),
         brightness=rng.uniform(cfg.brightness_min, cfg.brightness_max),
         glow_radius=cfg.glow_radius,
-        illumination_radius=cfg.illumination_radius,
+        beam_angle_deg=cfg.beam_angle_deg,
         illumination_intensity=cfg.illumination_intensity,
-        illumination_falloff=cfg.illumination_falloff,
-        illumination_inner_fraction=cfg.illumination_inner_fraction,
         spacing=rng.uniform(cfg.spacing_min, cfg.spacing_max),
         side=cfg.side,
     )

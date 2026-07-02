@@ -11,12 +11,12 @@ from streets_at_night.config.loader import _build_atmosphere_config
 from streets_at_night.config.schema import AtmosphereConfig
 from streets_at_night.rendering.atmosphere_pass import (
     _column_alpha_to_linear_layer,
-    _haze_alpha_column,
-    _render_distance_haze,
+    _render_airlight,
     _render_horizon_glow,
     render_atmosphere,
 )
 from streets_at_night.rendering.backend import RenderBackend
+from streets_at_night.rendering.raycast import GroundHit
 
 
 # ---------------------------------------------------------------------------
@@ -57,37 +57,64 @@ def mock_camera() -> mock.MagicMock:
     return camera
 
 
+def _make_gbuffer(
+    hit_x: np.ndarray,
+    hit_y: np.ndarray,
+    ground_mask: np.ndarray,
+    ray_z: np.ndarray,
+) -> GroundHit:
+    """Build a GroundHit from per-pixel hit coords, mask, and ray elevation."""
+    h, w = hit_x.shape
+    ray_dirs = np.zeros((h, w, 3), dtype=np.float64)
+    ray_dirs[:, :, 2] = ray_z
+    return GroundHit(ray_dirs=ray_dirs, hit_x=hit_x, hit_y=hit_y, ground_mask=ground_mask)
+
+
+def _capture_layer(backend: mock.MagicMock) -> list:
+    """Wire a backend mock to capture layers passed to add_linear."""
+    captured: list = []
+    backend.add_linear.side_effect = lambda layer: captured.append(layer)
+    return captured
+
+
 # ---------------------------------------------------------------------------
 # render_atmosphere — top-level behavior
 # ---------------------------------------------------------------------------
 
 
 def test_render_atmosphere_accumulates_linear(mock_scene, mock_camera, mock_backend):
+    gbuffer = mock.MagicMock()
+
     with mock.patch(
         "streets_at_night.rendering.atmosphere_pass.compute_horizon_y",
         return_value=180,
+    ), mock.patch(
+        "streets_at_night.rendering.atmosphere_pass._render_airlight"
     ):
-        render_atmosphere(mock_scene, mock_camera, mock_backend)
+        render_atmosphere(mock_scene, mock_camera, mock_backend, gbuffer)
 
     assert mock_backend.add_linear.call_count >= 1
 
 
 def test_render_atmosphere_calls_horizon_glow(mock_scene, mock_camera, mock_backend):
+    gbuffer = mock.MagicMock()
+
     with mock.patch(
         "streets_at_night.rendering.atmosphere_pass.compute_horizon_y",
         return_value=180,
     ), mock.patch(
         "streets_at_night.rendering.atmosphere_pass._render_horizon_glow"
     ) as mock_glow, mock.patch(
-        "streets_at_night.rendering.atmosphere_pass._render_distance_haze"
+        "streets_at_night.rendering.atmosphere_pass._render_airlight"
     ):
-        render_atmosphere(mock_scene, mock_camera, mock_backend)
+        render_atmosphere(mock_scene, mock_camera, mock_backend, gbuffer)
 
     mock_glow.assert_called_once()
 
 
-def test_render_atmosphere_calls_haze_when_enabled(mock_scene, mock_camera, mock_backend):
+def test_render_atmosphere_calls_airlight_when_enabled(mock_scene, mock_camera, mock_backend):
     mock_scene.config.atmosphere.haze_enabled = True
+    gbuffer = mock.MagicMock()
 
     with mock.patch(
         "streets_at_night.rendering.atmosphere_pass.compute_horizon_y",
@@ -95,15 +122,16 @@ def test_render_atmosphere_calls_haze_when_enabled(mock_scene, mock_camera, mock
     ), mock.patch(
         "streets_at_night.rendering.atmosphere_pass._render_horizon_glow"
     ), mock.patch(
-        "streets_at_night.rendering.atmosphere_pass._render_distance_haze"
-    ) as mock_haze:
-        render_atmosphere(mock_scene, mock_camera, mock_backend)
+        "streets_at_night.rendering.atmosphere_pass._render_airlight"
+    ) as mock_airlight:
+        render_atmosphere(mock_scene, mock_camera, mock_backend, gbuffer)
 
-    mock_haze.assert_called_once()
+    mock_airlight.assert_called_once()
 
 
-def test_render_atmosphere_skips_haze_when_disabled(mock_scene, mock_camera, mock_backend):
+def test_render_atmosphere_skips_airlight_when_disabled(mock_scene, mock_camera, mock_backend):
     mock_scene.config.atmosphere.haze_enabled = False
+    gbuffer = mock.MagicMock()
 
     with mock.patch(
         "streets_at_night.rendering.atmosphere_pass.compute_horizon_y",
@@ -111,11 +139,11 @@ def test_render_atmosphere_skips_haze_when_disabled(mock_scene, mock_camera, moc
     ), mock.patch(
         "streets_at_night.rendering.atmosphere_pass._render_horizon_glow"
     ), mock.patch(
-        "streets_at_night.rendering.atmosphere_pass._render_distance_haze"
-    ) as mock_haze:
-        render_atmosphere(mock_scene, mock_camera, mock_backend)
+        "streets_at_night.rendering.atmosphere_pass._render_airlight"
+    ) as mock_airlight:
+        render_atmosphere(mock_scene, mock_camera, mock_backend, gbuffer)
 
-    mock_haze.assert_not_called()
+    mock_airlight.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -134,8 +162,7 @@ def test_render_horizon_glow_adds_linear_layer(mock_backend, default_atmosphere)
 def test_render_horizon_glow_horizon_row_has_nonzero_intensity(default_atmosphere):
     fake_backend = mock.MagicMock(spec=RenderBackend)
     fake_backend.get_surface_size.return_value = (10, 10)
-    captured = []
-    fake_backend.add_linear.side_effect = lambda layer: captured.append(layer)
+    captured = _capture_layer(fake_backend)
 
     _render_horizon_glow(fake_backend, 10, 10, 5, default_atmosphere)
 
@@ -145,8 +172,7 @@ def test_render_horizon_glow_horizon_row_has_nonzero_intensity(default_atmospher
 def test_render_horizon_glow_far_from_horizon_is_zero(default_atmosphere):
     fake_backend = mock.MagicMock(spec=RenderBackend)
     fake_backend.get_surface_size.return_value = (640, 360)
-    captured = []
-    fake_backend.add_linear.side_effect = lambda layer: captured.append(layer)
+    captured = _capture_layer(fake_backend)
     default_atmosphere.horizon_glow_width_px = 10
 
     _render_horizon_glow(fake_backend, 640, 360, 180, default_atmosphere)
@@ -163,54 +189,52 @@ def test_render_horizon_glow_skips_when_width_is_zero(mock_backend, default_atmo
 
 
 # ---------------------------------------------------------------------------
-# _render_distance_haze
+# _render_airlight — depth-based path radiance
 # ---------------------------------------------------------------------------
 
 
-def test_render_distance_haze_adds_linear_layer(mock_backend, default_atmosphere):
-    _render_distance_haze(mock_backend, 640, 360, 180, default_atmosphere)
+def test_render_airlight_adds_linear_layer(mock_camera, default_atmosphere):
+    fake_backend = mock.MagicMock(spec=RenderBackend)
+    captured = _capture_layer(fake_backend)
+    hit_x = np.full((4, 5), 100.0)
+    hit_y = np.full((4, 5), 100.0)
+    gbuffer = _make_gbuffer(hit_x, hit_y, np.ones((4, 5), dtype=bool), np.full((4, 5), -0.5))
 
-    mock_backend.add_linear.assert_called_once()
-    layer_arg = mock_backend.add_linear.call_args[0][0]
-    assert layer_arg.shape == (360, 640, 3)
+    _render_airlight(fake_backend, gbuffer, mock_camera, default_atmosphere)
 
-
-# ---------------------------------------------------------------------------
-# _haze_alpha_column — vectorized alpha calculation
-# ---------------------------------------------------------------------------
-
-
-def test_haze_alpha_column_at_horizon_row_equals_peak():
-    alpha = _haze_alpha_column(
-        height=200, horizon_y=100, ground_fade_bottom=133, sky_fade_top=50, peak=30.0
-    )
-
-    assert alpha[100] == pytest.approx(30.0)
+    fake_backend.add_linear.assert_called_once()
+    assert captured[0].shape == (4, 5, 3)
 
 
-def test_haze_alpha_column_at_ground_fade_bottom_is_zero():
-    alpha = _haze_alpha_column(
-        height=200, horizon_y=100, ground_fade_bottom=133, sky_fade_top=50, peak=30.0
-    )
+def test_render_airlight_farther_ground_is_hazier(mock_camera, default_atmosphere):
+    fake_backend = mock.MagicMock(spec=RenderBackend)
+    captured = _capture_layer(fake_backend)
+    # Column 0 is directly below the camera; column 1 is 20 km out.
+    hit_x = np.array([[0.0, 20000.0]])
+    hit_y = np.array([[0.0, 0.0]])
+    gbuffer = _make_gbuffer(hit_x, hit_y, np.ones((1, 2), dtype=bool), np.full((1, 2), -0.5))
 
-    assert alpha[133] == pytest.approx(0.0, abs=1e-5)
+    _render_airlight(fake_backend, gbuffer, mock_camera, default_atmosphere)
+
+    near = captured[0][0, 0, :].sum()
+    far = captured[0][0, 1, :].sum()
+    assert far > near
 
 
-def test_haze_alpha_column_above_sky_fade_top_is_zero():
-    alpha = _haze_alpha_column(
-        height=200, horizon_y=100, ground_fade_bottom=133, sky_fade_top=50, peak=30.0
-    )
+def test_render_airlight_sky_hazier_near_horizon(mock_camera, default_atmosphere):
+    fake_backend = mock.MagicMock(spec=RenderBackend)
+    captured = _capture_layer(fake_backend)
+    # Two sky pixels (no ground hit): one near the horizon (ray_z≈0), one near zenith.
+    hit_x = np.zeros((1, 2))
+    hit_y = np.zeros((1, 2))
+    ray_z = np.array([[0.05, 0.9]])
+    gbuffer = _make_gbuffer(hit_x, hit_y, np.zeros((1, 2), dtype=bool), ray_z)
 
-    assert alpha[0] == pytest.approx(0.0, abs=1e-5)
+    _render_airlight(fake_backend, gbuffer, mock_camera, default_atmosphere)
 
-
-def test_haze_alpha_column_sky_peaks_at_half():
-    alpha = _haze_alpha_column(
-        height=200, horizon_y=100, ground_fade_bottom=133, sky_fade_top=50, peak=30.0
-    )
-
-    # Just above the horizon (sky side), alpha ramps from peak/2 downward.
-    assert alpha[99] == pytest.approx(15.0, abs=1.0)
+    near_horizon = captured[0][0, 0, :].sum()
+    near_zenith = captured[0][0, 1, :].sum()
+    assert near_horizon > near_zenith
 
 
 # ---------------------------------------------------------------------------

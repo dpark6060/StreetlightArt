@@ -15,6 +15,7 @@ the road surface in world space, so perspective foreshortening and occlusion by 
 horizon are handled automatically by the raycast — no special-casing needed.
 """
 
+import math
 import typing as t
 
 import numpy as np
@@ -190,20 +191,18 @@ def _paint_illumination_blob(
     camera_position: np.ndarray,
     falloff_distance: float,
 ) -> None:
-    """Paint a cone-model intensity blob for one light source into the illumination map.
+    """Paint an intensity blob for one light source into the illumination map.
 
-    Intensity follows a two-zone cone model:
+    Two falloff models are supported, selected per light:
 
-        t = clip(dist_m / illumination_radius, 0, 1)
-        inner = illumination_inner_fraction
-        fade_t = clip((t - inner) / max(1 - inner, 1e-6), 0, 1)
-        falloff = (1 - fade_t) ^ illumination_falloff
-
-    The inner zone [0, inner * radius] is at full brightness (fade_t = 0,
-    falloff = 1.0). The fade zone [inner * radius, radius] ramps fade_t from
-    0 to 1, driving falloff from 1 to 0. At exactly radius, falloff is zero,
-    so there is no hard edge. Beyond radius, t is clipped to 1.0, keeping
-    fade_t at 1.0 and intensity at zero.
+    - Physical (``light.beam_angle_deg`` set and pole height > 0): the pool
+      radius is derived from pole height and beam angle, and intensity follows
+      the inverse-square + cosine-incidence law for a point source at height h,
+      ``1 / (1 + (r/h)^2)^1.5``. A taller pole gives a wider, flatter, dimmer
+      pool for free. Used by streetlights, which have a real pole height.
+    - Legacy two-zone cone (``beam_angle_deg`` is None): the authored
+      ``illumination_radius`` with an inner flat zone and ``illumination_falloff``
+      fade. Used by lights with no meaningful pole height (cars, signs, houses).
 
     Light brightness is attenuated by exponential distance falloff from the
     camera before computing the peak, matching the formula used in the glow pass.
@@ -212,8 +211,8 @@ def _paint_illumination_blob(
 
     Args:
         illum_map (np.ndarray): (H, W, 3) float32 array to paint into (modified in-place).
-        light (LightSource): Light source with position, color, brightness,
-            illumination_radius, illumination_falloff, and illumination_inner_fraction.
+        light (LightSource): Light source with position, color, brightness, and
+            either beam_angle_deg (physical) or the cone-model fields.
         min_x (float): World x coordinate corresponding to pixel column 0.
         max_y (float): World y coordinate corresponding to pixel row 0.
         resolution (float): Meters per pixel.
@@ -222,9 +221,16 @@ def _paint_illumination_blob(
         falloff_distance (float): Characteristic decay distance in meters for
             exponential brightness attenuation.
     """
+    height = float(light.position[2])
+    is_physical = light.beam_angle_deg is not None and height > 0.0
+    if is_physical:
+        radius_m = height * math.tan(math.radians(light.beam_angle_deg / 2.0))
+    else:
+        radius_m = light.illumination_radius
+
     cx = (light.position[0] - min_x) / resolution
     cy = (max_y - light.position[1]) / resolution
-    radius_px = light.illumination_radius / resolution
+    radius_px = radius_m / resolution
 
     if radius_px < 1.0:
         return
@@ -246,12 +252,12 @@ def _paint_illumination_blob(
 
     dist_m = np.sqrt((grid_x - cx) ** 2 + (grid_y - cy) ** 2) * resolution
 
-    t = np.clip(dist_m / light.illumination_radius, 0.0, 1.0)
-    inner = light.illumination_inner_fraction
-    denom = max(1.0 - inner, 1e-6)
-    fade_t = np.clip((t - inner) / denom, 0.0, 1.0)
-    fade_t = fade_t * fade_t * (3.0 - 2.0 * fade_t)
-    falloff = (1.0 - fade_t) ** light.illumination_falloff
+    if is_physical:
+        falloff = _physical_falloff(dist_m, height, radius_m)
+    else:
+        falloff = _cone_falloff(
+            dist_m, radius_m, light.illumination_inner_fraction, light.illumination_falloff
+        )
 
     dist = camera_distance(light.position, camera_position)
     effective_brightness = apply_brightness_falloff(light.brightness, dist, falloff_distance)
@@ -264,6 +270,62 @@ def _paint_illumination_blob(
     illum_map[y0:y1, x0:x1, 0] += intensity * lin_r
     illum_map[y0:y1, x0:x1, 1] += intensity * lin_g
     illum_map[y0:y1, x0:x1, 2] += intensity * lin_b
+
+
+def _physical_falloff(
+    dist_m: np.ndarray,
+    height: float,
+    radius_m: float,
+) -> np.ndarray:
+    """Compute ground illuminance falloff for a point source at a given height.
+
+    Follows the inverse-square + cosine-incidence law, normalized to 1.0
+    directly under the lamp: ``E(r)/E(0) = 1 / (1 + (r/h)^2)^1.5``. The curve
+    is faded to zero with a smoothstep over the outer 15% of the beam radius so
+    there is no hard ring at the cutoff.
+
+    Args:
+        dist_m (np.ndarray): Radial ground distance from the lamp, in meters.
+        height (float): Pole height in meters (> 0).
+        radius_m (float): Beam cutoff radius in meters.
+
+    Returns:
+        np.ndarray: Falloff multiplier in [0, 1], same shape as dist_m.
+    """
+    falloff = 1.0 / (1.0 + (dist_m / height) ** 2) ** 1.5
+
+    edge_start = 0.85 * radius_m
+    edge = np.clip((dist_m - edge_start) / max(radius_m - edge_start, 1e-6), 0.0, 1.0)
+    edge = edge * edge * (3.0 - 2.0 * edge)
+    return falloff * (1.0 - edge)
+
+
+def _cone_falloff(
+    dist_m: np.ndarray,
+    radius_m: float,
+    inner_fraction: float,
+    exponent: float,
+) -> np.ndarray:
+    """Compute the legacy two-zone cone falloff.
+
+    The inner zone [0, inner_fraction * radius] is at full brightness; the fade
+    zone ramps to zero via a smoothstep raised to ``exponent``. At radius the
+    falloff is zero, so there is no hard edge.
+
+    Args:
+        dist_m (np.ndarray): Radial ground distance from the light, in meters.
+        radius_m (float): Outer pool radius in meters.
+        inner_fraction (float): Fraction of radius at full brightness, in [0, 1].
+        exponent (float): Fade-zone falloff exponent.
+
+    Returns:
+        np.ndarray: Falloff multiplier in [0, 1], same shape as dist_m.
+    """
+    t = np.clip(dist_m / radius_m, 0.0, 1.0)
+    denom = max(1.0 - inner_fraction, 1e-6)
+    fade_t = np.clip((t - inner_fraction) / denom, 0.0, 1.0)
+    fade_t = fade_t * fade_t * (3.0 - 2.0 * fade_t)
+    return (1.0 - fade_t) ** exponent
 
 
 def _sample_illumination_map(

@@ -1,6 +1,7 @@
 # Radical
 """Tests for streets_at_night.models.streetlight module."""
 
+import math
 import random
 import typing as t
 
@@ -9,12 +10,14 @@ import pytest
 
 from streets_at_night.config.defaults import DEFAULTS
 from streets_at_night.config.loader import _build_streetlight_config
+from streets_at_night.config.schema import FixtureProfileConfig
 from streets_at_night.models.light_source import LightSource
 from streets_at_night.models.road_types import RoadType
 from streets_at_night.models.streetlight import (
     FixturePool,
     FixtureProfile,
     StreetLight,
+    _config_to_fixture_profile,
     create_fixture_pool,
 )
 
@@ -44,10 +47,8 @@ def sample_profile() -> FixtureProfile:
         height=10.0,
         brightness=0.8,
         glow_radius=18.0,
-        illumination_radius=30.0,
+        beam_angle_deg=147.0,
         illumination_intensity=0.75,
-        illumination_falloff=2.0,
-        illumination_inner_fraction=0.0,
         spacing=45.0,
         side="both",
     )
@@ -70,10 +71,8 @@ def test_fixture_profile_stores_all_fields(sample_profile):
     assert sample_profile.height == 10.0
     assert sample_profile.brightness == 0.8
     assert sample_profile.glow_radius == 18.0
-    assert sample_profile.illumination_radius == 30.0
+    assert sample_profile.beam_angle_deg == 147.0
     assert sample_profile.illumination_intensity == 0.75
-    assert sample_profile.illumination_falloff == 2.0
-    assert sample_profile.illumination_inner_fraction == 0.0
     assert sample_profile.spacing == 45.0
     assert sample_profile.side == "both"
 
@@ -185,6 +184,64 @@ def test_create_from_profile_stores_position(sample_profile, sample_position):
 
     # Assert
     np.testing.assert_array_equal(light.position, sample_position)
+
+
+def test_create_from_profile_passes_beam_angle(sample_profile, sample_position):
+    # Act
+    light = StreetLight.create_from_profile(
+        sample_profile, sample_position, RoadType.MAJOR_ROAD
+    )
+
+    # Assert — beam angle flows through so the illumination pass uses the physical model
+    assert light.beam_angle_deg == sample_profile.beam_angle_deg
+
+
+def test_create_from_profile_derives_illumination_radius_from_height_and_beam(
+    sample_profile, sample_position
+):
+    # Act
+    light = StreetLight.create_from_profile(
+        sample_profile, sample_position, RoadType.MAJOR_ROAD
+    )
+
+    # Assert — radius = height * tan(beam / 2)
+    expected = sample_profile.height * math.tan(math.radians(sample_profile.beam_angle_deg / 2.0))
+    assert light.illumination_radius == pytest.approx(expected)
+
+
+# ---------------------------------------------------------------------------
+# _config_to_fixture_profile — color temperature + master shift
+# ---------------------------------------------------------------------------
+
+
+def _make_profile_config(color_temp_k: float) -> FixtureProfileConfig:
+    """Return a minimal FixtureProfileConfig at the given color temperature."""
+    return FixtureProfileConfig(
+        color_temp_k=color_temp_k,
+        saturation=1.0,
+        height_min=8.0,
+        height_max=8.0,
+        brightness_min=0.8,
+        brightness_max=0.8,
+        glow_radius=18.0,
+        beam_angle_deg=147.0,
+        illumination_intensity=0.75,
+        spacing_min=45.0,
+        spacing_max=45.0,
+        side="both",
+    )
+
+
+def test_config_to_fixture_profile_positive_shift_makes_color_cooler(rng):
+    # Arrange — same 2700K base, one with no shift and one shifted +2000K
+    cfg = _make_profile_config(2700.0)
+
+    # Act
+    base = _config_to_fixture_profile(cfg, rng, 0.0)
+    shifted = _config_to_fixture_profile(cfg, rng, 2000.0)
+
+    # Assert — a higher color temperature carries more blue
+    assert shifted.fixture_color[2] > base.fixture_color[2]
 
 
 # ---------------------------------------------------------------------------

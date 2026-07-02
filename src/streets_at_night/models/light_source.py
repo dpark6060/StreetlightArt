@@ -40,6 +40,12 @@ class LightSource:
             that is at full brightness before falloff begins, in [0, 1].
             0.0 means falloff starts immediately at the center; 1.0
             means the entire radius is fully lit (no falloff at all).
+        beam_angle_deg: Full luminaire cone angle in degrees. When set (and
+            the light has a positive z height), the illumination pass derives
+            the ground pool physically from pole height and this angle and
+            ignores illumination_radius / illumination_falloff /
+            illumination_inner_fraction. None keeps the legacy two-zone cone,
+            used by lights with no meaningful pole height (cars, signs, houses).
     """
 
     position: np.ndarray
@@ -51,3 +57,4 @@ class LightSource:
     illumination_intensity: float
     illumination_falloff: float
     illumination_inner_fraction: float
+    beam_angle_deg: t.Optional[float] = None

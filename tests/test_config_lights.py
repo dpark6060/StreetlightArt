@@ -203,14 +203,14 @@ def test_fixture_profile_config_has_all_fields(loaded_config: SceneConfig):
 
     # Assert
     assert isinstance(profile, FixtureProfileConfig)
-    assert isinstance(profile.color, str)
-    assert len(profile.color) > 0
+    assert isinstance(profile.color_temp_k, float)
+    assert isinstance(profile.saturation, float)
     assert isinstance(profile.height_min, float)
     assert isinstance(profile.height_max, float)
     assert isinstance(profile.brightness_min, float)
     assert isinstance(profile.brightness_max, float)
     assert isinstance(profile.glow_radius, float)
-    assert isinstance(profile.illumination_radius, float)
+    assert isinstance(profile.beam_angle_deg, float)
     assert isinstance(profile.illumination_intensity, float)
     assert isinstance(profile.spacing_min, float)
     assert isinstance(profile.spacing_max, float)
@@ -274,13 +274,14 @@ def test_toml_override_streetlight_preserves_defaults(tmp_path: Path):
         "[[lights.streetlights.highway]]\n"
         'weight = 0.8\n'
         "[lights.streetlights.highway.profile]\n"
-        'color = "#FF0000"\n'
+        "color_temp_k = 3000.0\n"
+        "saturation = 1.0\n"
         "height_min = 12.0\n"
         "height_max = 15.0\n"
         "brightness_min = 0.85\n"
         "brightness_max = 1.0\n"
         "glow_radius = 25.0\n"
-        "illumination_radius = 40.0\n"
+        "beam_angle_deg = 150.0\n"
         "illumination_intensity = 0.9\n"
         "spacing_min = 40.0\n"
         "spacing_max = 60.0\n"
@@ -295,8 +296,34 @@ def test_toml_override_streetlight_preserves_defaults(tmp_path: Path):
     # Assert — the overridden highway pool reflects new values
     highway_pool = result.lights.streetlights.highway
     assert len(highway_pool) > 0
-    assert highway_pool[0].profile.color == "#FF0000"
+    assert highway_pool[0].profile.color_temp_k == 3000.0
 
     # Assert — non-overridden sub-sections still come from defaults
     assert isinstance(result.lights.cars, CarConfig)
     assert len(result.lights.cars.headlight_colors.colors) > 0
+
+
+# ---------------------------------------------------------------------------
+# color_temp_shift_k — city-wide master lever
+# ---------------------------------------------------------------------------
+
+
+def test_color_temp_shift_k_defaults_to_zero(loaded_config: SceneConfig):
+    # Assert — absent from config, the master shift defaults to neutral
+    assert loaded_config.lights.streetlights.color_temp_shift_k == 0.0
+
+
+def test_color_temp_shift_k_loads_from_toml(tmp_path: Path):
+    # Arrange
+    toml_content = (
+        "[lights.streetlights]\n"
+        "color_temp_shift_k = 1500.0\n"
+    )
+    toml_file = tmp_path / "shift.toml"
+    toml_file.write_text(toml_content)
+
+    # Act
+    result = load_config(toml_file)
+
+    # Assert
+    assert result.lights.streetlights.color_temp_shift_k == 1500.0

@@ -86,21 +86,26 @@ class ZoneConfig:
 
 @dataclass
 class FixtureProfileConfig:
-    """Configuration for a single streetlight fixture profile."""
+    """Configuration for a single streetlight fixture profile.
 
-    color: str
+    Color is authored as a blackbody temperature plus a saturation knob
+    (see utils.colors.kelvin_to_rgb). The ground pool is derived physically
+    from pole height and ``beam_angle_deg`` in the illumination pass, so the
+    legacy cone shape parameters are not part of a streetlight profile.
+    """
+
+    color_temp_k: float
     height_min: float
     height_max: float
     brightness_min: float
     brightness_max: float
     glow_radius: float
-    illumination_radius: float
+    beam_angle_deg: float
     illumination_intensity: float
-    illumination_falloff: float
-    illumination_inner_fraction: float
     spacing_min: float
     spacing_max: float
     side: str
+    saturation: float = 1.0
 
 
 @dataclass
@@ -113,13 +118,19 @@ class FixturePoolEntry:
 
 @dataclass
 class StreetLightConfig:
-    """Streetlight configuration per road type, as weighted fixture pools."""
+    """Streetlight configuration per road type, as weighted fixture pools.
+
+    ``color_temp_shift_k`` is a city-wide master lever: an additive Kelvin
+    offset applied to every streetlight's authored temperature, so the whole
+    scene can be shifted from old sodium toward LED retrofit in one edit.
+    """
 
     highway: t.List[FixturePoolEntry]
     major_road: t.List[FixturePoolEntry]
     collector: t.List[FixturePoolEntry]
     residential: t.List[FixturePoolEntry]
     service: t.List[FixturePoolEntry]
+    color_temp_shift_k: float = 0.0
 
 
 @dataclass
@@ -249,10 +260,12 @@ class AtmosphereConfig:
     falloff_distance: float
     haze_color: t.Tuple[int, int, int]
     scatter_distance: float
-    max_distance: float
     glow_expansion_enabled: bool = False
     glow_max_alpha: int = 80
     glow_falloff_steepness: float = 1.0
+    glow_wing_exponent: float = 2.5
+    glow_tail_strength: float = 0.15
+    glow_cutoff_mult: float = 8.0
     min_brightness_threshold: float = 0.05
     illumination_brightness: int = 60
     illumination_min_radius: float = 15.0

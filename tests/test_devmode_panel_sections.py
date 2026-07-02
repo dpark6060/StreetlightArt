@@ -18,16 +18,15 @@ from streets_at_night.devmode.panel_sections import (
 def _make_profile() -> FixtureProfileConfig:
     """Return a minimal FixtureProfileConfig for test use."""
     return FixtureProfileConfig(
-        color="#FFAA00",
+        color_temp_k=2200.0,
+        saturation=1.2,
         height_min=5.0,
         height_max=8.0,
         brightness_min=0.5,
         brightness_max=0.8,
         glow_radius=12.0,
-        illumination_radius=30.0,
+        beam_angle_deg=140.0,
         illumination_intensity=0.4,
-        illumination_falloff=2.0,
-        illumination_inner_fraction=0.0,
         spacing_min=30.0,
         spacing_max=60.0,
         side="both",

@@ -285,10 +285,8 @@ def test_force_lights_on_dark_segments_returns_empty_when_all_segments_already_l
         height=8.0,
         brightness=0.7,
         glow_radius=12.0,
-        illumination_radius=30.0,
+        beam_angle_deg=140.0,
         illumination_intensity=0.4,
-        illumination_falloff=2.0,
-        illumination_inner_fraction=0.0,
         spacing=40.0,
         side="both",
     )

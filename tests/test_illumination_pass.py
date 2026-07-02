@@ -26,6 +26,7 @@ def _make_light(
     illumination_intensity: float = 1.0,
     illumination_falloff: float = 2.0,
     illumination_inner_fraction: float = 0.0,
+    beam_angle_deg=None,
 ) -> LightSource:
     """Return a LightSource with sensible defaults, overriding selected fields."""
     return LightSource(
@@ -38,6 +39,7 @@ def _make_light(
         illumination_intensity=illumination_intensity,
         illumination_falloff=illumination_falloff,
         illumination_inner_fraction=illumination_inner_fraction,
+        beam_angle_deg=beam_angle_deg,
     )
 
 
@@ -127,6 +129,73 @@ def test_paint_illumination_blob_skips_tiny_radius():
 
     # Assert — map remains all zeros; the early-return guard fired
     assert np.all(illum_map == 0.0)
+
+
+# ---------------------------------------------------------------------------
+# _paint_illumination_blob — physical height + beam-angle model
+# ---------------------------------------------------------------------------
+
+
+def test_paint_illumination_blob_physical_taller_pole_wider_pool():
+    # Arrange — same beam angle, two pole heights; physical model derives radius
+    short_map = _make_blank_map()
+    tall_map = _make_blank_map()
+    short = _make_light(position=np.array([100.0, 100.0, 10.0]), beam_angle_deg=120.0)
+    tall = _make_light(position=np.array([100.0, 100.0, 20.0]), beam_angle_deg=120.0)
+    camera_pos = np.array([100.0, 100.0, 5000.0])
+
+    # Act
+    _paint_illumination_blob(short_map, short, 0.0, 200.0, 1.0, 60, camera_pos, 1e10)
+    _paint_illumination_blob(tall_map, tall, 0.0, 200.0, 1.0, 60, camera_pos, 1e10)
+
+    # Assert — taller pole spreads light over more ground
+    assert np.count_nonzero(tall_map[:, :, 0]) > np.count_nonzero(short_map[:, :, 0])
+
+
+def test_paint_illumination_blob_physical_center_is_brightest():
+    # Arrange
+    illum_map = _make_blank_map()
+    light = _make_light(position=np.array([100.0, 100.0, 10.0]), beam_angle_deg=120.0)
+    camera_pos = np.array([100.0, 100.0, 5000.0])
+
+    # Act
+    _paint_illumination_blob(illum_map, light, 0.0, 200.0, 1.0, 60, camera_pos, 1e10)
+
+    # Assert — directly under the lamp is the brightest point
+    center = illum_map[100, 100, 0]
+    assert center > 0.0
+    assert center == illum_map[:, :, 0].max()
+
+
+def test_paint_illumination_blob_physical_zero_beyond_beam_radius():
+    # Arrange — h=10, beam 120° → r_max ≈ 17.3 m
+    illum_map = _make_blank_map()
+    light = _make_light(position=np.array([100.0, 100.0, 10.0]), beam_angle_deg=120.0)
+    camera_pos = np.array([100.0, 100.0, 5000.0])
+
+    # Act
+    _paint_illumination_blob(illum_map, light, 0.0, 200.0, 1.0, 60, camera_pos, 1e10)
+
+    # Assert — a point 30 m out is well beyond the beam and stays dark
+    assert illum_map[100, 130, 0] == 0.0
+
+
+def test_paint_illumination_blob_legacy_cone_used_when_no_beam_angle():
+    # Arrange — no beam angle → authored illumination_radius drives the cone
+    illum_map = _make_blank_map()
+    light = _make_light(
+        position=np.array([100.0, 100.0, 0.0]),
+        illumination_radius=50.0,
+        beam_angle_deg=None,
+    )
+    camera_pos = np.array([100.0, 100.0, 5000.0])
+
+    # Act
+    _paint_illumination_blob(illum_map, light, 0.0, 200.0, 1.0, 60, camera_pos, 1e10)
+
+    # Assert — the legacy cone path painted the authored-radius pool
+    assert illum_map.sum() > 0.0
+    assert illum_map[100, 100, 0] > 0.0
 
 
 # ---------------------------------------------------------------------------

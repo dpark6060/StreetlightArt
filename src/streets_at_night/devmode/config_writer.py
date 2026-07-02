@@ -232,6 +232,7 @@ def _streetlights_to_dict(streetlights: StreetLightConfig) -> dict:
         dict: Serialized streetlights section.
     """
     return {
+        "color_temp_shift_k": streetlights.color_temp_shift_k,
         "highway": _fixture_pool_entries_to_list(streetlights.highway),
         "major_road": _fixture_pool_entries_to_list(streetlights.major_road),
         "collector": _fixture_pool_entries_to_list(streetlights.collector),
@@ -280,16 +281,15 @@ def _fixture_profile_to_dict(profile: FixtureProfileConfig) -> dict:
         dict: Serialized fixture profile section.
     """
     return {
-        "color": profile.color,
+        "color_temp_k": profile.color_temp_k,
+        "saturation": profile.saturation,
         "height_min": profile.height_min,
         "height_max": profile.height_max,
         "brightness_min": profile.brightness_min,
         "brightness_max": profile.brightness_max,
         "glow_radius": profile.glow_radius,
-        "illumination_radius": profile.illumination_radius,
+        "beam_angle_deg": profile.beam_angle_deg,
         "illumination_intensity": profile.illumination_intensity,
-        "illumination_falloff": profile.illumination_falloff,
-        "illumination_inner_fraction": profile.illumination_inner_fraction,
         "spacing_min": profile.spacing_min,
         "spacing_max": profile.spacing_max,
         "side": profile.side,
@@ -459,13 +459,22 @@ def _atmosphere_to_dict(atmosphere: AtmosphereConfig) -> dict:
         "falloff_distance": atmosphere.falloff_distance,
         "haze_color": haze_hex,
         "scatter_distance": atmosphere.scatter_distance,
-        "max_distance": atmosphere.max_distance,
         "glow_expansion_enabled": atmosphere.glow_expansion_enabled,
         "glow_max_alpha": atmosphere.glow_max_alpha,
         "glow_falloff_steepness": atmosphere.glow_falloff_steepness,
+        "glow_wing_exponent": atmosphere.glow_wing_exponent,
+        "glow_tail_strength": atmosphere.glow_tail_strength,
+        "glow_cutoff_mult": atmosphere.glow_cutoff_mult,
         "min_brightness_threshold": atmosphere.min_brightness_threshold,
         "illumination_brightness": atmosphere.illumination_brightness,
         "illumination_min_radius": atmosphere.illumination_min_radius,
+        "horizon_glow_color": atmosphere.horizon_glow_color,
+        "horizon_glow_width_px": atmosphere.horizon_glow_width_px,
+        "horizon_glow_peak_alpha": atmosphere.horizon_glow_peak_alpha,
+        "haze_enabled": atmosphere.haze_enabled,
+        "haze_alpha": atmosphere.haze_alpha,
+        "vignette_strength": atmosphere.vignette_strength,
+        "vignette_radius": atmosphere.vignette_radius,
     }
 
 

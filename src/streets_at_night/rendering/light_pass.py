@@ -122,10 +122,10 @@ def render_lights_export(
         effective_brightness = _apply_brightness_falloff(
             light.brightness, distance, atmos.falloff_distance
         )
-        effective_color = _apply_haze_color(
-            light.color, distance, atmos.haze_color, atmos.max_distance
-        )
-        linear_color = srgb255_to_linear(effective_color)
+        # A light's emitted radiance dims by extinction (effective_brightness)
+        # but keeps its own color; the haze veil over it is added per-pixel by
+        # the airlight term in the atmosphere pass.
+        linear_color = srgb255_to_linear(light.color)
         effective_glow_radius = _resolve_glow_radius(light, distance, atmos)
 
         core_radius = _core_radius(light, distance, focal_length, effective_brightness)
@@ -145,6 +145,9 @@ def render_lights_export(
                 radius_px,
                 (atmos.glow_max_alpha / 255.0) * effective_brightness,
                 atmos.glow_falloff_steepness,
+                atmos.glow_wing_exponent,
+                atmos.glow_tail_strength,
+                atmos.glow_cutoff_mult,
             )
         drawn += 1
 
@@ -232,31 +235,6 @@ def _apply_brightness_falloff(
         float: Attenuated brightness.
     """
     return apply_brightness_falloff(brightness, distance, falloff_distance)
-
-
-def _apply_haze_color(
-    color: t.Tuple[int, int, int],
-    distance: float,
-    haze_color: t.Tuple[int, int, int],
-    max_distance: float,
-) -> t.Tuple[int, int, int]:
-    """Blend light color toward warm haze as distance increases.
-
-    Args:
-        color (tuple[int, int, int]): Original RGB light color.
-        distance (float): Distance from camera in meters.
-        haze_color (tuple[int, int, int]): Target RGB haze color.
-        max_distance (float): Distance at which haze is fully applied.
-
-    Returns:
-        tuple[int, int, int]: Blended RGB color.
-    """
-    t_blend = min(1.0, distance / max_distance)
-    blended = tuple(
-        max(0, min(255, int(c * (1.0 - t_blend) + h * t_blend)))
-        for c, h in zip(color, haze_color)
-    )
-    return (blended[0], blended[1], blended[2])
 
 
 def _apply_glow_expansion(
@@ -381,12 +359,23 @@ def _accumulate_glow(
     radius_px: float,
     peak: float,
     steepness: float,
+    wing_exponent: float,
+    tail_strength: float,
+    cutoff_mult: float,
 ) -> None:
-    """Add a gaussian glow contribution to the linear accumulation buffer.
+    """Add a glare glow contribution to the linear accumulation buffer.
 
-    Operates only on the bounding box of the glow for efficiency. Contributions
-    from multiple lights accumulate additively — overlapping halos get brighter,
-    unbounded, and are rolled off by the tone map later.
+    The glow is the sum of two components: a tight gaussian core (the sharp
+    centre of the halo) and a wide power-law tail (1/(1+(d/rc)^n)) that
+    produces the faint, far-reaching glare real night lights show. A pure
+    gaussian falls off too fast to look glary; the power-law wings are what
+    give the characteristic veiling glare. The tail is bounded by
+    ``cutoff_mult`` so a single light never paints the whole frame.
+
+    Both components are 1.0 at the centre, so the centre stays at ``peak``
+    regardless of the core/tail mix. Contributions from multiple lights
+    accumulate additively — overlapping halos get brighter, unbounded, and
+    are rolled off by the tone map later.
 
     Args:
         buffer (np.ndarray): Float32 (H, W, 3) linear buffer, modified in place.
@@ -395,10 +384,18 @@ def _accumulate_glow(
         color_linear (tuple[float, float, float]): Linear RGB glow color in [0, 1].
         radius_px (float): Glow radius in screen pixels.
         peak (float): Peak glow intensity in linear radiance at the center.
-        steepness (float): Gaussian sigma multiplier — higher = sharper falloff.
+        steepness (float): Gaussian core sigma multiplier — higher = sharper core.
+        wing_exponent (float): Power-law tail exponent n in 1/(1+(d/rc)^n).
+            Lower (≈2) gives wider, glarier wings; higher gives a tighter halo.
+        tail_strength (float): Fraction of the peak carried by the power-law
+            wings vs the gaussian core, in [0, 1].
+        cutoff_mult (float): Tail extent as a multiple of radius_px, bounding
+            the painted region.
     """
     h, w, _ = buffer.shape
-    margin = int(radius_px * 2.5) + 2
+    margin = int(radius_px * cutoff_mult) + 2
+    # Absolute cap so a near (large-radius) light cannot paint the whole frame.
+    margin = min(margin, max(h, w) // 2)
     x1 = max(0, int(cx) - margin)
     x2 = min(w, int(cx) + margin + 1)
     y1 = max(0, int(cy) - margin)
@@ -408,8 +405,15 @@ def _accumulate_glow(
 
     yy, xx = np.mgrid[y1:y2, x1:x2]
     dist_sq = (xx - cx) ** 2 + (yy - cy) ** 2
+
     sigma = max(radius_px / 2.0 * steepness, 0.5)
-    intensity = peak * np.exp(-dist_sq / (2.0 * sigma * sigma))
+    core = np.exp(-dist_sq / (2.0 * sigma * sigma))
+
+    knee = max(radius_px * 0.5, 1.0)
+    dist = np.sqrt(dist_sq)
+    tail = 1.0 / (1.0 + (dist / knee) ** wing_exponent)
+
+    intensity = peak * ((1.0 - tail_strength) * core + tail_strength * tail)
 
     for c, col_val in enumerate(color_linear):
         buffer[y1:y2, x1:x2, c] += col_val * intensity

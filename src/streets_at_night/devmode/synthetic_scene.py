@@ -307,10 +307,11 @@ def _pick_first_real_profile(
         RoadType.SERVICE: "service",
         RoadType.MINOR: "residential",
     }[road_type]
+    shift = config.lights.streetlights.color_temp_shift_k
     entries = getattr(config.lights.streetlights, rt_attr)
     for entry in entries:
         if entry.profile is not None:
-            return _config_to_fixture_profile(entry.profile, rng)
+            return _config_to_fixture_profile(entry.profile, rng, shift)
     return None
 
 
