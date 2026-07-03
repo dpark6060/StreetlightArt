@@ -71,8 +71,10 @@ class CarLightPair:
     def resolve_facing(self, camera_forward: np.ndarray) -> None:
         """Update light colors and intensities based on camera orientation.
 
-        Determines whether the car is driving toward or away from the
-        camera, then sets appropriate headlight or taillight properties.
+        A travel direction opposing the camera forward vector means the
+        car is approaching the viewer, so the viewer sees its headlights.
+        A travel direction aligned with the camera forward vector means
+        the car is moving away, so the viewer sees its taillights.
 
         Args:
             camera_forward (np.ndarray): Camera look direction as a
@@ -81,7 +83,7 @@ class CarLightPair:
         travel_dir = self._get_travel_direction()
         dot = float(np.dot(travel_dir, camera_forward))
 
-        if dot > 0:
+        if dot < 0:
             self._apply_headlight_properties()
         else:
             self._apply_taillight_properties()

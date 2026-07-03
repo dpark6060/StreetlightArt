@@ -16,6 +16,7 @@ from streets_at_night.models.road_segment import RoadSegment
 from streets_at_night.models.road_types import RoadType
 from streets_at_night.placement.car_placer import (
     _bearing_from_tangent,
+    _create_car_at_point,
     _get_density_range,
     _offset_to_lane,
     _perpendicular_2d,
@@ -188,8 +189,8 @@ def test_bearing_from_tangent_north_pointing_tangent():
     # Act
     bearing = _bearing_from_tangent(tangent)
 
-    # Assert — atan2(0, 1) = 0 (north)
-    assert bearing == pytest.approx(0.0)
+    # Assert — math convention: atan2(1, 0) = pi/2 (north)
+    assert bearing == pytest.approx(math.pi / 2.0)
 
 
 def test_bearing_from_tangent_east_pointing_tangent():
@@ -199,8 +200,8 @@ def test_bearing_from_tangent_east_pointing_tangent():
     # Act
     bearing = _bearing_from_tangent(tangent)
 
-    # Assert — atan2(1, 0) = pi/2
-    assert bearing == pytest.approx(math.pi / 2.0)
+    # Assert — math convention: atan2(0, 1) = 0 (east)
+    assert bearing == pytest.approx(0.0)
 
 
 def test_bearing_from_tangent_opposite_direction_differs_by_pi():
@@ -356,3 +357,46 @@ def test_place_cars_highway_denser_than_residential(light_config):
 
     # Assert — highway density_min/max is lower spacing (more cars per km) than residential
     assert len(highway_pairs) > len(residential_pairs)
+
+
+# ---------------------------------------------------------------------------
+# Bearing convention regression — placer and CarLightPair must agree
+# ---------------------------------------------------------------------------
+
+
+def test_create_car_at_point_east_tangent_headlights_face_oncoming_camera(light_config):
+    # Arrange — east-west tangent, force lane_sign=+1 so travel_bearing is
+    # exactly the road bearing (east, i.e. +x). Under the old (buggy) placer
+    # convention this car would be interpreted as traveling north-south.
+    point = np.array([0.0, 0.0, 0.0])
+    tangent = np.array([1.0, 0.0, 0.0])
+    rng = mock.MagicMock(spec=random.Random)
+    rng.choice.return_value = 1
+    rng.uniform.return_value = 2.0
+
+    # Act
+    pair = _create_car_at_point(point, tangent, RoadType.HIGHWAY, light_config.cars, rng)
+    pair.resolve_facing(np.array([-1.0, 0.0, 0.0]))
+    lights = pair.get_lights()
+
+    # Assert — camera looking west at an eastbound car sees headlights
+    assert all(light.glow_radius == light_config.cars.headlight_glow_radius for light in lights)
+
+
+def test_create_car_at_point_east_west_road_lights_separated_along_y(light_config):
+    # Arrange — same setup as above; the visible symptom of the bearing
+    # mismatch was that the two lights ended up separated along the travel
+    # axis (x) instead of perpendicular to it (y).
+    point = np.array([0.0, 0.0, 0.0])
+    tangent = np.array([1.0, 0.0, 0.0])
+    rng = mock.MagicMock(spec=random.Random)
+    rng.choice.return_value = 1
+    rng.uniform.return_value = 2.0
+
+    # Act
+    pair = _create_car_at_point(point, tangent, RoadType.HIGHWAY, light_config.cars, rng)
+    light_a, light_b = pair.get_lights()
+
+    # Assert — lights differ in y (perpendicular to travel), match in x
+    assert abs(light_a.position[1] - light_b.position[1]) == pytest.approx(2.0)
+    assert light_a.position[0] == pytest.approx(light_b.position[0])

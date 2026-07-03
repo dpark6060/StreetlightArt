@@ -359,8 +359,11 @@ def _project_polygon(
 
     Clips the polygon to the camera near plane using Sutherland-Hodgman
     before projecting, so large zone polygons that straddle the near plane
-    are not silently discarded. After projection, only vertices within the
-    NDC bounds are kept.
+    are not silently discarded. Every clipped vertex is in front of the
+    camera by construction, so all projected vertices are returned —
+    including ones that land off-screen. Both PIL and pygame clip polygon
+    primitives to the surface themselves, so passing off-screen pixel
+    coordinates is safe and preserves the polygon's true silhouette.
 
     Shapely's exterior.coords includes a closing duplicate (last == first),
     which is stripped before clipping.
@@ -374,7 +377,8 @@ def _project_polygon(
         near (float): Camera near clip plane distance in meters.
 
     Returns:
-        list[tuple[float, float]]: Screen-space (x, y) tuples for valid points.
+        list[tuple[float, float]]: Screen-space (x, y) tuples for all
+        near-clipped vertices.
     """
     exterior_coords = np.array(boundary.exterior.coords)
     world_vertices = _coords_to_vertex_list(exterior_coords)
@@ -384,13 +388,12 @@ def _project_polygon(
         return []
 
     points_3d = np.stack(clipped, axis=0)
-    screen_coords, valid_mask = project_points(
+    screen_coords, _ = project_points(
         points_3d, view_matrix, proj_matrix, (width, height)
     )
     return [
         (float(screen_coords[i, 0]), float(screen_coords[i, 1]))
-        for i in range(len(valid_mask))
-        if valid_mask[i]
+        for i in range(len(screen_coords))
     ]
 
 

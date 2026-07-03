@@ -123,6 +123,15 @@ def residential_land_use_gdf():
 
 
 @pytest.fixture
+def list_valued_residential_land_use_gdf():
+    """Land use GDF with a list-valued landuse tag (OSM merged-feature convention)."""
+    return gpd.GeoDataFrame(
+        {"landuse": [["residential"]], "geometry": [_RES_POLY]},
+        crs="EPSG:4326",
+    )
+
+
+@pytest.fixture
 def commercial_land_use_gdf():
     """Land use GDF containing one commercial polygon."""
     return gpd.GeoDataFrame(
@@ -187,6 +196,22 @@ def test_build_zones_residential_land_use_produces_residential_zone(
     # Act
     residential, commercial, dark = build_zones(
         residential_land_use_gdf, empty_buildings_gdf, transformer, zone_config, rng
+    )
+
+    # Assert
+    assert len(residential) >= 1
+    assert all(isinstance(z, ResidentialZone) for z in residential)
+    assert commercial == []
+
+
+def test_build_zones_list_valued_landuse_tag_produces_residential_zone(
+    list_valued_residential_land_use_gdf, empty_buildings_gdf, transformer, zone_config, rng
+):
+    # Arrange — landuse tag is a list (OSM merged-feature convention), not a plain string
+
+    # Act
+    residential, commercial, dark = build_zones(
+        list_valued_residential_land_use_gdf, empty_buildings_gdf, transformer, zone_config, rng
     )
 
     # Assert

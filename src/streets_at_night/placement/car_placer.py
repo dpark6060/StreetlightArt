@@ -155,7 +155,8 @@ def _create_car_at_point(
 def _bearing_from_tangent(tangent: np.ndarray) -> float:
     """Compute the road bearing from a tangent vector.
 
-    Uses atan2(x, y) convention: 0 = North, pi/2 = East.
+    Uses atan2(y, x) convention: 0 = East, pi/2 = North (math convention,
+    matches CarLightPair).
 
     Args:
         tangent (np.ndarray): 3-element tangent vector.
@@ -163,7 +164,7 @@ def _bearing_from_tangent(tangent: np.ndarray) -> float:
     Returns:
         float: Road bearing in radians.
     """
-    return math.atan2(tangent[0], tangent[1])
+    return math.atan2(tangent[1], tangent[0])
 
 
 def _assign_lane_and_bearing(

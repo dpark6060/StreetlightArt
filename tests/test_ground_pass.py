@@ -454,3 +454,47 @@ def test_render_ground_with_zone_straddling_near_plane_draws_polygon(
 
     # Assert — near-plane clipping was invoked for the zone polygon
     mock_clip.assert_called_once()
+
+
+def test_render_ground_with_zone_straddling_frame_edge_keeps_all_vertices(
+    scene_config, mock_backend
+):
+    # Arrange — an oblique camera whose narrow FOV means a wide polygon has
+    # vertices that project off-screen to the left and right, even though
+    # every vertex is in front of the camera (no near-plane crossing). Before
+    # this change, _project_polygon filtered by NDC on-screen bounds and
+    # would have dropped the off-screen vertices, deforming the silhouette.
+    # Now all near-clipped vertices (here, all 4 raw vertices) must survive.
+    oblique_camera = create_camera(
+        position=np.array([0.0, 0.0, 500.0]),
+        target=np.array([0.0, 1000.0, 0.0]),
+        fov_deg=30.0,
+        aspect_ratio=16.0 / 9.0,
+        near=10.0,
+        far=20000.0,
+    )
+    straddling_polygon = Polygon([
+        (-5000.0, 400.0),
+        (5000.0, 400.0),
+        (5000.0, 600.0),
+        (-5000.0, 600.0),
+    ])
+    dark_zone = DarkZone(
+        boundary=straddling_polygon,
+        zone_type="park",
+        base_color=(4, 8, 4),
+    )
+    scene = mock.MagicMock()
+    scene.config = scene_config
+    scene.get_zones_in_rect.return_value = ([], [], [dark_zone])
+
+    # Act
+    render_ground(scene, oblique_camera, mock_backend)
+
+    # Assert — the zone polygon call carries all 4 vertices, not a reduced set
+    zone_draw_calls = [
+        c for c in mock_backend.draw_polygon.call_args_list
+        if c.args[1] == dark_zone.base_color
+    ]
+    assert len(zone_draw_calls) == 1
+    assert len(zone_draw_calls[0].args[0]) == 4

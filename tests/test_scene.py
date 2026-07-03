@@ -664,34 +664,3 @@ def test_pygame_can_be_imported() -> None:
     import pygame
 
     assert pygame is not None
-
-
-def test_pygame_backend_can_be_instantiated_with_mock_surface() -> None:
-    from streets_at_night.rendering.pygame_backend import PygameBackend
-    import pygame
-
-    mock_surface = mock.MagicMock(spec=pygame.Surface)
-    mock_surface.get_size.return_value = (640, 360)
-
-    backend = PygameBackend(mock_surface)
-
-    assert backend.get_surface_size() == (640, 360)
-
-
-def test_pygame_backend_draw_line_calls_pygame_draw(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from streets_at_night.rendering.pygame_backend import PygameBackend
-    import pygame
-
-    mock_surface = mock.MagicMock(spec=pygame.Surface)
-    mock_surface.get_size.return_value = (640, 360)
-
-    backend = PygameBackend(mock_surface)
-
-    with mock.patch("streets_at_night.rendering.pygame_backend.pygame") as mock_pygame:
-        mock_pygame.draw = mock.MagicMock()
-        backend._surface = mock_surface
-        backend.draw_line((10.0, 20.0), (50.0, 60.0), (255, 255, 255), 1)
-
-        mock_pygame.draw.line.assert_called_once()

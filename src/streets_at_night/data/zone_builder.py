@@ -142,6 +142,9 @@ def _get_row_bucket(row: t.Any) -> t.Optional[str]:
 def _safe_tag(row: t.Any, attr: str) -> str:
     """Safely read an OSM tag attribute from a row, returning empty string if absent.
 
+    OSM merged-feature tags can carry list values (e.g. `landuse=['residential']`);
+    the first element is used, mirroring the road classifier's normalization.
+
     Args:
         row: A namedtuple row from GeoDataFrame.itertuples().
         attr (str): Attribute name to read.
@@ -150,6 +153,8 @@ def _safe_tag(row: t.Any, attr: str) -> str:
         str: Tag value, or empty string if missing or NaN.
     """
     value = getattr(row, attr, None)
+    if isinstance(value, list):
+        value = value[0] if value else None
     if value is None or (isinstance(value, float) and np.isnan(value)):
         return ""
     return str(value)
