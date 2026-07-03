@@ -225,22 +225,55 @@ def test_get_flat_map_returns_meta_with_correct_resolution(minimal_scene):
 # ---------------------------------------------------------------------------
 
 
-def test_compute_cache_key_returns_12_char_hex(flat_meta):
+def test_compute_cache_key_returns_12_char_hex(flat_meta, minimal_scene):
     # Act
-    key = _compute_cache_key(flat_meta, 100)
+    key = _compute_cache_key(flat_meta, minimal_scene.road_segments)
 
     # Assert
     assert len(key) == 12
     assert all(c in "0123456789abcdef" for c in key)
 
 
-def test_compute_cache_key_differs_for_different_segment_counts(flat_meta):
+def test_compute_cache_key_differs_for_different_segment_counts(flat_meta, minimal_scene):
+    # Arrange
+    fewer_segments = minimal_scene.road_segments[:1]
+
     # Act
-    key1 = _compute_cache_key(flat_meta, 100)
-    key2 = _compute_cache_key(flat_meta, 200)
+    key1 = _compute_cache_key(flat_meta, minimal_scene.road_segments)
+    key2 = _compute_cache_key(flat_meta, fewer_segments)
 
     # Assert
     assert key1 != key2
+
+
+def test_compute_cache_key_differs_for_different_road_type_on_one_segment(
+    flat_meta, minimal_scene
+):
+    # Arrange — two scenes identical except one segment's road_type
+    changed_segments = [
+        RoadSegment(
+            geometry=minimal_scene.road_segments[0].geometry,
+            road_type=RoadType.HIGHWAY,
+            width=minimal_scene.road_segments[0].width,
+        ),
+        minimal_scene.road_segments[1],
+    ]
+
+    # Act
+    key1 = _compute_cache_key(flat_meta, minimal_scene.road_segments)
+    key2 = _compute_cache_key(flat_meta, changed_segments)
+
+    # Assert
+    assert key1 != key2
+
+
+def test_compute_cache_key_same_scene_twice_returns_same_key(flat_meta, minimal_scene):
+    # Act
+    key1 = _compute_cache_key(flat_meta, minimal_scene.road_segments)
+    key2 = _compute_cache_key(flat_meta, minimal_scene.road_segments)
+
+    # Assert
+    assert key1 == key2
 
 
 # ---------------------------------------------------------------------------

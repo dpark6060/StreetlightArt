@@ -284,7 +284,7 @@ def _kill_registry_widgets(registry: SliderRegistry) -> None:
 
 
 def _clear_registry(registry: SliderRegistry) -> None:
-    """Empty all mapping dicts on the registry.
+    """Empty all mapping dicts, and the dirty set, on the registry.
 
     Args:
         registry (SliderRegistry): Registry to clear.
@@ -295,3 +295,4 @@ def _clear_registry(registry: SliderRegistry) -> None:
     registry.bool_buttons.clear()
     registry.text_entries.clear()
     registry.extra_widgets.clear()
+    registry.dirty.clear()

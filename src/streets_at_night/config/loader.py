@@ -315,6 +315,35 @@ def _build_fixture_pool_entries(data: t.List[dict]) -> t.List[FixturePoolEntry]:
     ]
 
 
+def _get_migrated_field(data: dict, key: str) -> t.Any:
+    """Look up a post-migration fixture profile field, or raise a clear error.
+
+    'color_temp_k' and 'beam_angle_deg' were added to fixture profiles by the
+    Kelvin/beam-angle migration. A pre-migration TOML lacks them entirely, so
+    a bare KeyError from `data[key]` is replaced with a message that tells the
+    user what to do about it.
+
+    Args:
+        data (dict): Profile section dict.
+        key (str): The required field name to look up.
+
+    Returns:
+        Any: The value at `data[key]`.
+
+    Raises:
+        ValueError: If `key` is missing from `data`.
+    """
+    try:
+        return data[key]
+    except KeyError as exc:
+        raise ValueError(
+            "Streetlight profile in [lights.streetlights.*] is missing "
+            "'color_temp_k'/'beam_angle_deg' — this config predates the "
+            "Kelvin/beam-angle migration. Re-save it from devmode or update "
+            "the pool entries by hand."
+        ) from exc
+
+
 def _build_fixture_profile_config(
     data: t.Optional[dict],
 ) -> t.Optional[FixtureProfileConfig]:
@@ -325,18 +354,24 @@ def _build_fixture_profile_config(
 
     Returns:
         FixtureProfileConfig or None: Populated profile, or None for no-lights entries.
+
+    Raises:
+        ValueError: If the profile predates the Kelvin/beam-angle migration and
+            is missing 'color_temp_k' or 'beam_angle_deg'.
     """
     if data is None:
         return None
+    color_temp_k = _get_migrated_field(data, "color_temp_k")
+    beam_angle_deg = _get_migrated_field(data, "beam_angle_deg")
     return FixtureProfileConfig(
-        color_temp_k=data["color_temp_k"],
+        color_temp_k=color_temp_k,
         saturation=data.get("saturation", 1.0),
         height_min=data["height_min"],
         height_max=data["height_max"],
         brightness_min=data["brightness_min"],
         brightness_max=data["brightness_max"],
         glow_radius=data["glow_radius"],
-        beam_angle_deg=data["beam_angle_deg"],
+        beam_angle_deg=beam_angle_deg,
         illumination_intensity=data["illumination_intensity"],
         spacing_min=data["spacing_min"],
         spacing_max=data["spacing_max"],

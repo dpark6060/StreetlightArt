@@ -1,5 +1,6 @@
 """Loads a clipped strip of real OSM road data for devmode parameter tuning."""
 
+import hashlib
 import typing as t
 from pathlib import Path
 
@@ -74,7 +75,7 @@ def _load_strip_roads(
     Returns:
         GeoDataFrame: Clipped road features in WGS84.
     """
-    strip_path = _strip_cache_path(cache_dir, strip_half_width_deg)
+    strip_path = _strip_cache_path(cache_dir, config, strip_half_width_deg)
     if strip_path.exists():
         print(f"Loading debug strip from {strip_path.name} ...")
         return gpd.read_file(strip_path)
@@ -113,11 +114,21 @@ def _clip_to_strip(
     return roads[roads.geometry.intersects(clip_box)].copy()
 
 
-def _strip_cache_path(cache_dir: Path, strip_half_width_deg: float) -> Path:
+def _strip_cache_path(
+    cache_dir: Path,
+    config: SceneConfig,
+    strip_half_width_deg: float,
+) -> Path:
     """Return the cache path for the debug strip file.
+
+    The filename encodes the strip half-width, the camera target longitude
+    (the strip is centered on it), and a hash of the clip bounds — so moving
+    the camera target or changing the bounds produces a different cache file
+    instead of silently reusing a stale strip.
 
     Args:
         cache_dir (Path): Cache directory.
+        config (SceneConfig): Scene configuration providing target_lon and bounds.
         strip_half_width_deg (float): Half-width encoded in the filename.
 
     Returns:
@@ -125,8 +136,26 @@ def _strip_cache_path(cache_dir: Path, strip_half_width_deg: float) -> Path:
     """
     osm_dir = cache_dir / "osm"
     osm_dir.mkdir(parents=True, exist_ok=True)
+    filename = _build_strip_cache_filename(config, strip_half_width_deg)
+    return osm_dir / filename
+
+
+def _build_strip_cache_filename(config: SceneConfig, strip_half_width_deg: float) -> str:
+    """Build the debug strip cache filename from strip width, target, and bounds.
+
+    Args:
+        config (SceneConfig): Scene configuration providing target_lon and bounds.
+        strip_half_width_deg (float): Half-width of the longitude strip.
+
+    Returns:
+        str: Filename (with .gpkg extension) uniquely identifying this strip.
+    """
     width_tag = f"{strip_half_width_deg:.4f}".replace(".", "p")
-    return osm_dir / f"debug_strip_{width_tag}.gpkg"
+    target_lon_tag = f"{round(config.camera.target_lon, 4)}".replace(".", "p").replace("-", "m")
+    bounds = config.bounds
+    bounds_tuple = (bounds.north, bounds.south, bounds.east, bounds.west)
+    bounds_hash = hashlib.md5(str(bounds_tuple).encode()).hexdigest()[:8]
+    return f"debug_strip_{width_tag}_{target_lon_tag}_{bounds_hash}.gpkg"
 
 
 def _compute_origin(config: SceneConfig) -> t.Tuple[float, float]:

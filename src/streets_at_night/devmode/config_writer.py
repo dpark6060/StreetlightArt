@@ -15,6 +15,9 @@ from ..config.schema import (
     DevmodeConfig,
     FixturePoolEntry,
     FixtureProfileConfig,
+    GradeConfig,
+    HeatHazeConfig,
+    HeatHazeLayerConfig,
     HouseConfig,
     HouseLightConfig,
     LightConfig,
@@ -23,6 +26,7 @@ from ..config.schema import (
     RoadStyleEntry,
     RoadsConfig,
     SceneConfig,
+    StarsConfig,
     StreetLightConfig,
     ZoneColorsConfig,
     ZoneConfig,
@@ -62,9 +66,16 @@ def config_to_dict(config: SceneConfig) -> dict:
         "lights": _lights_to_dict(config.lights),
         "roads": _roads_to_dict(config.roads),
         "atmosphere": _atmosphere_to_dict(config.atmosphere),
+        "grade": _grade_to_dict(config.grade),
     }
+    if config.stars is not None:
+        data["stars"] = _stars_to_dict(config.stars)
+    if config.heat_haze is not None:
+        data["heat_haze"] = _heat_haze_to_dict(config.heat_haze)
     if config.devmode is not None:
         data["devmode"] = _devmode_to_dict(config.devmode)
+    if config.region_name:
+        data["region_name"] = config.region_name
     return data
 
 
@@ -310,6 +321,10 @@ def _cars_to_dict(cars: CarConfig) -> dict:
         "taillight_colors": _color_pool_to_dict(cars.taillight_colors),
         "separation_min": cars.separation_min,
         "separation_max": cars.separation_max,
+        "headlight_brightness_min": cars.headlight_brightness_min,
+        "headlight_brightness_max": cars.headlight_brightness_max,
+        "taillight_brightness_min": cars.taillight_brightness_min,
+        "taillight_brightness_max": cars.taillight_brightness_max,
         "density_highway_min": cars.density_highway_min,
         "density_highway_max": cars.density_highway_max,
         "density_major_min": cars.density_major_min,
@@ -475,6 +490,82 @@ def _atmosphere_to_dict(atmosphere: AtmosphereConfig) -> dict:
         "haze_alpha": atmosphere.haze_alpha,
         "vignette_strength": atmosphere.vignette_strength,
         "vignette_radius": atmosphere.vignette_radius,
+    }
+
+
+def _grade_to_dict(grade: GradeConfig) -> dict:
+    """Serialize a GradeConfig to a dict.
+
+    Args:
+        grade (GradeConfig): Final color-grade configuration.
+
+    Returns:
+        dict: Serialized grade section.
+    """
+    return {
+        "exposure": grade.exposure,
+        "tonemap": grade.tonemap,
+    }
+
+
+def _stars_to_dict(stars: StarsConfig) -> dict:
+    """Serialize a StarsConfig to a dict.
+
+    Args:
+        stars (StarsConfig): Star rendering configuration.
+
+    Returns:
+        dict: Serialized stars section.
+    """
+    return {
+        "stars_enabled": stars.stars_enabled,
+        "count": stars.count,
+        "brightness_min": stars.brightness_min,
+        "brightness_max": stars.brightness_max,
+        "color_variation": stars.color_variation,
+        "radius": stars.radius,
+    }
+
+
+def _heat_haze_to_dict(heat_haze: HeatHazeConfig) -> dict:
+    """Serialize a HeatHazeConfig to a dict.
+
+    Args:
+        heat_haze (HeatHazeConfig): Multi-layer heat haze configuration.
+
+    Returns:
+        dict: Serialized heat_haze section, including the [[layers]]
+            array-of-tables.
+    """
+    return {
+        "enabled": heat_haze.enabled,
+        "amplitude_px": heat_haze.amplitude_px,
+        "max_distance_m": heat_haze.max_distance_m,
+        "distance_exponent": heat_haze.distance_exponent,
+        "sky_distance_factor": heat_haze.sky_distance_factor,
+        "seed": heat_haze.seed,
+        "screen_width_px": heat_haze.screen_width_px,
+        "screen_height_px": heat_haze.screen_height_px,
+        "layers": [_heat_haze_layer_to_dict(layer) for layer in heat_haze.layers],
+    }
+
+
+def _heat_haze_layer_to_dict(layer: HeatHazeLayerConfig) -> dict:
+    """Serialize a single HeatHazeLayerConfig to a dict.
+
+    Args:
+        layer (HeatHazeLayerConfig): One atmospheric turbulence layer.
+
+    Returns:
+        dict: Serialized layer entry.
+    """
+    return {
+        "r0": layer.r0,
+        "L0": layer.L0,
+        "pixel_scale_m": layer.pixel_scale_m,
+        "weight": layer.weight,
+        "wind_x_pxs": layer.wind_x_pxs,
+        "wind_y_pxs": layer.wind_y_pxs,
     }
 
 

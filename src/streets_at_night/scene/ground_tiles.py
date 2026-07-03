@@ -33,6 +33,11 @@ if t.TYPE_CHECKING:
     from ..models.zones import CommercialZone, DarkZone, ResidentialZone
 
 
+# Bump this when the tile rendering/caching logic changes in a way that isn't
+# already captured by the hashed config fields below, to force cache regeneration.
+_TILE_CACHE_VERSION: int = 1
+
+
 @dataclass
 class GroundTileGrid:
     """Metadata describing the full ground tile grid for a scene.
@@ -516,10 +521,14 @@ def get_tile_cache_dir(cache_dir: Path, config: "SceneConfig") -> Path:
 
 
 def _config_cache_key(config: "SceneConfig") -> str:
-    """Compute an 8-character hash of all color fields that affect tile rendering.
+    """Compute an 8-character hash of all fields that affect tile rendering.
 
     Hashes ZoneColorsConfig fields, HouseConfig.exterior_colors, yard_base_color,
-    and yard_variation. Any change to these values produces a different key.
+    and yard_variation (color-relevant fields), plus config.seed (house colors
+    and synthetic lot layout are seed-derived), config.bounds (tile indices are
+    relative to a bounds-derived origin), tile_size_meters, tile_resolution_px,
+    and a cache schema version. Any change to these values produces a different
+    key, forcing stale tiles to regenerate.
 
     Args:
         config (SceneConfig): Full scene configuration.
@@ -529,6 +538,7 @@ def _config_cache_key(config: "SceneConfig") -> str:
     """
     colors = config.zones.colors
     house = config.zones.house
+    bounds = config.bounds
 
     parts = [
         colors.commercial,
@@ -540,6 +550,11 @@ def _config_cache_key(config: "SceneConfig") -> str:
         str(house.exterior_colors.colors),
         house.yard_base_color,
         str(house.yard_variation),
+        str(config.seed),
+        str((bounds.north, bounds.south, bounds.east, bounds.west)),
+        str(config.zones.tile_size_meters),
+        str(config.zones.tile_resolution_px),
+        str(_TILE_CACHE_VERSION),
     ]
     raw = "|".join(parts)
     return hashlib.md5(raw.encode()).hexdigest()[:8]

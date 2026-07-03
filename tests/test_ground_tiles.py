@@ -2,6 +2,7 @@
 """Unit tests for the ground_tiles module."""
 
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -325,3 +326,39 @@ def test_get_tile_world_bounds_nonzero_indices_offset_correctly(tile_grid):
     assert min_y == pytest.approx(tile_grid.origin_y + tile_y * tile_grid.tile_size)
     assert max_x == pytest.approx(min_x + tile_grid.tile_size)
     assert max_y == pytest.approx(min_y + tile_grid.tile_size)
+
+
+# ---------------------------------------------------------------------------
+# get_tile_cache_dir — cache key must cover seed, bounds, and tile geometry
+# ---------------------------------------------------------------------------
+
+
+def test_get_tile_cache_dir_differs_for_different_seed(scene_config):
+    # Arrange — same colors, different seed (house colors/layout are seed-derived)
+    other_config = replace(scene_config, seed=scene_config.seed + 1)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache_dir = Path(tmpdir)
+
+        # Act
+        dir1 = get_tile_cache_dir(cache_dir, scene_config)
+        dir2 = get_tile_cache_dir(cache_dir, other_config)
+
+        # Assert
+        assert dir1 != dir2
+
+
+def test_get_tile_cache_dir_differs_for_different_tile_resolution(scene_config, zone_config):
+    # Arrange — different tile_resolution_px must invalidate the cache
+    other_zones = replace(zone_config, tile_resolution_px=zone_config.tile_resolution_px + 1)
+    other_config = replace(scene_config, zones=other_zones)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache_dir = Path(tmpdir)
+
+        # Act
+        dir1 = get_tile_cache_dir(cache_dir, scene_config)
+        dir2 = get_tile_cache_dir(cache_dir, other_config)
+
+        # Assert
+        assert dir1 != dir2

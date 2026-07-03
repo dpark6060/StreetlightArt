@@ -3,6 +3,7 @@
 import argparse
 import random
 import typing as t
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -34,6 +35,10 @@ _WINDOW_WIDTH = 1280
 _WINDOW_HEIGHT = 720
 _PANEL_WIDTH = 384
 _RENDER_WIDTH = _WINDOW_WIDTH - _PANEL_WIDTH
+
+# Full-quality re-render only fires once camera movement has been still for
+# this many seconds; while moving, a cheap roads-only frame is shown instead.
+_DEBOUNCE_SECONDS = 0.15
 
 
 def cmd_devmode(args: argparse.Namespace, config: SceneConfig) -> None:
@@ -89,9 +94,13 @@ def cmd_devmode(args: argparse.Namespace, config: SceneConfig) -> None:
     load_entry: t.Optional[pygame_gui.elements.UITextEntryLine] = None
     load_confirm_btn: t.Optional[pygame_gui.elements.UIButton] = None
 
+    elapsed_time = 0.0
+    last_move_time: t.Optional[float] = None
+
     running = True
     while running:
         time_delta = clock.tick(60) / 1000.0
+        elapsed_time += time_delta
         events = pygame.event.get()
         held_keys = pygame.key.get_pressed()
 
@@ -118,6 +127,8 @@ def cmd_devmode(args: argparse.Namespace, config: SceneConfig) -> None:
             or not np.array_equal(scene.camera.target, cam_tgt_before)
             or scene.camera.fov_deg != cam_fov_before
         )
+        if camera_moved:
+            last_move_time = elapsed_time
 
         # UI events
         for event in events:
@@ -136,12 +147,13 @@ def cmd_devmode(args: argparse.Namespace, config: SceneConfig) -> None:
                         scene, config, use_labels=not use_real_tiles
                     )
                     camera_moved = False
+                    last_move_time = None
 
                 elif event.ui_element == save_btn:
                     save_entry, save_confirm_btn = _show_save_dialog(manager)
 
                 elif save_confirm_btn is not None and event.ui_element == save_confirm_btn:
-                    _handle_save(config, save_entry, save_confirm_btn)
+                    _handle_save(registry, config, save_entry, save_confirm_btn)
                     save_entry = None
                     save_confirm_btn = None
 
@@ -166,6 +178,7 @@ def cmd_devmode(args: argparse.Namespace, config: SceneConfig) -> None:
                             scene, config, use_labels=not use_real_tiles
                         )
                         camera_moved = False
+                        last_move_time = None
 
                 elif event.ui_element in registry.bool_buttons:
                     _toggle_bool_button(event.ui_element, registry)
@@ -186,9 +199,12 @@ def cmd_devmode(args: argparse.Namespace, config: SceneConfig) -> None:
             manager.process_events(event)
 
         if camera_moved:
+            render_surface = _render_cheap(scene, config)
+        elif _should_render_full(last_move_time, elapsed_time, camera_moved):
             render_surface = _render_and_convert(
                 scene, config, use_labels=not use_real_tiles
             )
+            last_move_time = None
 
         manager.update(time_delta)
 
@@ -263,7 +279,12 @@ def _render_and_convert(
     config: SceneConfig,
     use_labels: bool = True,
 ) -> pygame.Surface:
-    """Render the scene and return a pygame surface for display.
+    """Render the scene at full quality and return a pygame surface for display.
+
+    Renders at config.devmode.render_width/render_height (making those config
+    fields real render resolution, not just an aspect ratio), then scales the
+    result to fit the fixed display viewport, preserving aspect ratio and
+    letterboxing so the image is never squashed.
 
     Args:
         scene: The scene to render.
@@ -271,10 +292,140 @@ def _render_and_convert(
         use_labels (bool): When True, overlay synthetic row labels.
 
     Returns:
-        pygame.Surface: The rendered frame as a pygame surface.
+        pygame.Surface: The rendered frame as a pygame surface, sized to the
+            display viewport (_RENDER_WIDTH x _WINDOW_HEIGHT).
     """
     image = _render_scene(scene, config, use_labels=use_labels)
-    return _pil_to_pygame(image)
+    fitted = _fit_image_to_viewport(image, _RENDER_WIDTH, _WINDOW_HEIGHT)
+    return _pil_to_pygame(fitted)
+
+
+def _render_cheap(scene: t.Any, config: SceneConfig) -> pygame.Surface:
+    """Render a cheap ground+roads-only preview frame for use while the camera moves.
+
+    Skips illumination, lights, atmosphere, and composite so navigation stays
+    responsive. Renders at config.devmode.render_width/render_height — the
+    same render resolution as the full-quality path — then letterboxes to the
+    display viewport via _fit_image_to_viewport, so this transient frame has
+    identical framing and aspect ratio to the settled full-quality frame and
+    does not appear squashed or snap on settle.
+
+    Args:
+        scene: The scene to render.
+        config (SceneConfig): Current scene configuration.
+
+    Returns:
+        pygame.Surface: The cheap preview frame, sized to the display viewport.
+    """
+    render_width = config.devmode.render_width
+    render_height = config.devmode.render_height
+    backend = PillowBackend(render_width, render_height)
+    passes = [render_ground, render_roads_export]
+    render_scene_frame(scene, backend, passes=passes)
+    fitted = _fit_image_to_viewport(backend.get_image(), _RENDER_WIDTH, _WINDOW_HEIGHT)
+    return _pil_to_pygame(fitted)
+
+
+def _should_render_full(
+    last_move_t: t.Optional[float],
+    now: float,
+    dirty: bool,
+) -> bool:
+    """Decide whether to run the full render pipeline this frame.
+
+    While the camera is actively moving (dirty), a cheap preview frame is
+    shown instead and this returns False. Once movement stops, this returns
+    True exactly once movement has been still for at least _DEBOUNCE_SECONDS
+    — callers should reset last_move_t to None after honoring a True result
+    so the full render does not repeat every frame thereafter.
+
+    Args:
+        last_move_t (float | None): Elapsed-time timestamp of the last camera
+            movement, or None if the camera has not moved since the last full
+            render.
+        now (float): Current elapsed-time timestamp.
+        dirty (bool): True if the camera moved this frame.
+
+    Returns:
+        bool: True if a full-quality render should run this frame.
+    """
+    if dirty:
+        return False
+    if last_move_t is None:
+        return False
+    return (now - last_move_t) >= _DEBOUNCE_SECONDS
+
+
+@dataclass
+class ViewportFit:
+    """Scaled size and centering offset for fitting a render into a viewport.
+
+    Attributes:
+        width: Scaled width in pixels.
+        height: Scaled height in pixels.
+        x: Horizontal offset in pixels for centering within the viewport.
+        y: Vertical offset in pixels for centering within the viewport.
+    """
+
+    width: int
+    height: int
+    x: int
+    y: int
+
+
+def compute_viewport_fit(
+    render_width: int,
+    render_height: int,
+    viewport_width: int,
+    viewport_height: int,
+) -> ViewportFit:
+    """Compute the scaled size and letterbox offset to fit a render into a viewport.
+
+    Preserves the render's aspect ratio: scales uniformly to the largest size
+    that fits entirely within the viewport, then centers it.
+
+    Args:
+        render_width (int): Width of the rendered image in pixels.
+        render_height (int): Height of the rendered image in pixels.
+        viewport_width (int): Width of the target viewport in pixels.
+        viewport_height (int): Height of the target viewport in pixels.
+
+    Returns:
+        ViewportFit: Scaled width/height and top-left offset within the viewport.
+    """
+    scale = min(viewport_width / render_width, viewport_height / render_height)
+    width = max(1, round(render_width * scale))
+    height = max(1, round(render_height * scale))
+    x = (viewport_width - width) // 2
+    y = (viewport_height - height) // 2
+    return ViewportFit(width=width, height=height, x=x, y=y)
+
+
+def _fit_image_to_viewport(
+    image: Image.Image,
+    viewport_width: int,
+    viewport_height: int,
+) -> Image.Image:
+    """Scale a rendered image to fit a fixed-size viewport, preserving aspect ratio.
+
+    Resizes the image to the largest size that fits within the viewport
+    (via compute_viewport_fit) and pastes it onto a black canvas the size of
+    the viewport, so the result is always exactly viewport_width x
+    viewport_height regardless of the source image's aspect ratio.
+
+    Args:
+        image (PIL.Image.Image): The rendered image at its native resolution.
+        viewport_width (int): Width of the display viewport in pixels.
+        viewport_height (int): Height of the display viewport in pixels.
+
+    Returns:
+        PIL.Image.Image: Letterboxed image sized viewport_width x viewport_height.
+    """
+    fit = compute_viewport_fit(image.width, image.height, viewport_width, viewport_height)
+    scaled = image.resize((fit.width, fit.height))
+    canvas = Image.new("RGB", (viewport_width, viewport_height), (0, 0, 0))
+    canvas.paste(scaled, (fit.x, fit.y))
+    return canvas
 
 
 def _render_scene(
@@ -289,6 +440,8 @@ def _render_scene(
     labels. The composite pass is essential — illumination and light passes
     only accumulate into the backend's linear buffer, and composite is what
     resolves that buffer (tone-map + sRGB encode) into the visible image.
+    Renders at config.devmode.render_width/render_height so that config
+    controls actual render resolution rather than just camera aspect ratio.
 
     Args:
         scene: The scene to render.
@@ -300,8 +453,10 @@ def _render_scene(
     """
     for car_pair in scene.car_pairs:
         car_pair.resolve_facing(scene.camera.get_forward())
-    backend = PillowBackend(_RENDER_WIDTH, _WINDOW_HEIGHT)
-    gbuffer = build_ground_gbuffer(scene.camera, _RENDER_WIDTH, _WINDOW_HEIGHT)
+    render_width = config.devmode.render_width
+    render_height = config.devmode.render_height
+    backend = PillowBackend(render_width, render_height)
+    gbuffer = build_ground_gbuffer(scene.camera, render_width, render_height)
     passes = _build_render_passes(scene, gbuffer, use_labels)
     render_scene_frame(scene, backend, passes=passes)
     return backend.get_image()
@@ -451,21 +606,26 @@ def _handle_load(
 
 
 def _handle_save(
+    registry: SliderRegistry,
     config: SceneConfig,
     save_entry: t.Optional[pygame_gui.elements.UITextEntryLine],
     save_confirm_btn: t.Optional[pygame_gui.elements.UIButton],
 ) -> None:
     """Write config to the file path specified in the save entry widget.
 
-    Kills the entry and confirm button after saving.
+    Applies current widget state to config before writing, so a slider moved
+    since the last Re-render is not silently dropped — Save must not require
+    Re-render first. Kills the entry and confirm button after saving.
 
     Args:
-        config (SceneConfig): Config to serialize.
+        registry (SliderRegistry): Widget registry to apply to config before saving.
+        config (SceneConfig): Config to update in-place, then serialize.
         save_entry: Text entry holding the file path string.
         save_confirm_btn: Confirm button to kill after save.
     """
     if save_entry is None:
         return
+    apply_widgets_to_config(registry, config)
     filename = save_entry.get_text().strip()
     if filename:
         write_config(config, Path(filename))
@@ -497,6 +657,9 @@ def _update_value_entry(
 ) -> None:
     """Update the value text entry for a slider that was just moved.
 
+    Also marks the slider dirty in the registry, so apply_widgets_to_config
+    knows the user actually touched it (see config_bridge._apply_sliders).
+
     Args:
         slider: The UIHorizontalSlider that fired the moved event.
         registry (SliderRegistry): Registry mapping sliders to descriptors and entries.
@@ -505,6 +668,7 @@ def _update_value_entry(
     value_entry = registry.value_entries.get(slider)
     if descriptor is None or value_entry is None:
         return
+    registry.mark_dirty(descriptor.label)
     raw = slider.get_current_value()
     if descriptor.is_int:
         value_entry.set_text(str(int(round(raw))))
@@ -520,7 +684,9 @@ def _apply_entry_to_slider(
 
     If the entry belongs to a slider's value entry, parse the text as a float
     (or int if the descriptor is flagged as integer), clamp to the slider's
-    range, and call set_current_value on the slider.
+    range, and call set_current_value on the slider. Also marks the slider
+    dirty in the registry, so apply_widgets_to_config knows the user actually
+    changed it (see config_bridge._apply_sliders).
 
     Args:
         entry: The UITextEntryLine that fired the finished event.
@@ -538,6 +704,8 @@ def _apply_entry_to_slider(
         raw = float(text)
     except ValueError:
         return
+
+    registry.mark_dirty(descriptor.label)
 
     if descriptor.is_int:
         value = float(int(round(raw)))

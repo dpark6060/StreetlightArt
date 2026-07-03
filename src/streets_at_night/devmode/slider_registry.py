@@ -46,6 +46,10 @@ class SliderRegistry:
         bool_states: Maps UIButton → current bool value.
         text_entries: Maps UITextEntryLine → config_path tuple (for non-slider string fields).
         extra_widgets: Any widgets (e.g. row labels) not tracked in the above dicts.
+        dirty: Set of SliderDescriptor.label values for sliders the user has
+            actually moved (via drag or text entry) since the section was
+            built. Only dirty sliders are written back to config on apply —
+            see config_bridge._apply_sliders for why.
     """
 
     def __init__(self) -> None:
@@ -57,6 +61,15 @@ class SliderRegistry:
         self.bool_states: t.Dict[t.Any, bool] = {}
         self.text_entries: t.Dict[t.Any, tuple] = {}
         self.extra_widgets: t.List[t.Any] = []
+        self.dirty: t.Set[str] = set()
+
+    def mark_dirty(self, label: str) -> None:
+        """Record that the slider labelled `label` was moved by the user.
+
+        Args:
+            label (str): The SliderDescriptor.label of the slider that changed.
+        """
+        self.dirty.add(label)
 
     def register_slider(
         self,

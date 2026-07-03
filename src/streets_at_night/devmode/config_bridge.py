@@ -128,7 +128,7 @@ def _read_text_entries(config: SceneConfig, registry: SliderRegistry) -> None:
 
 
 def _apply_sliders(registry: SliderRegistry, config: SceneConfig) -> None:
-    """Read all slider values and write them into config.
+    """Read dirty slider values and write them into config.
 
     Writes the slider value to descriptor.config_path and to every path in
     descriptor.extra_config_paths. The extra paths allow a single slider to
@@ -136,11 +136,25 @@ def _apply_sliders(registry: SliderRegistry, config: SceneConfig) -> None:
     profiles for a road type) so that whichever entry the seeded RNG selects
     at scene-build time reflects the slider change.
 
+    Only sliders in registry.dirty (i.e. actually moved by the user since the
+    section was built) are written. Without this gate, a slider's initial
+    value — read from only the *first* profiled pool entry, see
+    panel_sections.build_streetlight_section — would get broadcast to every
+    entry in extra_config_paths on every apply, flattening an authored mix
+    (e.g. sodium + LED streetlights) down to one fixture's values the moment
+    Re-render is clicked, even with nothing touched.
+
+    A better fix would give each pool entry its own subsection of sliders
+    instead of one slider fanning out to extra_config_paths; that is more UI
+    work and is deferred (see panel_sections.build_streetlight_section).
+
     Args:
         registry (SliderRegistry): Registry with slider-to-descriptor mappings.
         config (SceneConfig): Config to update in-place.
     """
     for slider, descriptor in registry.sliders.items():
+        if descriptor.label not in registry.dirty:
+            continue
         raw = slider.get_current_value()
         value = int(round(raw)) if descriptor.is_int else float(raw)
         set_nested(config, descriptor.config_path, value)
