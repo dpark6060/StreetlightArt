@@ -596,3 +596,11 @@ def test_polygons_wgs84_to_enu_batch_matches_individual_conversion(transformer):
         batch_coords = np.array(batch_poly.exterior.coords)
         individual_coords = np.array(individual_poly.exterior.coords)
         assert np.allclose(batch_coords, individual_coords, atol=1e-6)
+
+        # Assert — holes are reconstructed onto the correct polygon, not
+        # misassigned by the flatten/split/rebuild index bookkeeping
+        assert len(batch_poly.interiors) == len(individual_poly.interiors)
+        for batch_hole, individual_hole in zip(batch_poly.interiors, individual_poly.interiors):
+            batch_hole_coords = np.array(batch_hole.coords)
+            individual_hole_coords = np.array(individual_hole.coords)
+            assert np.allclose(batch_hole_coords, individual_hole_coords, atol=1e-6)
