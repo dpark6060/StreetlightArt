@@ -313,6 +313,33 @@ def test_compute_grid_points_empty_for_zero_area_polygon():
     assert points == []
 
 
+def _compute_grid_points_nested_loop(polygon, spacing):
+    """Pre-change reference implementation: per-point polygon.contains(Point(...))."""
+    from shapely.geometry import Point
+
+    minx, miny, maxx, maxy = polygon.bounds
+    xs = np.arange(minx + spacing / 2.0, maxx, spacing)
+    ys = np.arange(miny + spacing / 2.0, maxy, spacing)
+    points = []
+    for x in xs:
+        for y in ys:
+            if polygon.contains(Point(x, y)):
+                points.append((float(x), float(y)))
+    return points
+
+
+def test_compute_grid_points_matches_old_nested_loop_implementation(parking_polygon):
+    # Arrange — an irregular pentagon so the grid isn't trivially axis-aligned
+    irregular = box(0, 0, 40, 40).difference(box(30, 30, 40, 40))
+
+    # Act
+    old_points = _compute_grid_points_nested_loop(irregular, spacing=7.0)
+    new_points = _compute_grid_points(irregular, spacing=7.0)
+
+    # Assert — vectorized shapely.contains_xy call yields the identical point set
+    assert new_points == old_points
+
+
 # ---------------------------------------------------------------------------
 # _place_parking_grid
 # ---------------------------------------------------------------------------

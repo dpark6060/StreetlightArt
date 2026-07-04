@@ -11,6 +11,7 @@ from ..models.road_segment import RoadSegment
 from ..models.road_types import RoadType
 from ..utils.colors import hex_to_rgb
 from .backend import RenderBackend
+from .raycast import visible_ground_aabb
 
 if t.TYPE_CHECKING:
     from ..scene.scene import Scene
@@ -178,8 +179,9 @@ def _get_segment_depth(segment: RoadSegment, view_matrix: np.ndarray) -> float:
 def _query_camera_frustum(scene: "Scene", camera: Camera) -> t.List[t.Any]:
     """Query the scene for road segments within the camera's view range.
 
-    Uses a conservative square AABB around the camera position up to the
-    far plane distance.
+    Uses the camera's actual visible ground footprint (the frustum's
+    intersection with z=0), not just a far-plane bounding square, so the
+    spatial index only returns segments that could plausibly be on screen.
 
     Args:
         scene (Scene): The world scene.
@@ -188,12 +190,8 @@ def _query_camera_frustum(scene: "Scene", camera: Camera) -> t.List[t.Any]:
     Returns:
         list[RoadSegment]: Candidate segments in the camera's view area.
     """
-    cam_x = camera.position[0]
-    cam_y = camera.position[1]
-    far = camera.far
-    return scene.get_roads_in_rect(
-        cam_x - far, cam_y - far, cam_x + far, cam_y + far
-    )
+    min_x, min_y, max_x, max_y = visible_ground_aabb(camera)
+    return scene.get_roads_in_rect(min_x, min_y, max_x, max_y)
 
 
 def _draw_segment(

@@ -149,3 +149,32 @@ def test_convert_road_geometry_z_is_zero(transformer, single_road_gdf):
     # Assert — all z values should be exactly 0 (ground level)
     for segment in segments:
         assert np.all(segment[:, 2] == 0.0)
+
+
+def test_convert_road_geometry_batched_transform_matches_per_segment_conversion(transformer):
+    # Arrange — multiple segments of different vertex counts, to verify the
+    # batched-then-split transform lines up correctly per segment
+    multi_segment_gdf = gpd.GeoDataFrame(
+        {
+            "geometry": [
+                LineString([(_ORIGIN_LON, _ORIGIN_LAT), (_EAST_LON, _EAST_LAT)]),
+                LineString(
+                    [
+                        (_ORIGIN_LON, _ORIGIN_LAT),
+                        (_NORTH_LON, _NORTH_LAT),
+                        (_EAST_LON, _EAST_LAT),
+                    ]
+                ),
+            ]
+        },
+        crs="EPSG:4326",
+    )
+
+    # Act
+    batched_segments = convert_road_geometry(transformer, multi_segment_gdf)
+
+    # Assert — each batched segment matches converting its own coordinates alone
+    for segment, geom in zip(batched_segments, multi_segment_gdf.geometry):
+        coords = np.array(geom.coords)
+        expected = wgs84_to_enu_batch(transformer, coords[:, 1], coords[:, 0])
+        assert np.allclose(segment, expected, atol=1e-6)

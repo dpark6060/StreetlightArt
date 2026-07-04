@@ -35,8 +35,14 @@ if t.TYPE_CHECKING:
 # Lower values = finer map = slower but more detailed. 2.0 m/px balances quality and performance.
 _BASE_ILLUMINATION_RESOLUTION: float = 2.0
 
-# Padding added around road bounds so lights near the edges illuminate fully.
+# Padding added around the visible-ground bounds so lights near the edges
+# still spill their pool into frame.
 _BOUNDS_PADDING_M: float = 200.0
+
+# Maximum illumination map size in pixels (H * W). Resolution is coarsened
+# beyond this to keep the map to a few hundred MB regardless of how much
+# ground the camera can see (e.g. a near-horizon shot over a large bbox).
+_MAX_ILLUM_MAP_PIXELS: int = 64_000_000
 
 
 def render_illumination(
@@ -48,18 +54,23 @@ def render_illumination(
 ) -> t.Dict[str, t.Any]:
     """Render ground-plane illumination from light sources via world-space map.
 
-    Builds a float32 linear illumination map by painting per-light cone-model
-    blobs at their world positions. Each blob's brightness is attenuated by
-    exponential distance falloff. Each screen pixel is raycast to the z=0 ground
-    plane; the hit world coordinate is sampled from the map and added to the
+    Builds a float32 linear illumination map sized to the *visible* ground —
+    derived from the shared G-buffer's per-pixel hit coordinates, not the full
+    road network extent — by painting per-light cone-model blobs at their
+    world positions. Each blob's brightness is attenuated by exponential
+    distance falloff. Each screen pixel is raycast to the z=0 ground plane;
+    the hit world coordinate is sampled from the map and added to the
     backend's linear light buffer.
 
-    Returns an empty dict if there are no lights.
+    Returns an empty dict if there are no lights or no pixel hits the ground
+    (an all-sky frame).
 
     Args:
-        scene (Scene): World scene containing lights, road segments, and config.
-            Uses scene.config.atmosphere.falloff_distance for distance attenuation.
-        camera (Camera): Active camera providing position and matrices.
+        scene (Scene): World scene containing lights and config. Uses
+            scene.config.atmosphere.falloff_distance and
+            min_brightness_threshold for distance attenuation and culling.
+        camera (Camera): Active camera providing position, far plane, and
+            matrices.
         backend (RenderBackend): Target render surface (must support add_linear).
         illumination_resolution_multiplier (float): Quality multiplier from the
             active QualityPreset. Higher values produce a finer illumination map.
@@ -69,24 +80,36 @@ def render_illumination(
             between this pass and the ground export pass to avoid raycasting twice.
 
     Returns:
-        dict[str, Any]: Stats dict (currently empty, reserved for future use).
+        dict[str, Any]: Stats dict, empty when skipped. Otherwise contains
+            "map_info": (min_x, max_y, resolution) of the built illumination map.
     """
     if not scene.lights:
         return {}
 
-    illumination_brightness = scene.config.atmosphere.illumination_brightness
-    falloff_distance = scene.config.atmosphere.falloff_distance
-    resolution = _BASE_ILLUMINATION_RESOLUTION / illumination_resolution_multiplier
-
-    bounds = _compute_illumination_bounds(scene)
-    illum_map, map_info = _build_illumination_map(
-        scene.lights, bounds, resolution, illumination_brightness,
-        camera.position, falloff_distance,
-    )
+    atmos = scene.config.atmosphere
+    illumination_brightness = atmos.illumination_brightness
+    falloff_distance = atmos.falloff_distance
+    min_brightness_threshold = atmos.min_brightness_threshold
 
     width, height = backend.get_surface_size()
     if gbuffer is None:
         gbuffer = build_ground_gbuffer(camera, width, height)
+
+    max_light_radius = max(
+        (_effective_pool_radius(light) for light in scene.lights), default=0.0
+    )
+    padding = max(_BOUNDS_PADDING_M, max_light_radius)
+    bounds = _compute_visible_bounds(gbuffer, camera, padding)
+    if bounds is None:
+        return {}
+
+    resolution = _BASE_ILLUMINATION_RESOLUTION / illumination_resolution_multiplier
+    resolution = _auto_scale_illumination_resolution(*bounds, resolution)
+
+    illum_map, map_info = _build_illumination_map(
+        scene.lights, bounds, resolution, illumination_brightness,
+        camera.position, falloff_distance, min_brightness_threshold,
+    )
 
     min_x, max_y, res = map_info
     illum_img = _sample_illumination_map(
@@ -95,7 +118,7 @@ def render_illumination(
 
     backend.add_linear(illum_img)
 
-    return {}
+    return {"map_info": map_info}
 
 
 # ---------------------------------------------------------------------------
@@ -103,35 +126,141 @@ def render_illumination(
 # ---------------------------------------------------------------------------
 
 
-def _compute_illumination_bounds(
-    scene: "Scene",
-) -> t.Tuple[float, float, float, float]:
-    """Compute world ENU bounds from all road segment geometries with padding.
+def _compute_visible_bounds(
+    gbuffer: GroundHit,
+    camera: Camera,
+    padding: float,
+) -> t.Optional[t.Tuple[float, float, float, float]]:
+    """Compute illumination map world bounds from the visible ground G-buffer.
 
-    Iterates all road segments to find the min/max x and y extent, then
-    adds _BOUNDS_PADDING_M on every side so lights at the edges are fully
-    captured in the illumination map.
+    Uses the actual per-pixel ground hit coordinates for this frame — not the
+    full road-network extent — so the map only covers what the camera can
+    see. Hit coordinates are clamped to camera.position +/- camera.far first:
+    near-horizon pixels can report hits tens of kilometers away even though
+    the raycast itself does not enforce the far clip plane, which would
+    otherwise re-inflate the bounds.
 
     Args:
-        scene (Scene): Scene with road_segments containing geometry arrays.
+        gbuffer (GroundHit): Per-pixel ground raycast for this frame.
+        camera (Camera): Active camera, used for the far-plane clamp.
+        padding (float): Meters of padding added on every side so lights near
+            the visible edge still spill their pool into frame.
 
     Returns:
-        tuple[float, float, float, float]: (min_x, min_y, max_x, max_y) in meters.
-
-    Raises:
-        ValueError: If no road segments have geometry points.
+        tuple[float, float, float, float] | None: (min_x, min_y, max_x, max_y)
+            in meters, or None if no pixel in the G-buffer hits the ground.
     """
-    valid_geoms = [s.geometry for s in scene.road_segments if s.geometry.shape[0] > 0]
-    if not valid_geoms:
-        raise ValueError("Cannot build illumination map: no road segments have geometry.")
+    mask = gbuffer.ground_mask
+    if not np.any(mask):
+        return None
 
-    all_points = np.vstack(valid_geoms)
-    min_x = float(all_points[:, 0].min()) - _BOUNDS_PADDING_M
-    min_y = float(all_points[:, 1].min()) - _BOUNDS_PADDING_M
-    max_x = float(all_points[:, 0].max()) + _BOUNDS_PADDING_M
-    max_y = float(all_points[:, 1].max()) + _BOUNDS_PADDING_M
+    far = camera.far
+    hit_x = np.clip(gbuffer.hit_x, camera.position[0] - far, camera.position[0] + far)
+    hit_y = np.clip(gbuffer.hit_y, camera.position[1] - far, camera.position[1] + far)
+
+    min_x = float(hit_x[mask].min()) - padding
+    max_x = float(hit_x[mask].max()) + padding
+    min_y = float(hit_y[mask].min()) - padding
+    max_y = float(hit_y[mask].max()) + padding
 
     return min_x, min_y, max_x, max_y
+
+
+def _auto_scale_illumination_resolution(
+    min_x: float,
+    min_y: float,
+    max_x: float,
+    max_y: float,
+    resolution: float,
+) -> float:
+    """Coarsen resolution (m/px) if the map would exceed the pixel budget.
+
+    Mirrors flat_map._auto_scale_resolution's approach of growing meters-per-
+    pixel until the map fits, but bounds by total pixel count
+    (_MAX_ILLUM_MAP_PIXELS) rather than a per-axis dimension cap, since the
+    illumination map tracks the visible ground rather than the full road
+    network. Prints a one-line notice when it engages so silent quality loss
+    doesn't read as full coverage.
+
+    Args:
+        min_x (float): Map min x in meters.
+        min_y (float): Map min y in meters.
+        max_x (float): Map max x in meters.
+        max_y (float): Map max y in meters.
+        resolution (float): Requested meters per pixel.
+
+    Returns:
+        float: Meters per pixel, increased just enough to fit the pixel budget.
+    """
+    world_w = max_x - min_x
+    world_h = max_y - min_y
+    n_px = (world_w / resolution) * (world_h / resolution)
+    if n_px <= _MAX_ILLUM_MAP_PIXELS:
+        return resolution
+
+    scaled = resolution * math.sqrt(n_px / _MAX_ILLUM_MAP_PIXELS)
+    print(
+        f"Illumination map ({world_w:.0f}m x {world_h:.0f}m) exceeds pixel budget "
+        f"at {resolution:.2f} m/px; coarsening to {scaled:.2f} m/px."
+    )
+    return scaled
+
+
+def _effective_pool_radius(light: "LightSource") -> float:
+    """Compute the effective ground pool radius for a light, in meters.
+
+    Physical lights (pole height + beam_angle_deg) derive the pool radius from
+    the beam cone geometry; all other lights use the authored
+    illumination_radius. Shared by AABB culling and blob painting so the two
+    can't drift apart.
+
+    Args:
+        light (LightSource): Light source with position and beam fields.
+
+    Returns:
+        float: Effective ground pool radius in meters.
+    """
+    height = float(light.position[2])
+    if light.beam_angle_deg is not None and height > 0.0:
+        return height * math.tan(math.radians(light.beam_angle_deg / 2.0))
+    return light.illumination_radius
+
+
+def _is_light_visible(
+    light: "LightSource",
+    bounds: t.Tuple[float, float, float, float],
+    camera_position: np.ndarray,
+    falloff_distance: float,
+    min_brightness_threshold: float,
+) -> bool:
+    """Check whether a light can contribute visible illumination to the map.
+
+    Culls two cases cheaply, before any per-pixel painting work: lights whose
+    blob AABB (position +/- effective pool radius) does not intersect the map
+    bounds, and lights whose camera-distance-attenuated peak has fallen below
+    the atmosphere's min_brightness_threshold.
+
+    Args:
+        light (LightSource): Candidate light source.
+        bounds (tuple[float, float, float, float]): (min_x, min_y, max_x, max_y)
+            of the illumination map in world ENU meters.
+        camera_position (np.ndarray): (3,) camera position in world ENU meters.
+        falloff_distance (float): Characteristic decay distance in meters.
+        min_brightness_threshold (float): Minimum attenuated peak brightness
+            for a light to be considered visible.
+
+    Returns:
+        bool: True if the light should be painted.
+    """
+    min_x, min_y, max_x, max_y = bounds
+    radius = _effective_pool_radius(light)
+    lx, ly = float(light.position[0]), float(light.position[1])
+    if lx + radius < min_x or lx - radius > max_x or ly + radius < min_y or ly - radius > max_y:
+        return False
+
+    dist = camera_distance(light.position, camera_position)
+    effective_brightness = apply_brightness_falloff(light.brightness, dist, falloff_distance)
+    return effective_brightness * light.illumination_intensity >= min_brightness_threshold
 
 
 def _build_illumination_map(
@@ -141,15 +270,18 @@ def _build_illumination_map(
     illumination_brightness: int,
     camera_position: np.ndarray,
     falloff_distance: float,
+    min_brightness_threshold: float,
 ) -> t.Tuple[np.ndarray, t.Tuple[float, float, float]]:
     """Build a float32 RGB illumination map by painting cone-model blobs for each light.
 
-    Initializes a zero-filled (H, W, 3) float32 array, paints each light's
-    contribution via _paint_illumination_blob (with distance-based brightness
-    falloff applied), then clips to [0, 255].
+    Initializes a zero-filled (H, W, 3) float32 array, then paints each
+    light's contribution via _paint_illumination_blob (with distance-based
+    brightness falloff applied). Lights culled by _is_light_visible — outside
+    the map bounds or below min_brightness_threshold once attenuated — are
+    skipped entirely, avoiding per-pixel work for lights that can't be seen.
 
     Args:
-        lights (list[LightSource]): All light sources to paint.
+        lights (list[LightSource]): All light sources to consider.
         bounds (tuple[float, float, float, float]): (min_x, min_y, max_x, max_y)
             in world ENU meters.
         resolution (float): Meters per pixel.
@@ -158,6 +290,8 @@ def _build_illumination_map(
             for per-light distance falloff.
         falloff_distance (float): Characteristic decay distance in meters for the
             exponential brightness attenuation.
+        min_brightness_threshold (float): Minimum attenuated peak brightness
+            for a light to be painted.
 
     Returns:
         tuple[np.ndarray, tuple[float, float, float]]:
@@ -172,6 +306,10 @@ def _build_illumination_map(
     illum_map = np.zeros((height, width, 3), dtype=np.float32)
 
     for light in lights:
+        if not _is_light_visible(
+            light, bounds, camera_position, falloff_distance, min_brightness_threshold
+        ):
+            continue
         _paint_illumination_blob(
             illum_map, light, min_x, max_y, resolution, illumination_brightness,
             camera_position, falloff_distance,
@@ -223,10 +361,7 @@ def _paint_illumination_blob(
     """
     height = float(light.position[2])
     is_physical = light.beam_angle_deg is not None and height > 0.0
-    if is_physical:
-        radius_m = height * math.tan(math.radians(light.beam_angle_deg / 2.0))
-    else:
-        radius_m = light.illumination_radius
+    radius_m = _effective_pool_radius(light)
 
     cx = (light.position[0] - min_x) / resolution
     cy = (max_y - light.position[1]) / resolution

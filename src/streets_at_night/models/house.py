@@ -56,6 +56,7 @@ class House:
         self,
         rng: random.Random,
         house_light_config: HouseLightConfig,
+        pool: t.Optional[ColorPool] = None,
     ) -> t.List["LightSource"]:
         """Create LightSource objects for this house's lights.
 
@@ -64,6 +65,11 @@ class House:
                 light factory for reproducible color selection.
             house_light_config (HouseLightConfig): House light configuration
                 providing color pool, brightness range, and glow parameters.
+            pool (ColorPool, optional): Pre-built house light color pool. If
+                None, the house light factory builds one from
+                house_light_config.colors. Pass a shared instance when
+                collecting lights for many houses to avoid re-parsing the
+                palette per house.
 
         Returns:
             List[LightSource]: One LightSource per pre-computed light
@@ -75,7 +81,7 @@ class House:
         lights: t.List[LightSource] = []
         for pos in self.light_positions:
             position_3d = np.array([pos[0], pos[1], 0.0])
-            lights.append(create_house_light(position_3d, house_light_config, rng))
+            lights.append(create_house_light(position_3d, house_light_config, rng, pool))
         return lights
 
     # ------------------------------------------------------------------

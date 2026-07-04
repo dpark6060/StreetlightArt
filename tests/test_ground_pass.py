@@ -5,6 +5,7 @@ from unittest import mock
 
 import numpy as np
 import pytest
+from PIL import Image
 from shapely.geometry import Polygon
 
 from streets_at_night.camera.camera import create_camera
@@ -28,7 +29,8 @@ from streets_at_night.models.road_segment import RoadSegment
 from streets_at_night.models.road_types import RoadType
 from streets_at_night.models.zones import CommercialZone, DarkZone, ResidentialZone
 from streets_at_night.rendering.backend import RenderBackend
-from streets_at_night.rendering.ground_pass import render_ground, render_ground_export
+from streets_at_night.rendering.ground_pass import _sample_tiles, render_ground, render_ground_export
+from streets_at_night.scene.ground_tiles import GroundTileGrid
 
 
 # ---------------------------------------------------------------------------
@@ -498,3 +500,157 @@ def test_render_ground_with_zone_straddling_frame_edge_keeps_all_vertices(
     ]
     assert len(zone_draw_calls) == 1
     assert len(zone_draw_calls[0].args[0]) == 4
+
+
+# ---------------------------------------------------------------------------
+# _sample_tiles — vectorized vs. reference (pre-vectorization) algorithm
+#
+# This is the one test that matters for change_05_vectorize_tile_sampling:
+# the vectorization is a pure optimization and must not change a single
+# pixel. The reference implementation below is a verbatim copy of the old
+# per-pixel Python loop that _sample_tiles used before vectorization.
+# ---------------------------------------------------------------------------
+
+
+def _old_world_to_tile_pixel(world_x, world_y, tile_x, tile_y, grid):
+    """Reference copy of the pre-vectorization _world_to_tile_pixel helper."""
+    tile_min_x = grid.origin_x + tile_x * grid.tile_size
+    tile_max_y = grid.origin_y + (tile_y + 1) * grid.tile_size
+    scale = grid.tile_res / grid.tile_size
+
+    px = int((world_x - tile_min_x) * scale)
+    py = int((tile_max_y - world_y) * scale)
+
+    px = max(0, min(grid.tile_res - 1, px))
+    py = max(0, min(grid.tile_res - 1, py))
+
+    return px, py
+
+
+def _old_sample_tiles(
+    base_image, world_x, world_y, ground_mask, grid, scene, tile_cache_dir, get_tile_fn
+):
+    """Reference copy of the pre-vectorization _sample_tiles algorithm.
+
+    Takes get_tile_fn as a parameter (rather than importing it) so the test
+    can pass the same mock used by the vectorized implementation, ensuring
+    both algorithms see identical tile content and call counts.
+    """
+    output = np.asarray(base_image).copy()
+    ground_ys, ground_xs = np.where(ground_mask)
+    if ground_ys.size == 0:
+        return output
+
+    tile_cache = {}
+    for screen_y, screen_x in zip(ground_ys, ground_xs):
+        wx = float(world_x[screen_y, screen_x])
+        wy = float(world_y[screen_y, screen_x])
+
+        tile_x, tile_y = grid.world_to_tile_coords(wx, wy)
+
+        if tile_x < 0 or tile_x >= grid.num_tiles_x:
+            continue
+        if tile_y < 0 or tile_y >= grid.num_tiles_y:
+            continue
+
+        tile_key = (tile_x, tile_y)
+        if tile_key not in tile_cache:
+            tile_img = get_tile_fn(tile_x, tile_y, grid, scene, tile_cache_dir)
+            tile_cache[tile_key] = np.asarray(tile_img)
+
+        tile_arr = tile_cache[tile_key]
+        tile_px, tile_py = _old_world_to_tile_pixel(wx, wy, tile_x, tile_y, grid)
+        output[screen_y, screen_x] = tile_arr[tile_py, tile_px]
+
+    return output
+
+
+@pytest.fixture
+def sample_tile_grid() -> GroundTileGrid:
+    """Return a real 2x2-tile GroundTileGrid for the equivalence test."""
+    return GroundTileGrid(
+        origin_x=0.0,
+        origin_y=0.0,
+        tile_size=10.0,
+        tile_res=8,
+        num_tiles_x=2,
+        num_tiles_y=2,
+    )
+
+
+def _make_solid_tile(tile_x: int, tile_y: int, tile_res: int) -> Image.Image:
+    """Return a solid-color tile image, with a color unique to (tile_x, tile_y)."""
+    color = (10 + tile_x * 50, 20 + tile_y * 50, 99)
+    return Image.new("RGB", (tile_res, tile_res), color)
+
+
+def _make_synthetic_gbuffer():
+    """Return (world_x, world_y, ground_mask) for a 32x32 synthetic gbuffer.
+
+    Coordinates alternate between values well inside the 2x2 tile grid
+    (0..19, covering both tiles in each axis) and values far below the grid
+    origin (-500), so tile membership is unambiguous under both int()
+    truncation and np.floor — this isolates the equivalence test from the
+    documented truncation-vs-floor edge case that only affects coordinates
+    within one tile_size below the grid origin.
+    """
+    xs = np.array([-500.0 if i % 4 == 0 else float(i % 20) for i in range(32)])
+    ys = np.array([-500.0 if j % 4 == 1 else float(j % 20) for j in range(32)])
+    world_x, world_y = np.meshgrid(xs, ys)
+    ground_mask = np.ones((32, 32), dtype=bool)
+    return world_x, world_y, ground_mask
+
+
+def test_sample_tiles_matches_reference_algorithm_byte_identical(sample_tile_grid):
+    # Arrange — synthetic gbuffer over a 2x2 tile scene with known tile colors
+    grid = sample_tile_grid
+    world_x, world_y, ground_mask = _make_synthetic_gbuffer()
+    base_image = Image.new("RGB", (32, 32), (1, 2, 3))
+    scene = mock.MagicMock()
+    tile_cache_dir = mock.MagicMock()
+
+    def get_tile_fn(tile_x, tile_y, grid_arg, scene_arg, tile_cache_dir_arg):
+        return _make_solid_tile(tile_x, tile_y, grid_arg.tile_res)
+
+    # Act — old reference algorithm
+    old_output = _old_sample_tiles(
+        base_image, world_x, world_y, ground_mask, grid, scene, tile_cache_dir, get_tile_fn
+    )
+
+    # Act — new vectorized algorithm, patched to use the same tile source
+    with mock.patch(
+        "streets_at_night.scene.ground_tiles.get_tile", side_effect=get_tile_fn
+    ):
+        new_image = _sample_tiles(
+            base_image, world_x, world_y, ground_mask, grid, scene, tile_cache_dir, 32, 32
+        )
+    new_output = np.asarray(new_image)
+
+    # Assert — byte-identical output; this is a pure optimization
+    assert np.array_equal(old_output, new_output)
+
+
+def test_sample_tiles_calls_get_tile_once_per_unique_visible_tile(sample_tile_grid):
+    # Arrange — synthetic gbuffer covering all 4 tiles of the 2x2 grid
+    grid = sample_tile_grid
+    world_x, world_y, ground_mask = _make_synthetic_gbuffer()
+    base_image = Image.new("RGB", (32, 32), (1, 2, 3))
+    scene = mock.MagicMock()
+    tile_cache_dir = mock.MagicMock()
+
+    def get_tile_fn(tile_x, tile_y, grid_arg, scene_arg, tile_cache_dir_arg):
+        return _make_solid_tile(tile_x, tile_y, grid_arg.tile_res)
+
+    # Act
+    with mock.patch(
+        "streets_at_night.scene.ground_tiles.get_tile", side_effect=get_tile_fn
+    ) as mock_get_tile:
+        _sample_tiles(
+            base_image, world_x, world_y, ground_mask, grid, scene, tile_cache_dir, 32, 32
+        )
+
+    # Assert — get_tile called exactly once per unique visible tile (all 4, since
+    # the synthetic gbuffer's in-grid coordinates span both tiles on both axes)
+    visible_tile_keys = {call.args[:2] for call in mock_get_tile.call_args_list}
+    assert mock_get_tile.call_count == len(visible_tile_keys)
+    assert visible_tile_keys == {(0, 0), (0, 1), (1, 0), (1, 1)}

@@ -175,7 +175,7 @@ def test_collect_zone_lights_calls_get_lights_on_each_house(rng, light_config):
     _collect_zone_lights(zone, rng, light_config.house_lights)
 
     # Assert
-    mock_house.get_lights.assert_called_once_with(rng, light_config.house_lights)
+    mock_house.get_lights.assert_called_once_with(rng, light_config.house_lights, None)
 
 
 def test_collect_zone_lights_accumulates_from_multiple_houses(

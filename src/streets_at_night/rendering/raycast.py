@@ -25,6 +25,13 @@ class GroundHit:
         hit_x: (H, W) ENU x of the z=0 intersection (undefined where not hit).
         hit_y: (H, W) ENU y of the z=0 intersection (undefined where not hit).
         ground_mask: (H, W) bool, True where the ray hits z=0 in front of camera.
+
+    Note:
+        The intersection distance is not clamped to camera.far — a near-
+        horizon ray can report a hit tens of kilometers away even though it
+        is technically beyond the far clip plane. Consumers that derive
+        world-space bounds from hit_x/hit_y (e.g. the illumination pass)
+        should clamp to camera.position +/- camera.far themselves.
     """
 
     ray_dirs: np.ndarray
@@ -114,3 +121,131 @@ def build_ground_gbuffer(camera: "Camera", width: int, height: int) -> GroundHit
     hit_y = cam_pos[1] + t_val * ray_dirs[:, :, 1]
 
     return GroundHit(ray_dirs=ray_dirs, hit_x=hit_x, hit_y=hit_y, ground_mask=ground_mask)
+
+
+def visible_ground_aabb(camera: "Camera") -> t.Tuple[float, float, float, float]:
+    """Compute an axis-aligned bounding box of the camera's visible ground footprint.
+
+    Intersects the four view-frustum corner rays with the z=0 ground plane.
+    A corner ray that points at or above the horizon (or would only hit the
+    ground behind the camera) has no valid ground intersection — for those,
+    the point is placed camera.far meters from the camera along the ray's
+    horizontal direction instead, so the footprint stays bounded rather than
+    being dropped or extending to infinity. The camera's own (x, y) position
+    is always included, and the final box is clamped to
+    camera.position +/- camera.far as an internal safety bound against
+    degenerate corner cases.
+
+    Args:
+        camera (Camera): Active camera (provides position + view + projection).
+
+    Returns:
+        tuple[float, float, float, float]: (min_x, min_y, max_x, max_y) in ENU meters.
+    """
+    inv_proj = np.linalg.inv(camera.get_projection_matrix())
+    inv_view = np.linalg.inv(camera.get_view_matrix())
+    corner_dirs = _build_corner_ray_directions(inv_proj, inv_view)
+
+    cam_pos = camera.position
+    far = camera.far
+    ground_points = [_ground_point_for_ray(cam_pos, d, far) for d in corner_dirs]
+    ground_points.append((float(cam_pos[0]), float(cam_pos[1])))
+
+    xs = [p[0] for p in ground_points]
+    ys = [p[1] for p in ground_points]
+    min_x = max(cam_pos[0] - far, min(xs))
+    max_x = min(cam_pos[0] + far, max(xs))
+    min_y = max(cam_pos[1] - far, min(ys))
+    max_y = min(cam_pos[1] + far, max(ys))
+    return min_x, min_y, max_x, max_y
+
+
+def _build_corner_ray_directions(inv_proj: np.ndarray, inv_view: np.ndarray) -> np.ndarray:
+    """Build normalized world-space ray directions through the four NDC frustum corners.
+
+    Same clip -> eye -> world transform as ``build_ray_directions``, applied
+    to the exact NDC corners (+/-1, +/-1) rather than pixel-center samples.
+
+    Args:
+        inv_proj (np.ndarray): (4, 4) inverse projection matrix.
+        inv_view (np.ndarray): (4, 4) inverse view matrix.
+
+    Returns:
+        np.ndarray: (4, 3) normalized ray directions, one per NDC corner, in
+            the order (-1,-1), (-1,1), (1,-1), (1,1).
+    """
+    ndc_corners = np.array([
+        [-1.0, -1.0],
+        [-1.0, 1.0],
+        [1.0, -1.0],
+        [1.0, 1.0],
+    ])
+    clip = np.column_stack([
+        ndc_corners,
+        np.full(4, -1.0),
+        np.ones(4),
+    ])
+
+    eye = (inv_proj @ clip.T).T
+    eye_dir = np.column_stack([eye[:, 0], eye[:, 1], np.full(4, -1.0), np.zeros(4)])
+    world_dir = (inv_view @ eye_dir.T).T[:, :3]
+
+    norms = np.linalg.norm(world_dir, axis=1, keepdims=True)
+    norms = np.where(norms < 1e-10, 1.0, norms)
+    return world_dir / norms
+
+
+def _ground_point_for_ray(
+    cam_pos: np.ndarray, ray_dir: np.ndarray, far: float
+) -> t.Tuple[float, float]:
+    """Intersect one ray with z=0, falling back to a far-plane horizontal cap.
+
+    Args:
+        cam_pos (np.ndarray): (3,) camera position in world ENU.
+        ray_dir (np.ndarray): (3,) normalized world-space ray direction.
+        far (float): Camera far clip plane distance in meters.
+
+    Returns:
+        tuple[float, float]: (x, y) ground point in ENU meters — the true
+        z=0 intersection when the ray points downward and hits in front of
+        the camera, otherwise the far-plane horizontal fallback point.
+    """
+    dz = ray_dir[2]
+    if dz < -1e-10:
+        t_val = -cam_pos[2] / dz
+        if t_val > 0.0:
+            return (
+                float(cam_pos[0] + t_val * ray_dir[0]),
+                float(cam_pos[1] + t_val * ray_dir[1]),
+            )
+    return _far_horizontal_point(cam_pos, ray_dir, far)
+
+
+def _far_horizontal_point(
+    cam_pos: np.ndarray, ray_dir: np.ndarray, far: float
+) -> t.Tuple[float, float]:
+    """Project a ray's horizontal direction out to the far clip distance.
+
+    Used as the conservative fallback for rays that point at or above the
+    horizon and therefore never reach the z=0 ground plane in front of the
+    camera.
+
+    Args:
+        cam_pos (np.ndarray): (3,) camera position in world ENU.
+        ray_dir (np.ndarray): (3,) normalized world-space ray direction.
+        far (float): Camera far clip plane distance in meters.
+
+    Returns:
+        tuple[float, float]: (x, y) point camera.far meters from the camera,
+            along the ray's horizontal (x, y) direction. Falls back to the
+            camera's own (x, y) if the ray is purely vertical.
+    """
+    horiz = ray_dir[:2]
+    norm = np.linalg.norm(horiz)
+    if norm < 1e-10:
+        return float(cam_pos[0]), float(cam_pos[1])
+    unit = horiz / norm
+    return (
+        float(cam_pos[0] + unit[0] * far),
+        float(cam_pos[1] + unit[1] * far),
+    )

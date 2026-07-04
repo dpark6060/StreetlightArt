@@ -1,6 +1,7 @@
 """Factory functions for commercial zone light sources."""
 
 import random
+import typing as t
 
 import numpy as np
 
@@ -13,6 +14,7 @@ def create_sign_light(
     position: np.ndarray,
     config: CommercialLightConfig,
     rng: random.Random,
+    pool: t.Optional[ColorPool] = None,
 ) -> LightSource:
     """Create a LightSource representing an illuminated commercial sign.
 
@@ -24,11 +26,14 @@ def create_sign_light(
         config (CommercialLightConfig): Commercial light configuration providing
             color pools, brightness range, and glow/illumination radii.
         rng (random.Random): Seeded RNG for color and parameter sampling.
+        pool (ColorPool, optional): Pre-built sign color pool. If None, one
+            is created from config.sign_colors. Pass a shared instance when
+            placing many sign lights in the same run.
 
     Returns:
         LightSource: Configured sign light.
     """
-    pool = ColorPool(config.sign_colors.colors, rng)
+    pool = pool if pool is not None else ColorPool(config.sign_colors.colors, rng)
     color = pool.pick()
     brightness = rng.uniform(config.sign_brightness_min, config.sign_brightness_max)
     return LightSource(
@@ -48,6 +53,7 @@ def create_parking_lot_light(
     position: np.ndarray,
     config: CommercialLightConfig,
     rng: random.Random,
+    pool: t.Optional[ColorPool] = None,
 ) -> LightSource:
     """Create a LightSource representing a parking lot pole light.
 
@@ -60,11 +66,14 @@ def create_parking_lot_light(
         config (CommercialLightConfig): Commercial light configuration providing
             color pools, brightness range, and glow/illumination radii.
         rng (random.Random): Seeded RNG for color and parameter sampling.
+        pool (ColorPool, optional): Pre-built parking color pool. If None,
+            one is created from config.parking_colors. Pass a shared
+            instance when placing many parking lights in the same run.
 
     Returns:
         LightSource: Configured parking lot light.
     """
-    pool = ColorPool(config.parking_colors.colors, rng)
+    pool = pool if pool is not None else ColorPool(config.parking_colors.colors, rng)
     color = pool.pick()
     brightness = rng.uniform(config.parking_brightness_min, config.parking_brightness_max)
     return LightSource(
@@ -84,6 +93,7 @@ def create_storefront_light(
     position: np.ndarray,
     config: CommercialLightConfig,
     rng: random.Random,
+    pool: t.Optional[ColorPool] = None,
 ) -> LightSource:
     """Create a LightSource representing a storefront window or awning light.
 
@@ -95,11 +105,14 @@ def create_storefront_light(
         config (CommercialLightConfig): Commercial light configuration providing
             color pools, brightness range, and glow/illumination radii.
         rng (random.Random): Seeded RNG for color and parameter sampling.
+        pool (ColorPool, optional): Pre-built storefront color pool. If None,
+            one is created from config.storefront_colors. Pass a shared
+            instance when placing many storefront lights in the same run.
 
     Returns:
         LightSource: Configured storefront light.
     """
-    pool = ColorPool(config.storefront_colors.colors, rng)
+    pool = pool if pool is not None else ColorPool(config.storefront_colors.colors, rng)
     color = pool.pick()
     brightness = rng.uniform(config.storefront_brightness_min, config.storefront_brightness_max)
     return LightSource(

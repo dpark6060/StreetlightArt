@@ -6,12 +6,16 @@ objects.  Residential zones include Houses derived from OSM building
 footprints; where footprints are absent a simple grid subdivision is used.
 """
 
+import logging
 import random
 import typing as t
 
 import geopandas as gpd
 import numpy as np
+import shapely
 from shapely.geometry import MultiPolygon, Polygon
+from shapely.ops import unary_union
+from shapely.strtree import STRtree
 
 from ..camera.coordinates import CoordinateTransformer, wgs84_to_enu_batch
 from ..config.schema import HouseConfig, ZoneColorsConfig, ZoneConfig
@@ -20,19 +24,43 @@ from ..models.house import House
 from ..models.zones import CommercialZone, DarkZone, ResidentialZone
 from ..utils.colors import hex_to_rgb
 
+log = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
-# OSM tag classification sets
+# OSM tag classification — single source of truth
 # ---------------------------------------------------------------------------
+#
+# Maps an OSM tag value (from any of the landuse/leisure/natural/waterway
+# columns) to the zone bucket it belongs to. verify_plot.py imports this
+# mapping so the verification plot can never show a land-use category that
+# the zone builder silently drops (and vice versa).
 
-_RESIDENTIAL_LANDUSE: t.FrozenSet[str] = frozenset({"residential"})
-_COMMERCIAL_LANDUSE: t.FrozenSet[str] = frozenset({"commercial", "retail"})
-_INDUSTRIAL_LANDUSE: t.FrozenSet[str] = frozenset({"industrial"})
-_PARK_LEISURE: t.FrozenSet[str] = frozenset({"park", "garden", "nature_reserve"})
-_PARK_NATURAL: t.FrozenSet[str] = frozenset({"wood", "grassland"})
-_PARK_LANDUSE: t.FrozenSet[str] = frozenset({"forest"})
-_WATER_NATURAL: t.FrozenSet[str] = frozenset({"water"})
-_WATER_WATERWAY: t.FrozenSet[str] = frozenset({"riverbank"})
+_TAG_TO_ZONE_TYPE: t.Dict[str, str] = {
+    "residential": "residential",
+    "commercial": "commercial",
+    "retail": "commercial",
+    "industrial": "industrial",
+    "park": "park",
+    "garden": "park",
+    "nature_reserve": "park",
+    "wood": "park",
+    "grassland": "park",
+    "forest": "park",
+    "grass": "park",
+    "recreation_ground": "park",
+    "meadow": "park",
+    "water": "water",
+    "riverbank": "water",
+}
+
+_TAG_COLUMNS: t.Tuple[str, ...] = ("landuse", "leisure", "natural", "waterway")
+
+# Minimum house density (houses per square kilometre) below which synthetic
+# lots are generated to fill out a residential zone. Prevents one
+# boundary-clipping building from suppressing synthetic lots for an entire
+# under-built zone.
+_MIN_HOUSES_PER_KM2: float = 50.0
 
 
 # ---------------------------------------------------------------------------
@@ -115,27 +143,20 @@ def _classify_land_use(gdf: gpd.GeoDataFrame) -> t.Dict[str, t.List[t.Any]]:
 def _get_row_bucket(row: t.Any) -> t.Optional[str]:
     """Determine the zone type bucket for a single GeoDataFrame row.
 
+    Checks the landuse, leisure, natural, and waterway tag columns in that
+    order against the shared `_TAG_TO_ZONE_TYPE` mapping, returning the
+    bucket for the first column with a recognized value.
+
     Args:
         row: A namedtuple row from GeoDataFrame.itertuples().
 
     Returns:
         str or None: Bucket name, or None if the row doesn't match any zone.
     """
-    landuse = _safe_tag(row, "landuse")
-    leisure = _safe_tag(row, "leisure")
-    natural = _safe_tag(row, "natural")
-    waterway = _safe_tag(row, "waterway")
-
-    if landuse in _RESIDENTIAL_LANDUSE:
-        return "residential"
-    if landuse in _COMMERCIAL_LANDUSE:
-        return "commercial"
-    if landuse in _INDUSTRIAL_LANDUSE:
-        return "industrial"
-    if leisure in _PARK_LEISURE or natural in _PARK_NATURAL or landuse in _PARK_LANDUSE:
-        return "park"
-    if natural in _WATER_NATURAL or waterway in _WATER_WATERWAY:
-        return "water"
+    for column in _TAG_COLUMNS:
+        value = _safe_tag(row, column)
+        if value in _TAG_TO_ZONE_TYPE:
+            return _TAG_TO_ZONE_TYPE[value]
     return None
 
 
@@ -230,13 +251,35 @@ def _build_one_residential_zone(
 
     houses = _build_houses_from_footprints(enu_footprints, house_config, rng, color_pool)
 
-    if not houses:
-        synthetic_footprints = _build_synthetic_lots(enu_boundary, house_config)
-        houses = _build_houses_from_footprints(
-            synthetic_footprints, house_config, rng, color_pool
+    if _needs_synthetic_lots(houses, enu_boundary):
+        synthetic_footprints = _build_synthetic_lots(enu_boundary, house_config, enu_footprints)
+        houses.extend(
+            _build_houses_from_footprints(synthetic_footprints, house_config, rng, color_pool)
         )
 
     return ResidentialZone(boundary=enu_boundary, houses=houses)
+
+
+def _needs_synthetic_lots(houses: t.List[House], zone_boundary: Polygon) -> bool:
+    """Determine whether a zone's house density is too low and needs synthetic lots.
+
+    A single boundary-clipping building intersecting a zone should not, by
+    itself, suppress synthetic lot generation for the whole zone — so this
+    checks house density against a minimum threshold rather than checking
+    for zero houses.
+
+    Args:
+        houses (List[House]): Houses already built from real OSM footprints.
+        zone_boundary (Polygon): Zone boundary polygon in ENU metres.
+
+    Returns:
+        bool: True if houses per square kilometre is below
+            `_MIN_HOUSES_PER_KM2` (or the zone has zero area).
+    """
+    zone_area_km2 = zone_boundary.area / 1_000_000.0
+    if zone_area_km2 <= 0:
+        return not houses
+    return (len(houses) / zone_area_km2) < _MIN_HOUSES_PER_KM2
 
 
 def _build_houses_from_footprints(
@@ -268,16 +311,21 @@ def _build_houses_from_footprints(
 def _build_synthetic_lots(
     zone_boundary: Polygon,
     house_config: HouseConfig,
+    existing_footprints: t.Optional[t.List[Polygon]] = None,
 ) -> t.List[Polygon]:
     """Subdivide a zone boundary into synthetic rectangular house footprints.
 
     Uses a simple grid of lots based on lot_width and lot_depth from config.
-    Only lots whose centroid falls inside the zone boundary are kept.
-    Each lot produces a smaller footprint polygon scaled by footprint_coverage.
+    Only lots whose centroid falls inside the zone boundary are kept, and
+    lots that intersect an existing OSM building footprint are dropped so
+    synthetic lots only fill unoccupied space.
 
     Args:
         zone_boundary (Polygon): Zone boundary polygon in ENU metres.
         house_config (HouseConfig): Lot dimensions and footprint coverage ratio.
+        existing_footprints (List[Polygon], optional): Real OSM footprints
+            already placed in this zone. Synthetic lots overlapping any of
+            these are skipped.
 
     Returns:
         List[Polygon]: Rectangular house footprint polygons in ENU metres.
@@ -288,7 +336,54 @@ def _build_synthetic_lots(
     coverage = house_config.footprint_coverage
 
     candidate_lots = _grid_lots(min_x, min_y, max_x, max_y, lot_w, lot_d, coverage)
-    return [fp for fp in candidate_lots if zone_boundary.contains(fp.centroid)]
+    contained_lots = _filter_lots_within_boundary(candidate_lots, zone_boundary)
+    return _filter_lots_avoiding_footprints(contained_lots, existing_footprints or [])
+
+
+def _filter_lots_within_boundary(
+    lots: t.List[Polygon],
+    zone_boundary: Polygon,
+) -> t.List[Polygon]:
+    """Keep only lots whose centroid falls inside the zone boundary.
+
+    Uses a single vectorized `shapely.contains_xy` call over all lot
+    centroids instead of one `Polygon.contains()` call per lot.
+
+    Args:
+        lots (List[Polygon]): Candidate lot footprint polygons.
+        zone_boundary (Polygon): Zone boundary polygon in ENU metres.
+
+    Returns:
+        List[Polygon]: Lots whose centroid is inside the zone boundary.
+    """
+    if not lots:
+        return []
+    centroids = np.array([(lot.centroid.x, lot.centroid.y) for lot in lots])
+    inside = shapely.contains_xy(zone_boundary, centroids[:, 0], centroids[:, 1])
+    return [lot for lot, keep in zip(lots, inside) if keep]
+
+
+def _filter_lots_avoiding_footprints(
+    lots: t.List[Polygon],
+    existing_footprints: t.List[Polygon],
+) -> t.List[Polygon]:
+    """Drop lots that intersect an existing building footprint.
+
+    Uses an STRtree over the existing footprints so a boundary-clipping
+    building only excludes the lots it actually overlaps, rather than
+    suppressing synthetic lot generation for the whole zone.
+
+    Args:
+        lots (List[Polygon]): Candidate lot footprint polygons.
+        existing_footprints (List[Polygon]): Real OSM footprints in this zone.
+
+    Returns:
+        List[Polygon]: Lots that do not intersect any existing footprint.
+    """
+    if not existing_footprints:
+        return lots
+    tree = STRtree(existing_footprints)
+    return [lot for lot in lots if len(tree.query(lot, predicate="intersects")) == 0]
 
 
 def _grid_lots(
@@ -453,6 +548,13 @@ def _build_parking_areas(
 ) -> t.List[Polygon]:
     """Compute parking areas as zone boundary minus all building footprints.
 
+    Building footprints are unioned into a single geometry before a single
+    difference is taken against the zone boundary, rather than looping
+    `difference()` once per footprint. Inputs are repaired with
+    `shapely.make_valid` up front; if the difference still fails, the zone
+    is logged and the boundary is returned with no parking excluded (an
+    explicit fallback, not a silently-corrupted result).
+
     Args:
         enu_boundary (Polygon): Zone boundary in ENU metres.
         enu_footprints (List[Polygon]): Building footprints in ENU metres.
@@ -463,12 +565,18 @@ def _build_parking_areas(
     if not enu_footprints:
         return [enu_boundary]
 
-    remaining = enu_boundary
-    for footprint in enu_footprints:
-        try:
-            remaining = remaining.difference(footprint)
-        except Exception:
-            continue
+    valid_boundary = shapely.make_valid(enu_boundary)
+    valid_footprints = [shapely.make_valid(fp) for fp in enu_footprints]
+
+    try:
+        remaining = valid_boundary.difference(unary_union(valid_footprints))
+    except Exception:
+        log.warning(
+            "Parking-area difference failed for zone at centroid %s; "
+            "falling back to boundary with no parking excluded.",
+            enu_boundary.centroid,
+        )
+        return [enu_boundary]
 
     return list(_iter_polygons(remaining))
 
@@ -598,28 +706,75 @@ def _polygon_wgs84_to_enu(
 ) -> t.Optional[Polygon]:
     """Convert a shapely Polygon from WGS84 lon/lat to ENU metres.
 
-    Shapely stores coordinates as (x=lon, y=lat). The transformer expects
-    (lat, lon), so coordinates are swapped before conversion.
+    Interior rings (holes) are converted along with the exterior — a lake
+    inside a park or a courtyard inside a residential block is preserved
+    rather than painted over solid.
 
     Args:
         polygon (Polygon): Input polygon with WGS84 (lon, lat) coordinates.
         transformer (CoordinateTransformer): WGS84 → ENU converter.
 
     Returns:
-        Polygon or None: ENU polygon, or None if conversion fails or produces
-            fewer than 3 vertices.
+        Polygon or None: ENU polygon, or None if conversion fails or the
+            exterior ring produces fewer than 3 vertices.
     """
     try:
-        coords = np.array(polygon.exterior.coords)
-        if len(coords) < 3:
+        shell = _ring_wgs84_to_enu(polygon.exterior.coords, transformer)
+        if shell is None:
             return None
-        lons = coords[:, 0]
-        lats = coords[:, 1]
-        enu_coords = wgs84_to_enu_batch(transformer, lats, lons, alt_m=0.0)
-        xy_coords = [(pt[0], pt[1]) for pt in enu_coords]
-        return Polygon(xy_coords)
+        holes = _convert_interior_rings(polygon.interiors, transformer)
+        return Polygon(shell, holes=holes)
     except Exception:
         return None
+
+
+def _ring_wgs84_to_enu(
+    ring_coords: t.Any,
+    transformer: CoordinateTransformer,
+) -> t.Optional[t.List[t.Tuple[float, float]]]:
+    """Convert a single WGS84 ring's coordinates to ENU (x, y) tuples.
+
+    Shapely stores coordinates as (x=lon, y=lat). The transformer expects
+    (lat, lon), so coordinates are swapped before conversion.
+
+    Args:
+        ring_coords: Iterable of (lon, lat) coordinate pairs from a Shapely
+            LinearRing's `.coords`.
+        transformer (CoordinateTransformer): WGS84 → ENU converter.
+
+    Returns:
+        List[Tuple[float, float]] or None: ENU (x, y) coordinates, or None
+            if the ring has fewer than 3 vertices.
+    """
+    coords = np.array(ring_coords)
+    if len(coords) < 3:
+        return None
+    lons = coords[:, 0]
+    lats = coords[:, 1]
+    enu_coords = wgs84_to_enu_batch(transformer, lats, lons, alt_m=0.0)
+    return [(pt[0], pt[1]) for pt in enu_coords]
+
+
+def _convert_interior_rings(
+    interiors: t.Any,
+    transformer: CoordinateTransformer,
+) -> t.List[t.List[t.Tuple[float, float]]]:
+    """Convert all interior rings (holes) of a polygon to ENU coordinates.
+
+    Args:
+        interiors: Iterable of Shapely LinearRings (a Polygon's `.interiors`).
+        transformer (CoordinateTransformer): WGS84 → ENU converter.
+
+    Returns:
+        List[List[Tuple[float, float]]]: One ENU coordinate list per hole
+            that converts successfully; degenerate rings are dropped.
+    """
+    holes = []
+    for interior in interiors:
+        ring = _ring_wgs84_to_enu(interior.coords, transformer)
+        if ring is not None:
+            holes.append(ring)
+    return holes
 
 
 def _iter_polygons(geom: t.Any) -> t.Iterator[Polygon]:
@@ -644,11 +799,60 @@ def _get_buildings_within(
     zone_polygon: Polygon,
     buildings_gdf: gpd.GeoDataFrame,
 ) -> t.List[t.Any]:
+    """Find building rows uniquely assigned to the given zone polygon.
+
+    Uses `_get_candidate_buildings` to find geometry that intersects the
+    zone (via the spatial index), then assigns each candidate to at most
+    one zone by testing whether its representative point falls inside this
+    zone's polygon. Without this second step, a building straddling the
+    shared edge of two adjacent zones would be duplicated into both.
+
+    Args:
+        zone_polygon (Polygon): Zone boundary polygon in WGS84 lon/lat.
+        buildings_gdf (GeoDataFrame): Building footprints in WGS84.
+
+    Returns:
+        List: GeoDataFrame rows uniquely assigned to this zone.
+    """
+    if buildings_gdf.empty:
+        return []
+
+    candidates = _get_candidate_buildings(zone_polygon, buildings_gdf)
+    return [row for row in candidates if _building_belongs_to_zone(row, zone_polygon)]
+
+
+def _building_belongs_to_zone(row: t.Any, zone_polygon: Polygon) -> bool:
+    """Determine whether a building row's representative point falls inside a zone.
+
+    A representative point (rather than the centroid) is guaranteed by
+    Shapely to lie within the geometry itself, which keeps this assignment
+    stable for concave or irregular footprints.
+
+    Args:
+        row: A GeoDataFrame row with a `geometry` attribute.
+        zone_polygon (Polygon): Zone boundary polygon in WGS84 lon/lat.
+
+    Returns:
+        bool: True if the building's representative point is inside the zone.
+    """
+    geom = getattr(row, "geometry", None)
+    if geom is None:
+        return False
+    return zone_polygon.contains(geom.representative_point())
+
+
+def _get_candidate_buildings(
+    zone_polygon: Polygon,
+    buildings_gdf: gpd.GeoDataFrame,
+) -> t.List[t.Any]:
     """Find building rows whose geometry intersects the given zone polygon.
 
     Uses the GeoDataFrame spatial index (sindex) when available for O(log n)
     candidate selection, then confirms with a shapely intersects check.
     Falls back to iterating all rows if the spatial index is unavailable.
+    These are intersection candidates only — a straddling building may be a
+    candidate for more than one zone; `_get_buildings_within` narrows that
+    down to a single zone.
 
     Args:
         zone_polygon (Polygon): Zone boundary polygon in WGS84 lon/lat.
@@ -657,18 +861,15 @@ def _get_buildings_within(
     Returns:
         List: GeoDataFrame rows whose geometry intersects the zone boundary.
     """
-    if buildings_gdf.empty:
-        return []
-
     try:
         candidate_indices = buildings_gdf.sindex.query(zone_polygon, predicate="intersects")
         candidates = buildings_gdf.iloc[candidate_indices]
         return list(candidates.itertuples())
     except Exception:
-        return _get_buildings_within_fallback(zone_polygon, buildings_gdf)
+        return _get_candidate_buildings_fallback(zone_polygon, buildings_gdf)
 
 
-def _get_buildings_within_fallback(
+def _get_candidate_buildings_fallback(
     zone_polygon: Polygon,
     buildings_gdf: gpd.GeoDataFrame,
 ) -> t.List[t.Any]:
@@ -703,8 +904,9 @@ def _convert_building_footprints(
 ) -> t.List[Polygon]:
     """Convert building row geometries to ENU Polygon objects.
 
-    Handles Polygon and MultiPolygon geometries. Rows that fail conversion
-    are silently skipped.
+    Handles Polygon and MultiPolygon geometries. All polygons are converted
+    in a single batched pyproj transform (see `_polygons_wgs84_to_enu_batch`)
+    rather than one transform call per building.
 
     Args:
         building_rows (List): GeoDataFrame rows with WGS84 geometry.
@@ -713,11 +915,171 @@ def _convert_building_footprints(
     Returns:
         List[Polygon]: Valid ENU footprint polygons.
     """
-    footprints = []
+    polygons = _collect_building_polygons(building_rows)
+    return _polygons_wgs84_to_enu_batch(polygons, transformer)
+
+
+def _collect_building_polygons(building_rows: t.List[t.Any]) -> t.List[Polygon]:
+    """Flatten building row geometries into individual WGS84 Polygons.
+
+    Args:
+        building_rows (List): GeoDataFrame rows with WGS84 geometry.
+
+    Returns:
+        List[Polygon]: Individual polygons (Polygon rows and MultiPolygon parts).
+    """
+    polygons = []
     for row in building_rows:
         geom = getattr(row, "geometry", None)
         if geom is None:
             continue
-        for polygon in _iter_polygons(geom):
-            footprints.extend(_as_list(_polygon_wgs84_to_enu(polygon, transformer)))
-    return footprints
+        polygons.extend(_iter_polygons(geom))
+    return polygons
+
+
+def _polygons_wgs84_to_enu_batch(
+    polygons: t.List[Polygon],
+    transformer: CoordinateTransformer,
+) -> t.List[Polygon]:
+    """Convert many WGS84 polygons (with holes) to ENU in one batched transform.
+
+    Every exterior and interior ring across all input polygons is
+    concatenated into a single coordinate array and converted with one
+    `wgs84_to_enu_batch` call, replacing one pyproj transform per polygon.
+    Falls back to converting polygons one at a time if the batch fails for
+    any reason, matching the per-polygon robustness of `_polygon_wgs84_to_enu`.
+
+    Args:
+        polygons (List[Polygon]): WGS84 polygons to convert.
+        transformer (CoordinateTransformer): WGS84 → ENU converter.
+
+    Returns:
+        List[Polygon]: ENU polygons; polygons whose exterior has fewer than
+            3 vertices are dropped.
+    """
+    if not polygons:
+        return []
+    try:
+        return _batch_convert_polygons(polygons, transformer)
+    except Exception:
+        return _convert_polygons_individually(polygons, transformer)
+
+
+def _convert_polygons_individually(
+    polygons: t.List[Polygon],
+    transformer: CoordinateTransformer,
+) -> t.List[Polygon]:
+    """Convert each polygon with its own `_polygon_wgs84_to_enu` call.
+
+    Fallback path used when the batched conversion fails.
+
+    Args:
+        polygons (List[Polygon]): WGS84 polygons to convert.
+        transformer (CoordinateTransformer): WGS84 → ENU converter.
+
+    Returns:
+        List[Polygon]: ENU polygons that converted successfully.
+    """
+    results = []
+    for polygon in polygons:
+        results.extend(_as_list(_polygon_wgs84_to_enu(polygon, transformer)))
+    return results
+
+
+def _batch_convert_polygons(
+    polygons: t.List[Polygon],
+    transformer: CoordinateTransformer,
+) -> t.List[Polygon]:
+    """Convert all polygons' rings in a single batched pyproj transform.
+
+    Args:
+        polygons (List[Polygon]): WGS84 polygons to convert.
+        transformer (CoordinateTransformer): WGS84 → ENU converter.
+
+    Returns:
+        List[Polygon]: ENU polygons; polygons whose exterior has fewer than
+            3 vertices are dropped.
+    """
+    rings, ring_owners = _flatten_polygon_rings(polygons)
+    if not rings:
+        return []
+
+    lengths = [len(ring) for ring in rings]
+    all_coords = np.concatenate(rings, axis=0)
+    enu_all = wgs84_to_enu_batch(transformer, all_coords[:, 1], all_coords[:, 0], alt_m=0.0)
+    enu_rings = _split_by_lengths(enu_all, lengths)
+
+    return _rebuild_polygons(len(polygons), ring_owners, enu_rings)
+
+
+def _flatten_polygon_rings(
+    polygons: t.List[Polygon],
+) -> t.Tuple[t.List[np.ndarray], t.List[t.Tuple[int, bool]]]:
+    """Flatten every polygon's exterior and interior rings into one list.
+
+    Args:
+        polygons (List[Polygon]): WGS84 polygons.
+
+    Returns:
+        Tuple[List[np.ndarray], List[Tuple[int, bool]]]: Parallel lists of
+            (N, 2) ring coordinate arrays and (polygon_index, is_shell) owners.
+    """
+    rings = []
+    owners = []
+    for poly_idx, polygon in enumerate(polygons):
+        rings.append(np.array(polygon.exterior.coords))
+        owners.append((poly_idx, True))
+        for interior in polygon.interiors:
+            rings.append(np.array(interior.coords))
+            owners.append((poly_idx, False))
+    return rings, owners
+
+
+def _split_by_lengths(array: np.ndarray, lengths: t.List[int]) -> t.List[np.ndarray]:
+    """Split a stacked array back into per-ring chunks using known lengths.
+
+    Args:
+        array (np.ndarray): Concatenated (N, 3) ENU coordinate array.
+        lengths (List[int]): Number of rows contributed by each ring, in order.
+
+    Returns:
+        List[np.ndarray]: One chunk per input ring, in the same order.
+    """
+    split_points = np.cumsum(lengths)[:-1]
+    return np.split(array, split_points)
+
+
+def _rebuild_polygons(
+    num_polygons: int,
+    ring_owners: t.List[t.Tuple[int, bool]],
+    enu_rings: t.List[np.ndarray],
+) -> t.List[Polygon]:
+    """Reassemble per-polygon Polygon objects from converted ENU rings.
+
+    Args:
+        num_polygons (int): Number of source polygons (for pre-sizing holes).
+        ring_owners (List[Tuple[int, bool]]): (polygon_index, is_shell) per ring,
+            in the same order as `enu_rings`.
+        enu_rings (List[np.ndarray]): Converted ENU coordinates per ring.
+
+    Returns:
+        List[Polygon]: ENU polygons; polygons whose shell has fewer than 3
+            vertices are dropped.
+    """
+    shells: t.Dict[int, t.List[t.Tuple[float, float]]] = {}
+    holes: t.Dict[int, t.List[t.List[t.Tuple[float, float]]]] = {
+        i: [] for i in range(num_polygons)
+    }
+
+    for (poly_idx, is_shell), enu_ring in zip(ring_owners, enu_rings):
+        xy_coords = [(pt[0], pt[1]) for pt in enu_ring]
+        if is_shell:
+            shells[poly_idx] = xy_coords
+        elif len(xy_coords) >= 3:
+            holes[poly_idx].append(xy_coords)
+
+    return [
+        Polygon(shell, holes=holes[poly_idx])
+        for poly_idx, shell in shells.items()
+        if len(shell) >= 3
+    ]

@@ -26,8 +26,9 @@ class Scene:
 
     Holds road segments, zone data (residential, commercial, dark), camera,
     config, lights, car pairs, and optionally the coordinate transformer for
-    ENU ↔ WGS84 conversion. The spatial index covers road segments, zone
-    boundaries, and lights for fast spatial queries.
+    ENU ↔ WGS84 conversion. Roads, zones, and lights are each kept in their
+    own SpatialIndex so queries for one kind never scan or filter items of
+    another.
 
     Attributes:
         road_segments: All road segments in the scene.
@@ -76,14 +77,19 @@ class Scene:
         self.transformer = transformer
         self.lights: t.List["LightSource"] = []
         self.car_pairs: t.List[t.Any] = []  # CarLightPair, typed as Any to avoid circular import
-        self._spatial_index: t.Optional[SpatialIndex] = None
+        self._road_index: t.Optional[SpatialIndex] = None
+        self._zone_index: t.Optional[SpatialIndex] = None
+        self._light_index: t.Optional[SpatialIndex] = None
+        self._index_bounds: t.Optional[t.Tuple[float, float, float, float]] = None
 
     def build_spatial_index(self) -> None:
-        """Build the spatial index over road segments and zone boundaries.
+        """Build the spatial indexes over road segments and zone boundaries.
 
-        Computes world bounds from road geometries and zone boundaries, creates
-        the grid index, inserts every road segment by its bounding box, and also
-        inserts all zone boundaries. Call once after construction before rendering.
+        Computes world bounds from road geometries and zone boundaries, then
+        creates and populates a separate grid index each for road segments
+        and for zone boundaries. Call once after construction before
+        rendering. The light index is created lazily by ``add_lights`` since
+        lights are typically populated after this call.
         """
         if not self.road_segments:
             return
@@ -95,7 +101,9 @@ class Scene:
             self.dark_zones,
         )
         min_x, min_y, max_x, max_y = bounds
-        self._spatial_index = SpatialIndex(min_x, min_y, max_x, max_y, cell_size=500.0)
+        self._index_bounds = bounds
+        self._road_index = SpatialIndex(min_x, min_y, max_x, max_y, cell_size=500.0)
+        self._zone_index = SpatialIndex(min_x, min_y, max_x, max_y, cell_size=500.0)
 
         self._index_road_segments()
         self._index_zones()
@@ -103,14 +111,23 @@ class Scene:
     def add_lights(self, lights: t.List["LightSource"]) -> None:
         """Add lights to the scene and index them spatially.
 
+        Creates the light index lazily on first use, reusing the same world
+        bounds as the road/zone indexes so light queries stay consistent
+        with the rest of the scene.
+
         Args:
             lights (list[LightSource]): Light sources to add.
         """
         self.lights.extend(lights)
-        if self._spatial_index is not None:
-            for light in lights:
-                pos = light.position
-                self._spatial_index.insert(light, pos[0], pos[1], pos[0], pos[1])
+        if self._index_bounds is None:
+            return
+
+        if self._light_index is None:
+            min_x, min_y, max_x, max_y = self._index_bounds
+            self._light_index = SpatialIndex(min_x, min_y, max_x, max_y, cell_size=500.0)
+        for light in lights:
+            pos = light.position
+            self._light_index.insert(light, pos[0], pos[1], pos[0], pos[1])
 
     def add_car_pairs(self, car_pairs: list) -> None:
         """Register car light pairs for render-time facing resolution.
@@ -129,9 +146,9 @@ class Scene:
     ) -> t.List[RoadSegment]:
         """Return road segments whose bounding box overlaps the given rectangle.
 
-        Uses the spatial index if built; falls back to all segments otherwise.
-        Deduplicates results since the spatial index may return the same segment
-        from multiple cells.
+        Uses the road spatial index if built; falls back to all segments
+        otherwise. Deduplicates results since the spatial index may return
+        the same segment from multiple cells.
 
         Args:
             min_x (float): Rectangle minimum x in meters.
@@ -142,22 +159,20 @@ class Scene:
         Returns:
             list[RoadSegment]: Candidate segments overlapping the query area.
         """
-        if self._spatial_index is None:
+        if self._road_index is None:
             return self.road_segments
 
-        raw = self._spatial_index.query_rect(min_x, min_y, max_x, max_y)
-        return _deduplicate_by_identity(
-            [item for item in raw if isinstance(item, RoadSegment)]
-        )
+        raw = self._road_index.query_rect(min_x, min_y, max_x, max_y)
+        return _deduplicate_by_identity(raw)
 
     def get_lights_near(
         self, x: float, y: float, radius: float
     ) -> t.List["LightSource"]:
         """Return lights within radius of (x, y) using the spatial index.
 
-        Uses the spatial index if built; falls back to all lights otherwise.
-        The index uses a conservative bounding box so results may extend
-        slightly beyond the exact radius.
+        Uses the light spatial index if built; falls back to all lights
+        otherwise. The index uses a conservative bounding box so results may
+        extend slightly beyond the exact radius.
 
         Args:
             x (float): Query center x in meters.
@@ -167,13 +182,10 @@ class Scene:
         Returns:
             list[LightSource]: Candidate lights within the search radius.
         """
-        if self._spatial_index is None:
+        if self._light_index is None:
             return self.lights
 
-        from ..models.light_source import LightSource
-
-        raw = self._spatial_index.query_radius(x, y, radius)
-        return [item for item in raw if isinstance(item, LightSource)]
+        return self._light_index.query_radius(x, y, radius)
 
     def get_zones_in_rect(
         self,
@@ -184,8 +196,10 @@ class Scene:
     ) -> t.Tuple[t.List[ResidentialZone], t.List[CommercialZone], t.List[DarkZone]]:
         """Return (residential, commercial, dark) zones overlapping the rectangle.
 
-        Uses the spatial index if built; falls back to all zones otherwise.
-        Deduplicates results since zones may span multiple index cells.
+        Uses the zone spatial index if built; falls back to all zones
+        otherwise. Deduplicates results since zones may span multiple index
+        cells. Zones of all three kinds share one index since callers always
+        query them together.
 
         Args:
             min_x (float): Rectangle minimum x in meters.
@@ -197,10 +211,10 @@ class Scene:
             tuple[list[ResidentialZone], list[CommercialZone], list[DarkZone]]:
                 Zones of each type that overlap the query rectangle.
         """
-        if self._spatial_index is None:
+        if self._zone_index is None:
             return self.residential_zones, self.commercial_zones, self.dark_zones
 
-        raw = self._spatial_index.query_rect(min_x, min_y, max_x, max_y)
+        raw = self._zone_index.query_rect(min_x, min_y, max_x, max_y)
         residential = _deduplicate_by_identity(
             [z for z in raw if isinstance(z, ResidentialZone)]
         )
@@ -213,15 +227,15 @@ class Scene:
         return residential, commercial, dark
 
     def _index_road_segments(self) -> None:
-        """Insert all road segments into the spatial index."""
+        """Insert all road segments into the road spatial index."""
         for segment in self.road_segments:
             seg_min_x, seg_min_y, seg_max_x, seg_max_y = _segment_bounds(segment)
-            self._spatial_index.insert(
+            self._road_index.insert(
                 segment, seg_min_x, seg_min_y, seg_max_x, seg_max_y
             )
 
     def _index_zones(self) -> None:
-        """Insert all zone boundaries into the spatial index."""
+        """Insert all zone boundaries into the zone spatial index."""
         all_zone_lists = [
             self.residential_zones,
             self.commercial_zones,
@@ -231,7 +245,7 @@ class Scene:
             for zone in zone_list:
                 if hasattr(zone, "boundary") and zone.boundary is not None:
                     bounds = zone.boundary.bounds  # shapely (minx, miny, maxx, maxy)
-                    self._spatial_index.insert(
+                    self._zone_index.insert(
                         zone, bounds[0], bounds[1], bounds[2], bounds[3]
                     )
 

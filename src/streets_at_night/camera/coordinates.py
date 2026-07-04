@@ -143,6 +143,10 @@ def convert_road_geometry(
     array of ENU meter coordinates. The Z coordinate is set to 0 (ground level).
     Geometries that are None or not LineString-like are skipped.
 
+    All valid segments are converted in a single batched pyproj transform
+    (coordinates from every segment concatenated, transformed once, then
+    split back by segment length) rather than one transform call per segment.
+
     Args:
         transformer (CoordinateTransformer): Configured transformer.
         roads_gdf (GeoDataFrame): Road features with WGS84 geometry column.
@@ -150,12 +154,38 @@ def convert_road_geometry(
     Returns:
         list[np.ndarray]: One (N, 3) array per road segment. Z is always 0.
     """
-    segments = []
+    valid_coords = _collect_valid_road_coords(roads_gdf)
+    if not valid_coords:
+        return []
+
+    lengths = [len(coords) for coords in valid_coords]
+    all_coords = np.concatenate(valid_coords, axis=0)
+    enu_all = wgs84_to_enu_batch(transformer, all_coords[:, 1], all_coords[:, 0], alt_m=0.0)
+
+    split_points = np.cumsum(lengths)[:-1]
+    return np.split(enu_all, split_points)
+
+
+def _collect_valid_road_coords(roads_gdf: gpd.GeoDataFrame) -> t.List[np.ndarray]:
+    """Collect WGS84 (lon, lat) coordinate arrays for every valid road geometry.
+
+    Args:
+        roads_gdf (GeoDataFrame): Road features with WGS84 geometry column.
+
+    Returns:
+        list[np.ndarray]: One (N, 2) lon/lat coordinate array per road
+            geometry with at least 2 vertices. Geometries that are None or
+            lack `.coords` are skipped.
+    """
+    valid_coords = []
     for geom in roads_gdf.geometry:
-        segment = _geometry_to_enu_array(transformer, geom)
-        if segment is not None:
-            segments.append(segment)
-    return segments
+        if geom is None or not hasattr(geom, "coords"):
+            continue
+        coords = np.array(geom.coords)
+        if coords.shape[0] < 2:
+            continue
+        valid_coords.append(coords)
+    return valid_coords
 
 
 def feet_to_meters(altitude_ft: float) -> float:
@@ -206,26 +236,3 @@ def enu_to_wgs84(
     northing = north_m + transformer._origin_northing
     lon, lat = transformer._from_utm.transform(easting, northing)
     return float(lat), float(lon), float(up_m)
-
-
-def _geometry_to_enu_array(
-    transformer: CoordinateTransformer,
-    geom: t.Any,
-) -> t.Optional[np.ndarray]:
-    """Convert a single shapely geometry to an ENU coordinate array.
-
-    Args:
-        transformer (CoordinateTransformer): Configured transformer.
-        geom: Shapely geometry object.
-
-    Returns:
-        np.ndarray: Shape (N, 3) ENU coordinates, or None if geometry is invalid.
-    """
-    if geom is None or not hasattr(geom, "coords"):
-        return None
-    coords = np.array(geom.coords)
-    if coords.shape[0] < 2:
-        return None
-    lons = coords[:, 0]
-    lats = coords[:, 1]
-    return wgs84_to_enu_batch(transformer, lats, lons, alt_m=0.0)

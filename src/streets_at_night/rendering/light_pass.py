@@ -8,7 +8,7 @@ from ..camera.camera import Camera
 from ..camera.projection import project_points
 from .backend import RenderBackend
 from .color_space import srgb255_to_linear
-from .render_utils import apply_brightness_falloff, camera_distance, compute_focal_length, extract_positions
+from .render_utils import apply_brightness_falloff, compute_focal_length, extract_positions
 
 if t.TYPE_CHECKING:
     from ..models.light_source import LightSource
@@ -31,6 +31,9 @@ def render_lights_preview(
     atmospheric falloff) but no glow halos or color shift are applied — this
     pass is intended for real-time pygame preview.
 
+    Distances and falloff-attenuated brightness are computed once for every
+    light with vectorized numpy operations, then indexed inside the draw loop.
+
     Args:
         scene (Scene): The world scene containing all light sources.
         camera (Camera): The active camera.
@@ -52,16 +55,14 @@ def render_lights_preview(
         positions, view_matrix, proj_matrix, (width, height)
     )
 
+    distances = _compute_light_distances(positions, camera.position)
+    eff_brightness = _compute_effective_brightness(scene.lights, distances, atmos.falloff_distance)
+
     drawn = 0
-    for i, light in enumerate(scene.lights):
-        if not valid_mask[i]:
-            continue
+    for i in np.nonzero(valid_mask)[0]:
+        light = scene.lights[i]
         center = (float(screen_coords[i, 0]), float(screen_coords[i, 1]))
-        distance = camera_distance(light.position, camera.position)
-        effective_brightness = _apply_brightness_falloff(
-            light.brightness, distance, atmos.falloff_distance
-        )
-        radius = _preview_radius(effective_brightness)
+        radius = _preview_radius(float(eff_brightness[i]))
         backend.draw_circle(center, radius, light.color)
         drawn += 1
 
@@ -111,17 +112,16 @@ def render_lights_export(
     atmos = scene.config.atmosphere
     light_buffer = np.zeros((height, width, 3), dtype=np.float32)
 
-    visible_indices = _get_visible_indices(scene.lights, valid_mask, camera, atmos)
+    distances = _compute_light_distances(positions, camera.position)
+    eff_brightness = _compute_effective_brightness(scene.lights, distances, atmos.falloff_distance)
+    visible_indices = _get_visible_indices(valid_mask, eff_brightness, atmos.min_brightness_threshold)
 
     drawn = 0
     for i in visible_indices:
         light = scene.lights[i]
         center = (float(screen_coords[i, 0]), float(screen_coords[i, 1]))
-        distance = camera_distance(light.position, camera.position)
-
-        effective_brightness = _apply_brightness_falloff(
-            light.brightness, distance, atmos.falloff_distance
-        )
+        distance = float(distances[i])
+        effective_brightness = float(eff_brightness[i])
         # A light's emitted radiance dims by extinction (effective_brightness)
         # but keeps its own color; the haze veil over it is added per-pixel by
         # the airlight term in the atmosphere pass.
@@ -160,40 +160,60 @@ def render_lights_export(
 # ---------------------------------------------------------------------------
 
 
-def _get_visible_indices(
-    lights: t.List["LightSource"],
-    valid_mask: np.ndarray,
-    camera: Camera,
-    atmos: t.Any,
-) -> t.List[int]:
-    """Collect indices of lights that pass the mask and brightness threshold.
+def _compute_light_distances(positions: np.ndarray, camera_position: np.ndarray) -> np.ndarray:
+    """Compute per-light camera distance for every light in one vectorized call.
 
-    Returns indices sorted by descending camera distance so far lights are
-    drawn first and closer lights paint over them.
+    Args:
+        positions (np.ndarray): (N, 3) light positions in ENU metres.
+        camera_position (np.ndarray): (3,) camera position in ENU metres.
+
+    Returns:
+        np.ndarray: (N,) distances in metres, each clamped to at least 1.0.
+    """
+    return np.maximum(1.0, np.linalg.norm(positions - camera_position, axis=1))
+
+
+def _compute_effective_brightness(
+    lights: t.List["LightSource"],
+    distances: np.ndarray,
+    falloff_distance: float,
+) -> np.ndarray:
+    """Compute atmospheric-falloff-attenuated brightness for every light at once.
 
     Args:
         lights (list[LightSource]): All lights in the scene.
-        valid_mask (np.ndarray): Boolean mask from project_points.
-        camera (Camera): Active camera (used to compute distances).
-        atmos: AtmosphereConfig with falloff_distance and min_brightness_threshold.
+        distances (np.ndarray): (N,) per-light camera distances in metres.
+        falloff_distance (float): Characteristic decay distance in metres.
 
     Returns:
-        list[int]: Sorted indices of drawable lights, farthest first.
+        np.ndarray: (N,) attenuated brightness values.
     """
-    candidates = []
-    for i, light in enumerate(lights):
-        if not valid_mask[i]:
-            continue
-        distance = camera_distance(light.position, camera.position)
-        effective_brightness = _apply_brightness_falloff(
-            light.brightness, distance, atmos.falloff_distance
-        )
-        if effective_brightness < atmos.min_brightness_threshold:
-            continue
-        candidates.append((distance, i))
+    brightnesses = np.fromiter((light.brightness for light in lights), dtype=float, count=len(lights))
+    return brightnesses * np.exp(-distances / falloff_distance)
 
-    candidates.sort(key=lambda x: x[0], reverse=True)
-    return [i for _, i in candidates]
+
+def _get_visible_indices(
+    valid_mask: np.ndarray,
+    eff_brightness: np.ndarray,
+    min_brightness_threshold: float,
+) -> np.ndarray:
+    """Collect indices of lights that pass the mask and brightness threshold.
+
+    The export light buffer is a float32 linear accumulation buffer — cores
+    and glows from different lights simply add together, so paint order does
+    not affect the result. Indices are returned in natural (ascending) order;
+    no far-to-near sort is needed.
+
+    Args:
+        valid_mask (np.ndarray): Boolean mask from project_points.
+        eff_brightness (np.ndarray): Per-light brightness after atmospheric falloff.
+        min_brightness_threshold (float): Minimum effective brightness required to draw.
+
+    Returns:
+        np.ndarray: Indices of drawable lights, in natural order.
+    """
+    visible = valid_mask & (eff_brightness >= min_brightness_threshold)
+    return np.nonzero(visible)[0]
 
 
 def _resolve_glow_radius(

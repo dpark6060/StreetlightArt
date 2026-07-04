@@ -1,6 +1,7 @@
 """Factory function for house window and porch light sources."""
 
 import random
+import typing as t
 
 import numpy as np
 
@@ -13,6 +14,7 @@ def create_house_light(
     position: np.ndarray,
     config: HouseLightConfig,
     rng: random.Random,
+    pool: t.Optional[ColorPool] = None,
 ) -> LightSource:
     """Create a LightSource representing a house window, porch, or interior light.
 
@@ -24,11 +26,14 @@ def create_house_light(
         config (HouseLightConfig): House light configuration providing color pool,
             brightness range, glow radius, illumination radius, and intensity.
         rng (random.Random): Seeded RNG for color and parameter sampling.
+        pool (ColorPool, optional): Pre-built color pool. If None, one is
+            created from config.colors. Pass a shared instance when creating
+            many house lights in the same run to avoid re-parsing the palette.
 
     Returns:
         LightSource: Configured house light.
     """
-    pool = ColorPool(config.colors.colors, rng)
+    pool = pool if pool is not None else ColorPool(config.colors.colors, rng)
     color = pool.pick()
     brightness = rng.uniform(config.brightness_min, config.brightness_max)
     return LightSource(

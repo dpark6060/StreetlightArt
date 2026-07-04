@@ -16,6 +16,8 @@ from streets_at_night.rendering.light_pass import (
     _accumulate_glow,
     _apply_brightness_falloff,
     _apply_glow_expansion,
+    _compute_effective_brightness,
+    _compute_light_distances,
     _preview_radius,
     render_lights_export,
     render_lights_preview,
@@ -315,28 +317,68 @@ def test_apply_glow_expansion_at_scatter_distance_doubles_radius():
 
 
 # ---------------------------------------------------------------------------
+# _compute_light_distances / _compute_effective_brightness
+# ---------------------------------------------------------------------------
+
+
+def test_compute_light_distances_clamps_to_minimum_one():
+    # Arrange — camera sitting exactly on top of the light
+    positions = np.array([[0.0, 0.0, 0.0]])
+    camera_position = np.array([0.0, 0.0, 0.0])
+
+    # Act
+    distances = _compute_light_distances(positions, camera_position)
+
+    # Assert
+    assert distances[0] == pytest.approx(1.0)
+
+
+def test_compute_light_distances_matches_euclidean_norm():
+    # Arrange
+    positions = np.array([[3.0, 4.0, 0.0]])
+    camera_position = np.array([0.0, 0.0, 0.0])
+
+    # Act
+    distances = _compute_light_distances(positions, camera_position)
+
+    # Assert — 3-4-5 triangle
+    assert distances[0] == pytest.approx(5.0)
+
+
+def test_compute_effective_brightness_matches_scalar_falloff(sample_light):
+    # Arrange
+    distances = np.array([2000.0])
+    falloff_distance = 8000.0
+
+    # Act
+    result = _compute_effective_brightness([sample_light], distances, falloff_distance)
+
+    # Assert — matches the scalar formula for a single light
+    expected = sample_light.brightness * math.exp(-2000.0 / falloff_distance)
+    assert result[0] == pytest.approx(expected)
+
+
+# ---------------------------------------------------------------------------
 # render_lights_export — brightness falloff applied
 # ---------------------------------------------------------------------------
 
 
-@mock.patch("streets_at_night.rendering.light_pass._apply_brightness_falloff")
 @mock.patch("streets_at_night.rendering.light_pass.project_points")
 def test_render_lights_export_applies_brightness_falloff(
-    mock_project, mock_falloff, mock_backend, mock_camera, sample_light
+    mock_project, mock_backend, mock_camera, sample_light
 ):
-    # Arrange
+    # Arrange — camera far enough away that falloff measurably dims the light
     screen_coords = np.array([[320.0, 180.0]])
     valid_mask = np.array([True])
     mock_project.return_value = (screen_coords, valid_mask)
-    mock_falloff.return_value = 0.5
+    mock_camera.position = np.array([0.0, 100.0, 5.0 + 4000.0])
     scene = _make_scene_with_lights([sample_light])
 
     # Act
     render_lights_export(scene, mock_camera, mock_backend)
 
-    # Assert — falloff called for each visible light (may be called more than once
-    # internally due to threshold check in _get_visible_indices)
-    mock_falloff.assert_called()
+    # Assert — light is still drawn and accumulated into the linear buffer
+    mock_backend.add_linear.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

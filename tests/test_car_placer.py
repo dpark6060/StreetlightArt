@@ -126,6 +126,35 @@ def test_place_cars_same_seed_reproducible(straight_segment, light_config):
     assert len(lights_a) == len(lights_b)
 
 
+def test_place_cars_shared_pools_preserve_seeded_colors(straight_segment, light_config):
+    # Arrange — reference path: build a fresh headlight/taillight ColorPool
+    # per car (the pre-change behavior), rather than the shared-per-run pools
+    # place_cars now builds. ColorPool construction draws no RNG, so this
+    # should produce identical colors to the shared-pool path for the same seed.
+    camera_forward = np.array([-1.0, 0.0, 0.0])
+    density_min, density_max = _get_density_range(straight_segment.road_type, light_config.cars)
+    old_rng = random.Random(123)
+    sample_points, sample_tangents = _walk_with_random_spacing(
+        straight_segment.geometry, density_min, density_max, old_rng
+    )
+    old_pairs = [
+        _create_car_at_point(point, tangent, straight_segment.road_type, light_config.cars, old_rng)
+        for point, tangent in zip(sample_points, sample_tangents)
+    ]
+    for pair in old_pairs:
+        pair.resolve_facing(camera_forward)
+    old_colors = [light.color for pair in old_pairs for light in pair.get_lights()]
+
+    # Act — current shared-pool path via place_cars
+    _, new_pairs = place_cars([straight_segment], light_config, random.Random(123))
+    for pair in new_pairs:
+        pair.resolve_facing(camera_forward)
+    new_colors = [light.color for pair in new_pairs for light in pair.get_lights()]
+
+    # Assert
+    assert old_colors == new_colors
+
+
 # ---------------------------------------------------------------------------
 # _get_density_range
 # ---------------------------------------------------------------------------

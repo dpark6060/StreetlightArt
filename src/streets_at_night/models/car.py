@@ -35,6 +35,8 @@ class CarLightPair:
         travel_bearing: float,
         config: CarConfig,
         rng: random.Random,
+        headlight_pool: t.Optional[ColorPool] = None,
+        taillight_pool: t.Optional[ColorPool] = None,
     ) -> None:
         """Initialize a CarLightPair at a road position.
 
@@ -46,15 +48,21 @@ class CarLightPair:
             config (CarConfig): Car light configuration providing headlight
                 and taillight color pools and separation range.
             rng (random.Random): Seeded RNG for separation sampling.
+            headlight_pool (ColorPool, optional): Pre-built headlight color
+                pool. If None, one is created from config.headlight_colors.
+                Pass a shared instance when placing many cars to avoid
+                re-parsing the palette per car.
+            taillight_pool (ColorPool, optional): Pre-built taillight color
+                pool. If None, one is created from config.taillight_colors.
         """
         self.travel_bearing = travel_bearing
         self._rng = rng
         self._config = config
-        self._headlight_pool = ColorPool(config.headlight_colors.colors, rng)
-        self._taillight_pool = ColorPool(config.taillight_colors.colors, rng)
-        self._headlight_color = self._headlight_pool.pick()
+        headlight_pool = headlight_pool if headlight_pool is not None else ColorPool(config.headlight_colors.colors, rng)
+        taillight_pool = taillight_pool if taillight_pool is not None else ColorPool(config.taillight_colors.colors, rng)
+        self._headlight_color = headlight_pool.pick()
         self._headlight_brightness = rng.uniform(config.headlight_brightness_min, config.headlight_brightness_max)
-        self._taillight_color = self._taillight_pool.pick()
+        self._taillight_color = taillight_pool.pick()
         self._taillight_brightness = rng.uniform(config.taillight_brightness_min, config.taillight_brightness_max)
         self._lights = self._create_lights(
             position,

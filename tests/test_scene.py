@@ -392,7 +392,8 @@ def test_scene_build_spatial_index_noop_for_empty_scene(
     # Should not raise
     scene.build_spatial_index()
 
-    assert scene._spatial_index is None
+    assert scene._road_index is None
+    assert scene._zone_index is None
 
 
 # ---------------------------------------------------------------------------
@@ -633,6 +634,45 @@ def test_scene_get_zones_in_rect_deduplicates_zones(
     count = sum(1 for z in res if z is large_zone)
 
     assert count == 1
+
+
+def test_scene_build_spatial_index_uses_separate_road_and_zone_indexes(
+    three_segments: list,
+    camera: object,
+    scene_config: SceneConfig,
+    residential_zone_near: ResidentialZone,
+) -> None:
+    scene = Scene(
+        three_segments,
+        camera,
+        scene_config,
+        residential_zones=[residential_zone_near],
+    )
+    scene.build_spatial_index()
+
+    assert scene._road_index is not None
+    assert scene._zone_index is not None
+    assert scene._road_index is not scene._zone_index
+
+
+def test_scene_get_roads_in_rect_never_returns_zones(
+    three_segments: list,
+    camera: object,
+    scene_config: SceneConfig,
+    residential_zone_near: ResidentialZone,
+) -> None:
+    # A zone occupying the same area as the first road segment
+    scene = Scene(
+        three_segments,
+        camera,
+        scene_config,
+        residential_zones=[residential_zone_near],
+    )
+    scene.build_spatial_index()
+
+    result = scene.get_roads_in_rect(0.0, -50.0, 200.0, 300.0)
+
+    assert all(isinstance(item, RoadSegment) for item in result)
 
 
 def test_scene_build_spatial_index_covers_zone_beyond_roads(
