@@ -284,6 +284,88 @@ def test_hazefield_sample_changes_over_time(two_layer_config):
     assert not np.array_equal(dx0, dx1)
 
 
+def _reference_slide(screen: np.ndarray, x_off: float, y_off: float, w_out: int, h_out: int) -> np.ndarray:
+    """Pre-optimization reference implementation of HazeField._slide.
+
+    Copied verbatim (modulo parameter names) from the implementation prior to
+    the row-gather/column-gather refactor, to pin down output equivalence.
+    """
+    h_scr, w_scr = screen.shape
+
+    x_off = x_off % w_scr
+    i0 = int(np.floor(x_off))
+    fx = x_off - i0
+    cols = (np.arange(w_out) + i0) % w_scr
+    cols_p1 = (cols + 1) % w_scr
+
+    y_off_pix = y_off % h_scr
+    j0 = int(np.floor(y_off_pix))
+    fy = y_off_pix - j0
+    rows = (np.arange(h_out) + j0) % h_scr
+    rows_p1 = (rows + 1) % h_scr
+
+    a = screen[rows][:, cols]
+    b = screen[rows][:, cols_p1]
+    c = screen[rows_p1][:, cols]
+    d = screen[rows_p1][:, cols_p1]
+    return (
+        (1 - fx) * (1 - fy) * a
+        + fx * (1 - fy) * b
+        + (1 - fx) * fy * c
+        + fx * fy * d
+    ).astype(np.float32)
+
+
+def test_hazefield_slide_matches_reference_implementation(two_layer_config):
+    # Arrange — fixed seed/layers/time so both implementations see identical
+    # phase screens and identical (x_off, y_off) offsets.
+    field = HazeField(
+        out_height=72, out_width=128, screen_height=256, screen_width=512,
+        amplitude_px=two_layer_config.amplitude_px,
+        layers=two_layer_config.layers, seed=two_layer_config.seed,
+    )
+    lay = field._layers[0]
+    x_off, y_off = lay["wind_x"] * 1.7, lay["wind_y"] * 1.7
+
+    # Act
+    indices = field._slide_indices(x_off, y_off, *lay["dx"].shape)
+    optimized = field._slide(lay["dx"], indices)
+    reference = _reference_slide(lay["dx"], x_off, y_off, w_out=128, h_out=72)
+
+    # Assert
+    np.testing.assert_allclose(optimized, reference, rtol=1e-6, atol=1e-6)
+
+
+def test_hazefield_sample_matches_reference_slide_end_to_end(two_layer_config):
+    # Arrange — verify the full sample() path (which hoists shared index math
+    # across the dx/dy calls per layer) matches per-call reference slides.
+    field = HazeField(
+        out_height=72, out_width=128, screen_height=256, screen_width=512,
+        amplitude_px=two_layer_config.amplitude_px,
+        layers=two_layer_config.layers, seed=two_layer_config.seed,
+    )
+    t = 3.25
+
+    # Act
+    dx, dy = field.sample(t)
+
+    # Assert — recompute expected dx/dy from the reference slide directly
+    expected_dx = np.zeros((72, 128), dtype=np.float32)
+    expected_dy = np.zeros((72, 128), dtype=np.float32)
+    for lay in field._layers:
+        expected_dx += _reference_slide(
+            lay["dx"], lay["wind_x"] * t, lay["wind_y"] * t, w_out=128, h_out=72,
+        )
+        expected_dy += _reference_slide(
+            lay["dy"], lay["wind_x"] * t, lay["wind_y"] * t, w_out=128, h_out=72,
+        )
+    expected_dx *= field.amplitude_px
+    expected_dy *= field.amplitude_px
+
+    np.testing.assert_allclose(dx, expected_dx, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(dy, expected_dy, rtol=1e-6, atol=1e-6)
+
+
 def test_hazefield_sample_amplitude_scaling(two_layer_config):
     # Arrange — same layers, different amplitudes
     f1 = HazeField(

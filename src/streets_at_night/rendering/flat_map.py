@@ -62,15 +62,23 @@ class FlatMapMeta:
     max_y: float
     resolution: float
 
-    def world_to_pixel(self, x: float, y: float) -> t.Tuple[float, float]:
+    def world_to_pixel(
+        self,
+        x: t.Union[float, np.ndarray],
+        y: t.Union[float, np.ndarray],
+    ) -> t.Tuple[t.Union[float, np.ndarray], t.Union[float, np.ndarray]]:
         """Convert ENU world coordinates to flat map pixel coordinates.
 
+        Pure elementwise arithmetic, so ``x``/``y`` may be scalars or numpy
+        arrays of any shape (the raycast paths pass full (H, W) arrays here to
+        vectorize world-to-pixel conversion across an entire screen).
+
         Args:
-            x (float): ENU east coordinate in meters.
-            y (float): ENU north coordinate in meters.
+            x (float | np.ndarray): ENU east coordinate(s) in meters.
+            y (float | np.ndarray): ENU north coordinate(s) in meters.
 
         Returns:
-            tuple[float, float]: (px, py) pixel coordinates.
+            tuple[float | np.ndarray, float | np.ndarray]: (px, py) pixel coordinate(s).
         """
         px = (x - self.min_x) / self.resolution
         py = (self.max_y - y) / self.resolution

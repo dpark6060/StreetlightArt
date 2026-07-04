@@ -2,6 +2,7 @@
 
 import typing as t
 
+import numpy as np
 import pygame
 from PIL import Image
 
@@ -130,19 +131,34 @@ class PygameBackend(RenderBackend):
             PIL.Image.Image: Current surface state as an RGB PIL image.
         """
         w, h = self._surface.get_size()
-        raw = pygame.image.tostring(self._surface, "RGB")
+        raw = pygame.image.tobytes(self._surface, "RGB")
         return Image.frombytes("RGB", (w, h), raw)
 
     def blit_pil_image(self, img: Image.Image) -> None:
         """Blit a PIL Image onto the pygame surface at (0, 0).
 
         Converts the PIL image to a pygame Surface and blits it at the origin.
-        The image mode must be RGB or compatible with pygame.image.fromstring.
+        The image mode must be RGB or compatible with pygame.image.frombuffer.
 
         Args:
             img (PIL.Image.Image): Image to blit. Should match surface size.
         """
-        surf = pygame.image.fromstring(img.tobytes(), img.size, img.mode)
+        surf = pygame.image.frombytes(img.tobytes(), img.size, img.mode)
+        self._surface.blit(surf, (0, 0))
+
+    def blit_array(self, frame: np.ndarray) -> None:
+        """Blit an (H, W, 3) uint8 RGB numpy array onto the surface at (0, 0).
+
+        One copy (``frame.tobytes()``) versus the two involved in going
+        through ``blit_pil_image`` (PIL Image wrap + ``pygame.image.frombytes``
+        re-encode). Preferred over ``blit_pil_image`` for callers that already
+        hold a raw numpy frame, e.g. the preview and animate loops.
+
+        Args:
+            frame (np.ndarray): (H, W, 3) uint8 RGB array matching the surface size.
+        """
+        h, w, _ = frame.shape
+        surf = pygame.image.frombuffer(frame.tobytes(), (w, h), "RGB")
         self._surface.blit(surf, (0, 0))
 
     def present(self) -> None:

@@ -6,21 +6,22 @@ Passes are represented as callables with the signature:
 New passes for Stage 5+ can be added by extending the list returned by
 get_preview_passes() or get_export_passes() without modifying this module.
 
-The warp-preview path (get_preview_passes_warp) is used for the interactive
-pygame preview. It replaces per-segment projection with a single PIL
-perspective warp of the pre-rendered flat map. The flat map and its metadata
-must be generated before calling render_scene_frame with the warp passes.
+The warp-preview path used for the interactive pygame preview replaces
+per-segment projection with a single PIL perspective warp of the
+pre-rendered flat map. It is driven directly by ``main.cmd_preview``, which
+calls ``warp_preview.render_warp_preview`` itself rather than going through
+this module's pass-list abstraction — the preview loop needs to build one
+ground raycast per camera move and share it between the warp render and the
+heat-haze depth map, which a fixed (scene, camera, backend) pass signature
+can't express.
 """
 
 import typing as t
 from pathlib import Path
 
-from PIL import Image
-
 from ..camera.camera import Camera
 from ..config.schema import QualityPreset
 from .backend import RenderBackend
-from .flat_map import FlatMapMeta
 from .raycast import build_ground_gbuffer
 
 if t.TYPE_CHECKING:
@@ -51,33 +52,6 @@ def get_preview_passes(no_lights: bool = False) -> t.List[RenderPass]:
         from .light_pass import render_lights_preview
         passes.append(render_lights_preview)
     return passes
-
-
-def get_preview_passes_warp(
-    flat_map: Image.Image,
-    flat_meta: FlatMapMeta,
-) -> t.List[RenderPass]:
-    """Return the warp-based preview pass list.
-
-    Returns a single pass that perspective-warps the flat road map to screen
-    each frame. Much faster than the segment-projection preview path.
-    The flat_map and flat_meta are captured in the closure.
-
-    Args:
-        flat_map (Image.Image): Pre-rendered top-down road map.
-        flat_meta (FlatMapMeta): World bounds and resolution metadata.
-
-    Returns:
-        list[RenderPass]: Single-element list containing the warp render pass.
-    """
-    from .warp_preview import render_warp_preview
-
-    def _warp_pass(
-        scene: "Scene", camera: Camera, backend: RenderBackend
-    ) -> None:
-        render_warp_preview(scene, camera, backend, flat_map, flat_meta)
-
-    return [_warp_pass]
 
 
 def get_export_passes(

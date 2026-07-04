@@ -24,6 +24,10 @@ class GroundHit:
         ray_dirs: (H, W, 3) normalized world-space ray direction per pixel.
         hit_x: (H, W) ENU x of the z=0 intersection (undefined where not hit).
         hit_y: (H, W) ENU y of the z=0 intersection (undefined where not hit).
+        hit_t: (H, W) parametric ray distance to the z=0 intersection, in
+            meters (since ray_dirs is normalized, this equals the metric
+            distance from the camera to the hit point). -1.0 where the ray
+            does not hit the ground in front of the camera.
         ground_mask: (H, W) bool, True where the ray hits z=0 in front of camera.
 
     Note:
@@ -37,6 +41,7 @@ class GroundHit:
     ray_dirs: np.ndarray
     hit_x: np.ndarray
     hit_y: np.ndarray
+    hit_t: np.ndarray
     ground_mask: np.ndarray
 
 
@@ -52,6 +57,13 @@ def build_ray_directions(
     inverse projection matrix to view-space directions, then through the
     inverse view matrix to world-space directions, and normalizes.
 
+    The meshgrid and intermediate stacks are built in float32 rather than
+    float64. ``inv_proj``/``inv_view`` are applied at their native precision
+    and the result is cast back to float32 after each matrix multiply.
+    Float32 gives ~7 significant digits, far more than needed for ENU scenes
+    that top out around 60 km — the halved memory traffic matters far more
+    at 60fps preview/animate rates and at multi-megapixel export sizes.
+
     Args:
         width (int): Screen width in pixels.
         height (int): Screen height in pixels.
@@ -59,11 +71,11 @@ def build_ray_directions(
         inv_view (np.ndarray): (4, 4) inverse view matrix.
 
     Returns:
-        np.ndarray: (H, W, 3) normalized ray directions in world ENU space.
+        np.ndarray: (H, W, 3) normalized float32 ray directions in world ENU space.
     """
     sx, sy = np.meshgrid(
-        np.arange(width, dtype=np.float64),
-        np.arange(height, dtype=np.float64),
+        np.arange(width, dtype=np.float32),
+        np.arange(height, dtype=np.float32),
     )
     ndc_x = 2.0 * sx / width - 1.0
     ndc_y = 1.0 - 2.0 * sy / height
@@ -72,22 +84,22 @@ def build_ray_directions(
     clip = np.stack([
         ndc_x.ravel(),
         ndc_y.ravel(),
-        np.full(n_pixels, -1.0),
-        np.ones(n_pixels),
+        np.full(n_pixels, -1.0, dtype=np.float32),
+        np.ones(n_pixels, dtype=np.float32),
     ], axis=1)
 
-    eye = (inv_proj @ clip.T).T
+    eye = ((inv_proj @ clip.T).T).astype(np.float32)
     eye_dir = np.column_stack([
         eye[:, 0],
         eye[:, 1],
-        np.full(n_pixels, -1.0),
-        np.zeros(n_pixels),
+        np.full(n_pixels, -1.0, dtype=np.float32),
+        np.zeros(n_pixels, dtype=np.float32),
     ])
-    world_dir = (inv_view @ eye_dir.T).T[:, :3]
+    world_dir = ((inv_view @ eye_dir.T).T[:, :3]).astype(np.float32)
 
     norms = np.linalg.norm(world_dir, axis=1, keepdims=True)
     norms = np.where(norms < 1e-10, 1.0, norms)
-    world_dir /= norms
+    world_dir = (world_dir / norms).astype(np.float32)
 
     return world_dir.reshape(height, width, 3)
 
@@ -105,7 +117,7 @@ def build_ground_gbuffer(camera: "Camera", width: int, height: int) -> GroundHit
         height (int): Screen height in pixels.
 
     Returns:
-        GroundHit: ray_dirs, hit_x, hit_y, and ground_mask for the screen.
+        GroundHit: ray_dirs, hit_x, hit_y, hit_t, and ground_mask for the screen.
     """
     cam_pos = camera.position
     inv_proj = np.linalg.inv(camera.get_projection_matrix())
@@ -119,8 +131,11 @@ def build_ground_gbuffer(camera: "Camera", width: int, height: int) -> GroundHit
 
     hit_x = cam_pos[0] + t_val * ray_dirs[:, :, 0]
     hit_y = cam_pos[1] + t_val * ray_dirs[:, :, 1]
+    hit_t = np.where(ground_mask, t_val, -1.0)
 
-    return GroundHit(ray_dirs=ray_dirs, hit_x=hit_x, hit_y=hit_y, ground_mask=ground_mask)
+    return GroundHit(
+        ray_dirs=ray_dirs, hit_x=hit_x, hit_y=hit_y, hit_t=hit_t, ground_mask=ground_mask,
+    )
 
 
 def visible_ground_aabb(camera: "Camera") -> t.Tuple[float, float, float, float]:

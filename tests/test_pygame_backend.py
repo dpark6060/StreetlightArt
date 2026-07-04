@@ -1,6 +1,7 @@
 # Radical
 """Unit tests for PygameBackend draw_point and draw_line correctness."""
 
+import numpy as np
 import pygame
 import pytest
 
@@ -97,3 +98,37 @@ def test_draw_line_fully_offscreen_draws_nothing(
 
     after = pygame.image.tobytes(surface, "RGB")
     assert before == after
+
+
+# ---------------------------------------------------------------------------
+# blit_array
+# ---------------------------------------------------------------------------
+
+
+def test_blit_array_sets_surface_pixels_from_frame(
+    backend: PygameBackend, surface: pygame.Surface
+) -> None:
+    """blit_array copies an (H, W, 3) uint8 array onto the surface at (0, 0)."""
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    frame[20, 10] = (255, 0, 0)
+
+    backend.blit_array(frame)
+
+    assert surface.get_at((10, 20)) == (255, 0, 0, 255)
+
+
+def test_blit_array_matches_blit_pil_image_output(
+    backend: PygameBackend, surface: pygame.Surface
+) -> None:
+    """blit_array and blit_pil_image produce identical surface contents for the same frame."""
+    from PIL import Image
+
+    frame = np.random.default_rng(0).integers(0, 256, (100, 100, 3), dtype=np.uint8)
+
+    backend.blit_array(frame)
+    via_array = pygame.image.tobytes(surface, "RGB")
+
+    backend.blit_pil_image(Image.fromarray(frame))
+    via_pil = pygame.image.tobytes(surface, "RGB")
+
+    assert via_array == via_pil

@@ -77,6 +77,46 @@ def test_build_ground_gbuffer_center_pixel_hits_below_camera():
 
 
 # ---------------------------------------------------------------------------
+# GroundHit.hit_t
+# ---------------------------------------------------------------------------
+
+
+def test_build_ground_gbuffer_hit_t_equals_metric_distance_on_ground():
+    cam_pos = [0.0, 0.0, 10.0]
+    cam = _identity_camera(cam_pos)
+
+    gb = build_ground_gbuffer(cam, 8, 8)
+
+    expected = np.hypot(
+        gb.hit_x - cam_pos[0],
+        np.hypot(gb.hit_y - cam_pos[1], cam_pos[2]),
+    )
+    np.testing.assert_allclose(
+        gb.hit_t[gb.ground_mask], expected[gb.ground_mask], atol=1e-4,
+    )
+
+
+def test_build_ground_gbuffer_hit_t_is_minus_one_on_sky():
+    # Camera looking dead level at the horizon — the upper half of the
+    # frustum never reaches the ground.
+    from streets_at_night.camera.camera import create_camera
+
+    cam = create_camera(
+        position=np.array([0.0, 0.0, 1000.0]),
+        target=np.array([0.0, 10000.0, 990.0]),
+        fov_deg=60.0,
+        aspect_ratio=16.0 / 9.0,
+        near=10.0,
+        far=20000.0,
+    )
+
+    gb = build_ground_gbuffer(cam, 64, 36)
+
+    assert not gb.ground_mask.all()
+    np.testing.assert_array_equal(gb.hit_t[~gb.ground_mask], -1.0)
+
+
+# ---------------------------------------------------------------------------
 # _ground_point_for_ray
 # ---------------------------------------------------------------------------
 

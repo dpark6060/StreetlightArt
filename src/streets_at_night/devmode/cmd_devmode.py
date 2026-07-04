@@ -512,7 +512,7 @@ def _pil_to_pygame(image: Image.Image) -> pygame.Surface:
     """
     rgb_image = image.convert("RGB")
     raw = rgb_image.tobytes()
-    return pygame.image.fromstring(raw, rgb_image.size, "RGB")
+    return pygame.image.frombytes(raw, rgb_image.size, "RGB")
 
 
 def _show_save_dialog(

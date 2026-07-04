@@ -67,7 +67,10 @@ def _make_gbuffer(
     h, w = hit_x.shape
     ray_dirs = np.zeros((h, w, 3), dtype=np.float64)
     ray_dirs[:, :, 2] = ray_z
-    return GroundHit(ray_dirs=ray_dirs, hit_x=hit_x, hit_y=hit_y, ground_mask=ground_mask)
+    hit_t = np.where(ground_mask, 1.0, -1.0)
+    return GroundHit(
+        ray_dirs=ray_dirs, hit_x=hit_x, hit_y=hit_y, hit_t=hit_t, ground_mask=ground_mask,
+    )
 
 
 def _capture_layer(backend: mock.MagicMock) -> list:

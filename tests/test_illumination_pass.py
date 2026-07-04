@@ -71,7 +71,10 @@ def _make_gbuffer(
 ) -> GroundHit:
     """Return a GroundHit with the given per-pixel hit coords and mask."""
     ray_dirs = np.zeros(hit_x.shape + (3,), dtype=np.float64)
-    return GroundHit(ray_dirs=ray_dirs, hit_x=hit_x, hit_y=hit_y, ground_mask=ground_mask)
+    hit_t = np.where(ground_mask, 1.0, -1.0)
+    return GroundHit(
+        ray_dirs=ray_dirs, hit_x=hit_x, hit_y=hit_y, hit_t=hit_t, ground_mask=ground_mask,
+    )
 
 
 def _make_grid_gbuffer(

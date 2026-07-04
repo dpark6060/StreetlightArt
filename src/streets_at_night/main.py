@@ -44,6 +44,10 @@ from .rendering.render_pipeline import (
 from .placement.scene_builder import build_scene
 from .scene.scene import Scene
 
+if t.TYPE_CHECKING:
+    from .rendering.flat_map import FlatMapMeta
+    from .rendering.raycast import GroundHit
+
 
 @dataclass
 class AnimationState:
@@ -321,7 +325,7 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
     import pygame
     from .rendering.pygame_backend import PygameBackend
     from .rendering.flat_map import get_flat_map
-    from .rendering.render_pipeline import get_preview_passes_warp
+    from .rendering.raycast import build_ground_gbuffer
     from .camera.controls import handle_input, render_hud, MouseDragState
 
     cache_dir = _resolve_cache_dir(getattr(args, "cache_dir", Path("cache")), config)
@@ -331,9 +335,8 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
 
     print("Generating flat map for preview...")
     flat_map, flat_meta = get_flat_map(scene, cache_dir)
+    flat_map_array = np.asarray(flat_map)
     print(f"Flat map ready: {flat_map.size[0]}x{flat_map.size[1]}px")
-
-    warp_passes = get_preview_passes_warp(flat_map, flat_meta)
 
     pygame.init()
     preview_width, preview_height = 1280, 720
@@ -350,8 +353,12 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
     drag_state = MouseDragState()
 
     print("Building initial base frame...")
+    gbuffer = build_ground_gbuffer(scene.camera, preview_width, preview_height)
     anim = AnimationState(
-        base_frame=_render_base_frame(scene, warp_passes, preview_width, preview_height)
+        base_frame=_render_base_frame(
+            scene, flat_map, flat_meta, flat_map_array,
+            preview_width, preview_height, gbuffer,
+        )
     )
 
     heat_haze_cfg = config.heat_haze
@@ -359,8 +366,11 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
     if heat_haze_cfg is not None and heat_haze_cfg.enabled:
         haze = HeatHaze(preview_width, preview_height, heat_haze_cfg)
         haze.set_base_frame(anim.base_frame)
-        haze.set_depth_map(_compute_preview_depth(scene.camera, heat_haze_cfg,
-                                                  preview_width, preview_height))
+        haze.set_depth_map(compute_depth_map(
+            scene.camera, preview_width, preview_height,
+            heat_haze_cfg.max_distance_m, heat_haze_cfg.sky_distance_factor,
+            gbuffer=gbuffer,
+        ))
 
     running = True
     while running:
@@ -399,14 +409,18 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
             anim.base_frame_dirty = True
 
         if anim.base_frame_dirty:
+            gbuffer = build_ground_gbuffer(scene.camera, preview_width, preview_height)
             anim.base_frame = _render_base_frame(
-                scene, warp_passes, preview_width, preview_height
+                scene, flat_map, flat_meta, flat_map_array,
+                preview_width, preview_height, gbuffer,
             )
             anim.base_frame_dirty = False
             if haze is not None:
                 haze.set_base_frame(anim.base_frame)
-                haze.set_depth_map(_compute_preview_depth(
-                    scene.camera, heat_haze_cfg, preview_width, preview_height
+                haze.set_depth_map(compute_depth_map(
+                    scene.camera, preview_width, preview_height,
+                    heat_haze_cfg.max_distance_m, heat_haze_cfg.sky_distance_factor,
+                    gbuffer=gbuffer,
                 ))
 
         anim.elapsed_t += dt
@@ -419,7 +433,7 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
         else:
             frame = anim.base_frame
 
-        backend.blit_pil_image(Image.fromarray(frame))
+        backend.blit_array(frame)
         fps = clock.get_fps()
         render_hud(screen, scene.camera, fps, 0, font)
         backend.present()
@@ -456,6 +470,7 @@ def cmd_animate(args: argparse.Namespace, config: SceneConfig) -> None:
         return
 
     import pygame
+    from .rendering.pygame_backend import PygameBackend
 
     display_width = args.width if args.width is not None else 1280
     display_height = args.height if args.height is not None else 720
@@ -467,6 +482,7 @@ def cmd_animate(args: argparse.Namespace, config: SceneConfig) -> None:
     screen = pygame.display.set_mode((display_width, display_height))
     pygame.display.set_caption("Streets At Night — Heat Haze")
     clock = pygame.time.Clock()
+    backend = PygameBackend(screen)
 
     elapsed_t = 0.0
     running = True
@@ -483,10 +499,8 @@ def cmd_animate(args: argparse.Namespace, config: SceneConfig) -> None:
 
         elapsed_t += dt
         frame = haze.apply(elapsed_t)
-        pil_frame = Image.fromarray(frame)
-        pg_surface = pygame.image.fromstring(pil_frame.tobytes(), pil_frame.size, pil_frame.mode)
-        screen.blit(pg_surface, (0, 0))
-        pygame.display.flip()
+        backend.blit_array(frame)
+        backend.present()
 
     pygame.quit()
 
@@ -745,29 +759,6 @@ def _save_animate_frame(haze: HeatHaze, elapsed_t: float) -> None:
     print(f"Frame saved: {out_path}")
 
 
-def _compute_preview_depth(
-    camera: t.Any,
-    heat_haze_cfg: t.Any,
-    width: int,
-    height: int,
-) -> np.ndarray:
-    """Compute the per-pixel depth map for the live preview camera.
-
-    Args:
-        camera (Camera): Active scene camera.
-        heat_haze_cfg (HeatHazeConfig): Active heat haze config.
-        width (int): Preview width in pixels.
-        height (int): Preview height in pixels.
-
-    Returns:
-        np.ndarray: (H, W) float32 depth map in meters.
-    """
-    return compute_depth_map(
-        camera, width, height,
-        heat_haze_cfg.max_distance_m, heat_haze_cfg.sky_distance_factor,
-    )
-
-
 def cmd_render(
     config: SceneConfig,
     quality: str,
@@ -829,26 +820,40 @@ def cmd_render(
 
 def _render_base_frame(
     scene: Scene,
-    warp_passes: t.List,
+    flat_map: Image.Image,
+    flat_meta: "FlatMapMeta",
+    flat_map_array: np.ndarray,
     width: int,
     height: int,
+    gbuffer: "GroundHit",
 ) -> np.ndarray:
-    """Render the full warp pipeline once and return the result as a numpy array.
+    """Render one warp-preview frame and return the result as a numpy array.
 
-    Uses a PillowBackend so the output is a PIL Image that can be converted to
-    a (H, W, 3) uint8 numpy array for per-frame manipulation.
+    Uses a PillowBackend so the output can be converted to a (H, W, 3) uint8
+    numpy array for per-frame manipulation. Calls render_warp_preview directly
+    (rather than through the generic render-pass pipeline) so the caller's
+    already-built GroundHit can be reused instead of raycasting again.
 
     Args:
         scene (Scene): The current world scene.
-        warp_passes (list): Render pass list (warp preview pass).
+        flat_map (Image.Image): Pre-rendered top-down road map.
+        flat_meta (FlatMapMeta): World bounds and resolution metadata.
+        flat_map_array (np.ndarray): Pre-converted (H, W, 3) uint8 flat map array.
         width (int): Output width in pixels.
         height (int): Output height in pixels.
+        gbuffer (GroundHit): Pre-computed ground raycast for the scene camera
+            at this size, shared with the heat-haze depth computation.
 
     Returns:
         np.ndarray: (H, W, 3) uint8 array of the composited frame.
     """
+    from .rendering.warp_preview import render_warp_preview
+
     pillow_backend = PillowBackend(width, height)
-    render_scene_frame(scene, pillow_backend, passes=warp_passes)
+    render_warp_preview(
+        scene, scene.camera, pillow_backend, flat_map, flat_meta,
+        flat_map_array=flat_map_array, gbuffer=gbuffer,
+    )
     return np.asarray(pillow_backend.get_image()).copy()
 
 
