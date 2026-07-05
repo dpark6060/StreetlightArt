@@ -8,6 +8,7 @@ import tomli_w
 from ..config.schema import (
     AtmosphereConfig,
     BoundsConfig,
+    BuildingConfig,
     CameraConfig,
     CarConfig,
     ColorPoolConfig,
@@ -72,6 +73,8 @@ def config_to_dict(config: SceneConfig) -> dict:
         data["stars"] = _stars_to_dict(config.stars)
     if config.heat_haze is not None:
         data["heat_haze"] = _heat_haze_to_dict(config.heat_haze)
+    if config.buildings is not None:
+        data["buildings"] = _buildings_to_dict(config.buildings)
     if config.devmode is not None:
         data["devmode"] = _devmode_to_dict(config.devmode)
     if config.region_name:
@@ -566,6 +569,42 @@ def _heat_haze_layer_to_dict(layer: HeatHazeLayerConfig) -> dict:
         "weight": layer.weight,
         "wind_x_pxs": layer.wind_x_pxs,
         "wind_y_pxs": layer.wind_y_pxs,
+    }
+
+
+def _buildings_to_dict(buildings: BuildingConfig) -> dict:
+    """Serialize a BuildingConfig to a dict.
+
+    Args:
+        buildings (BuildingConfig): Building mass/window configuration.
+
+    Returns:
+        dict: Serialized buildings section, including the
+            [buildings.height_defaults] table.
+    """
+    return {
+        "enabled": buildings.enabled,
+        "floor_height_m": buildings.floor_height_m,
+        "height_jitter": buildings.height_jitter,
+        "building_max_distance_m": buildings.building_max_distance_m,
+        "window_max_distance_m": buildings.window_max_distance_m,
+        "wall_color": buildings.wall_color,
+        "roof_color": buildings.roof_color,
+        "face_shade_strength": buildings.face_shade_strength,
+        "window_lit_fraction": buildings.window_lit_fraction,
+        "window_width_m": buildings.window_width_m,
+        "window_height_m": buildings.window_height_m,
+        "window_pitch_m": buildings.window_pitch_m,
+        "window_side_margin_m": buildings.window_side_margin_m,
+        "window_sill_margin_m": buildings.window_sill_margin_m,
+        "window_roof_margin_m": buildings.window_roof_margin_m,
+        "window_color_temp_min_k": buildings.window_color_temp_min_k,
+        "window_color_temp_max_k": buildings.window_color_temp_max_k,
+        "window_saturation": buildings.window_saturation,
+        "window_brightness_min": buildings.window_brightness_min,
+        "window_brightness_max": buildings.window_brightness_max,
+        "window_glow_px": buildings.window_glow_px,
+        "height_defaults": dict(buildings.height_defaults),
     }
 
 

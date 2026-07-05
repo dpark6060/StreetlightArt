@@ -10,7 +10,10 @@ import osmnx as ox
 
 # Bump whenever keep-cols or on-disk normalization change, so stale caches
 # written by an older version of this module are bypassed automatically.
-_CACHE_SCHEMA_VERSION: int = 2
+# v3: added "height" and "building:levels" to _BUILDINGS_KEEP_COLS so cached
+# buildings .gpkg files written before this change (which have neither
+# column) are transparently bypassed and re-downloaded with height data.
+_CACHE_SCHEMA_VERSION: int = 3
 
 _ROADS_PARAMS: dict = {"network_type": "drive"}
 
@@ -153,6 +156,8 @@ _BUILDINGS_KEEP_COLS: t.List[str] = [
     "geometry",
     "building",
     "name",
+    "height",
+    "building:levels",
 ]
 
 _ROADS_KEEP_COLS: t.List[str] = [

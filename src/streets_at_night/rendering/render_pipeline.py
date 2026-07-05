@@ -70,12 +70,14 @@ def get_export_passes(
     Pass order:
         1. Ground (tiled export) — sky, horizon, and textured ground.
         2. Roads — per-segment 3D projection with night-palette colors.
-        3. Illumination — world-space Gaussian map, raycast-sampled, additive.
+        3. Buildings — extruded wall and roof polygons (opaque, no lights).
+           (omitted when config.buildings is missing or disabled)
+        4. Illumination — world-space Gaussian map, raycast-sampled, additive.
            (omitted when no_lights=True)
-        4. Lights — bright cores and gaussian glow halos, additive.
+        5. Lights — bright cores and gaussian glow halos, additive.
            (omitted when no_lights=True)
-        5. Atmosphere — horizon glow gradient and optional distance haze.
-        6. Compositor — vignette darkening, optional stars, color grade stub.
+        6. Atmosphere — horizon glow gradient and optional distance haze.
+        7. Compositor — vignette darkening, optional stars, color grade stub.
 
     Args:
         cache_dir (Path): Directory for tile and OSM cache files.
@@ -115,6 +117,16 @@ def get_export_passes(
         )
 
     passes: t.List[RenderPass] = [_ground_export_pass, render_roads_export]
+
+    from .building_pass import render_buildings
+
+    def _buildings_pass(
+        scene: "Scene", camera: Camera, backend: RenderBackend
+    ) -> t.Dict[str, t.Any]:
+        return render_buildings(scene, camera, backend, gbuffer=_shared_gbuffer(camera, backend))
+
+    passes.append(_buildings_pass)
+
     if not no_lights:
         from .illumination_pass import render_illumination
         from .light_pass import render_lights_export
@@ -158,7 +170,7 @@ def get_export_pass_names(no_lights: bool = False) -> t.List[str]:
     Returns:
         list[str]: Ordered pass name strings.
     """
-    names = ["ground", "roads"]
+    names = ["ground", "roads", "buildings"]
     if not no_lights:
         names.extend(["illumination", "lights"])
     names.extend(["atmosphere", "compositor"])

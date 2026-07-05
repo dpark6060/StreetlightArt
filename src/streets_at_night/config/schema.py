@@ -362,6 +362,41 @@ class DevmodeConfig:
 
 
 @dataclass
+class BuildingConfig:
+    """Configuration for building mass rendering and lit windows.
+
+    Phase A (data + model) only consumes ``enabled``, ``floor_height_m``,
+    ``height_jitter``, and ``height_defaults`` — the remaining fields exist
+    now so the full ``[buildings]`` TOML section round-trips, and are
+    consumed by the Phase B (mass render) and Phase C (windows) render
+    passes.
+    """
+
+    enabled: bool
+    floor_height_m: float
+    height_jitter: float
+    building_max_distance_m: float
+    window_max_distance_m: float
+    wall_color: str
+    roof_color: str
+    face_shade_strength: float
+    window_lit_fraction: float
+    window_width_m: float
+    window_height_m: float
+    window_pitch_m: float
+    window_side_margin_m: float
+    window_sill_margin_m: float
+    window_roof_margin_m: float
+    window_color_temp_min_k: float
+    window_color_temp_max_k: float
+    window_saturation: float
+    window_brightness_min: float
+    window_brightness_max: float
+    window_glow_px: float
+    height_defaults: t.Dict[str, float]
+
+
+@dataclass
 class SceneConfig:
     """Top-level scene configuration.
 
@@ -381,4 +416,5 @@ class SceneConfig:
     stars: t.Optional[StarsConfig] = None
     devmode: t.Optional["DevmodeConfig"] = None
     heat_haze: t.Optional["HeatHazeConfig"] = None
+    buildings: t.Optional["BuildingConfig"] = None
     region_name: t.Optional[str] = None

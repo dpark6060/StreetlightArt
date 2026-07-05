@@ -68,6 +68,28 @@ def test_save_to_gpkg_empty_list_cell_does_not_raise(tmp_path):
     assert result["highway"].iloc[0] is None
 
 
+def test_save_to_gpkg_colon_column_survives_round_trip(tmp_path):
+    # Arrange — a "building:levels" column, as OSM building footprints carry
+    gdf = gpd.GeoDataFrame(
+        {
+            "geometry": [LineString([(0, 0), (1, 1)])],
+            "building:levels": ["3"],
+        },
+        crs="EPSG:4326",
+    )
+    path = tmp_path / "buildings.gpkg"
+
+    # Act
+    _save_to_gpkg(gdf, path, keep_cols=["geometry", "building:levels"])
+    result = gpd.read_file(path)
+
+    # Assert — the colon-bearing column name and its value both survive.
+    # If GDAL sanitizes the colon out of the column name, this fails and
+    # signals a real bug: building:levels silently breaks downstream.
+    assert "building:levels" in result.columns
+    assert result["building:levels"].iloc[0] == "3"
+
+
 # ---------------------------------------------------------------------------
 # Bug B — cold and warm loads return identical schemas
 # ---------------------------------------------------------------------------

@@ -17,8 +17,10 @@ from ..camera.camera import Camera
 from ..camera.coordinates import CoordinateTransformer, convert_road_geometry
 from ..config.schema import SceneConfig
 from ..data.zone_builder import build_zones
+from ..models.building import Building
 from ..models.road_segment import RoadSegment, get_default_width
 from ..models.road_types import RoadType
+from .building_builder import build_buildings
 from .car_placer import place_cars
 from .commercial_placer import place_commercial_lights
 from .house_light_placer import collect_house_lights
@@ -67,6 +69,9 @@ def build_scene(
     residential_zones, commercial_zones, dark_zones = _build_zones_if_available(
         land_use_gdf, buildings_gdf, transformer, config
     )
+    buildings = _build_buildings_if_configured(
+        buildings_gdf, residential_zones, transformer, config
+    )
 
     scene = Scene(
         segments,
@@ -76,6 +81,7 @@ def build_scene(
         commercial_zones=commercial_zones,
         dark_zones=dark_zones,
         transformer=transformer,
+        buildings=buildings,
     )
     scene.build_spatial_index()
     streetlights, car_lights, commercial_lights, house_lights = populate_lights(
@@ -266,6 +272,36 @@ def _build_zones_if_available(
 
     rng = random.Random(config.seed)
     return build_zones(land_use_gdf, buildings_gdf, transformer, config.zones, rng)
+
+
+def _build_buildings_if_configured(
+    buildings_gdf: t.Optional[gpd.GeoDataFrame],
+    residential_zones: t.List,
+    transformer: CoordinateTransformer,
+    config: SceneConfig,
+) -> t.List[Building]:
+    """Build the scene's Building list if a BuildingConfig is present.
+
+    Older SceneConfig instances (e.g. constructed by hand in tests without a
+    [buildings] section) have `config.buildings is None`; those produce an
+    empty building list rather than erroring.
+
+    Args:
+        buildings_gdf (GeoDataFrame or None): OSM building footprints (WGS84).
+        residential_zones (list[ResidentialZone]): Zones whose houses are
+            merged in where OSM coverage is missing.
+        transformer (CoordinateTransformer): WGS84 → ENU converter.
+        config (SceneConfig): Loaded scene configuration.
+
+    Returns:
+        list[Building]: All buildings in ENU coordinates, or an empty list
+            if `config.buildings` is unset.
+    """
+    if config.buildings is None:
+        return []
+
+    rng = random.Random(config.seed)
+    return build_buildings(buildings_gdf, residential_zones, transformer, config.buildings, rng)
 
 
 def _build_road_segments(

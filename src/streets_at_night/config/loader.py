@@ -9,6 +9,7 @@ from .defaults import DEFAULTS
 from .schema import (
     AtmosphereConfig,
     BoundsConfig,
+    BuildingConfig,
     CameraConfig,
     CarConfig,
     ColorPoolConfig,
@@ -104,6 +105,7 @@ def _build_scene_config(data: dict) -> SceneConfig:
     stars = _build_stars_config(data.get("stars", {}))
     devmode = _build_devmode_config(data["devmode"]) if "devmode" in data else None
     heat_haze = _build_heat_haze_config(data.get("heat_haze", {}))
+    buildings = _build_building_config(data.get("buildings", {}))
     return SceneConfig(
         camera=camera,
         bounds=bounds,
@@ -117,6 +119,7 @@ def _build_scene_config(data: dict) -> SceneConfig:
         stars=stars,
         devmode=devmode,
         heat_haze=heat_haze,
+        buildings=buildings,
         region_name=data.get("region_name"),
     )
 
@@ -662,6 +665,44 @@ def _build_heat_haze_layer_config(data: dict) -> HeatHazeLayerConfig:
         weight=float(data["weight"]),
         wind_x_pxs=float(data["wind_x_pxs"]),
         wind_y_pxs=float(data["wind_y_pxs"]),
+    )
+
+
+def _build_building_config(data: dict) -> BuildingConfig:
+    """Build a BuildingConfig from the buildings section of the config.
+
+    All fields use .get() with defaults so an empty or absent [buildings]
+    section is valid (backward compatible with pre-buildings TOML configs).
+
+    Args:
+        data (dict): Buildings section from the config, or empty dict if absent.
+
+    Returns:
+        BuildingConfig: Populated building config.
+    """
+    return BuildingConfig(
+        enabled=data.get("enabled", True),
+        floor_height_m=data.get("floor_height_m", 3.2),
+        height_jitter=data.get("height_jitter", 0.12),
+        building_max_distance_m=data.get("building_max_distance_m", 12000.0),
+        window_max_distance_m=data.get("window_max_distance_m", 6000.0),
+        wall_color=data.get("wall_color", "#0B0A09"),
+        roof_color=data.get("roof_color", "#080807"),
+        face_shade_strength=data.get("face_shade_strength", 0.2),
+        window_lit_fraction=data.get("window_lit_fraction", 0.12),
+        window_width_m=data.get("window_width_m", 1.4),
+        window_height_m=data.get("window_height_m", 1.1),
+        window_pitch_m=data.get("window_pitch_m", 2.4),
+        window_side_margin_m=data.get("window_side_margin_m", 0.8),
+        window_sill_margin_m=data.get("window_sill_margin_m", 0.9),
+        window_roof_margin_m=data.get("window_roof_margin_m", 0.6),
+        window_color_temp_min_k=data.get("window_color_temp_min_k", 1900.0),
+        window_color_temp_max_k=data.get("window_color_temp_max_k", 5500.0),
+        window_saturation=data.get("window_saturation", 0.85),
+        window_brightness_min=data.get("window_brightness_min", 0.15),
+        window_brightness_max=data.get("window_brightness_max", 0.5),
+        window_glow_px=data.get("window_glow_px", 0.0),
+        height_defaults=dict(data.get("height_defaults", {"default": 5.0})),
     )
 
 

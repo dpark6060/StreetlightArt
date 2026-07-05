@@ -13,6 +13,7 @@ import numpy as np
 from ..camera.camera import Camera
 from ..camera.coordinates import CoordinateTransformer
 from ..config.schema import SceneConfig
+from ..models.building import Building
 from ..models.road_segment import RoadSegment
 from ..models.zones import CommercialZone, DarkZone, ResidentialZone
 from .spatial_index import SpatialIndex
@@ -35,6 +36,7 @@ class Scene:
         residential_zones: Residential zone boundaries and their house collections.
         commercial_zones: Commercial zone boundaries with building footprints and parking.
         dark_zones: Dark zones (parks, forests, water) with base colors.
+        buildings: Building volumes (OSM footprints plus house-derived fill-in).
         lights: All light sources in the scene, as a flat list.
         car_pairs: CarLightPair references for render-time facing resolution.
         camera: The configured 3D camera.
@@ -51,6 +53,7 @@ class Scene:
         commercial_zones: t.Optional[t.List[CommercialZone]] = None,
         dark_zones: t.Optional[t.List[DarkZone]] = None,
         transformer: t.Optional[CoordinateTransformer] = None,
+        buildings: t.Optional[t.List[Building]] = None,
     ) -> None:
         """Initialise the Scene.
 
@@ -67,6 +70,8 @@ class Scene:
             transformer (CoordinateTransformer, optional): Coordinate transformer for
                 ENU ↔ WGS84 conversion. Required to use save-camera functionality.
                 Defaults to None.
+            buildings (list[Building], optional): Building volumes. Defaults to
+                an empty list.
         """
         self.road_segments = road_segments
         self.camera = camera
@@ -74,20 +79,22 @@ class Scene:
         self.residential_zones: t.List[ResidentialZone] = residential_zones or []
         self.commercial_zones: t.List[CommercialZone] = commercial_zones or []
         self.dark_zones: t.List[DarkZone] = dark_zones or []
+        self.buildings: t.List[Building] = buildings or []
         self.transformer = transformer
         self.lights: t.List["LightSource"] = []
         self.car_pairs: t.List[t.Any] = []  # CarLightPair, typed as Any to avoid circular import
         self._road_index: t.Optional[SpatialIndex] = None
         self._zone_index: t.Optional[SpatialIndex] = None
         self._light_index: t.Optional[SpatialIndex] = None
+        self._building_index: t.Optional[SpatialIndex] = None
         self._index_bounds: t.Optional[t.Tuple[float, float, float, float]] = None
 
     def build_spatial_index(self) -> None:
-        """Build the spatial indexes over road segments and zone boundaries.
+        """Build the spatial indexes over road segments, zones, and buildings.
 
         Computes world bounds from road geometries and zone boundaries, then
-        creates and populates a separate grid index each for road segments
-        and for zone boundaries. Call once after construction before
+        creates and populates a separate grid index each for road segments,
+        zone boundaries, and buildings. Call once after construction before
         rendering. The light index is created lazily by ``add_lights`` since
         lights are typically populated after this call.
         """
@@ -104,9 +111,11 @@ class Scene:
         self._index_bounds = bounds
         self._road_index = SpatialIndex(min_x, min_y, max_x, max_y, cell_size=500.0)
         self._zone_index = SpatialIndex(min_x, min_y, max_x, max_y, cell_size=500.0)
+        self._building_index = SpatialIndex(min_x, min_y, max_x, max_y, cell_size=500.0)
 
         self._index_road_segments()
         self._index_zones()
+        self._index_buildings()
 
     def add_lights(self, lights: t.List["LightSource"]) -> None:
         """Add lights to the scene and index them spatially.
@@ -226,6 +235,34 @@ class Scene:
         )
         return residential, commercial, dark
 
+    def get_buildings_in_rect(
+        self,
+        min_x: float,
+        min_y: float,
+        max_x: float,
+        max_y: float,
+    ) -> t.List[Building]:
+        """Return buildings whose footprint AABB overlaps the given rectangle.
+
+        Uses the building spatial index if built; falls back to all
+        buildings otherwise. Deduplicates results since the spatial index
+        may return the same building from multiple cells.
+
+        Args:
+            min_x (float): Rectangle minimum x in meters.
+            min_y (float): Rectangle minimum y in meters.
+            max_x (float): Rectangle maximum x in meters.
+            max_y (float): Rectangle maximum y in meters.
+
+        Returns:
+            list[Building]: Candidate buildings overlapping the query area.
+        """
+        if self._building_index is None:
+            return self.buildings
+
+        raw = self._building_index.query_rect(min_x, min_y, max_x, max_y)
+        return _deduplicate_by_identity(raw)
+
     def _index_road_segments(self) -> None:
         """Insert all road segments into the road spatial index."""
         for segment in self.road_segments:
@@ -248,6 +285,12 @@ class Scene:
                     self._zone_index.insert(
                         zone, bounds[0], bounds[1], bounds[2], bounds[3]
                     )
+
+    def _index_buildings(self) -> None:
+        """Insert all buildings into the building spatial index by footprint AABB."""
+        for building in self.buildings:
+            b_min_x, b_min_y, b_max_x, b_max_y = _building_bounds(building)
+            self._building_index.insert(building, b_min_x, b_min_y, b_max_x, b_max_y)
 
 
 def _compute_combined_bounds(
@@ -351,6 +394,24 @@ def _segment_bounds(
         tuple[float, float, float, float]: (min_x, min_y, max_x, max_y) in meters.
     """
     pts = segment.geometry
+    return (
+        float(pts[:, 0].min()),
+        float(pts[:, 1].min()),
+        float(pts[:, 0].max()),
+        float(pts[:, 1].max()),
+    )
+
+
+def _building_bounds(building: Building) -> t.Tuple[float, float, float, float]:
+    """Compute the axis-aligned bounding box for a single building footprint.
+
+    Args:
+        building (Building): The building.
+
+    Returns:
+        tuple[float, float, float, float]: (min_x, min_y, max_x, max_y) in meters.
+    """
+    pts = building.footprint
     return (
         float(pts[:, 0].min()),
         float(pts[:, 1].min()),
