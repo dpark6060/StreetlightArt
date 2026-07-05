@@ -665,7 +665,7 @@ def _build_heat_haze_layer_config(data: dict) -> HeatHazeLayerConfig:
     )
 
 
-def _build_devmode_camera_config(data: dict) -> DevmodeCameraConfig:
+def build_devmode_camera_config(data: dict) -> DevmodeCameraConfig:
     """Build a DevmodeCameraConfig from the devmode camera section.
 
     Args:
@@ -697,7 +697,7 @@ def _build_devmode_config(data: dict) -> DevmodeConfig:
         DevmodeConfig: Populated devmode config.
     """
     return DevmodeConfig(
-        camera=_build_devmode_camera_config(data["camera"]),
+        camera=build_devmode_camera_config(data["camera"]),
         render_width=data["render_width"],
         render_height=data["render_height"],
     )

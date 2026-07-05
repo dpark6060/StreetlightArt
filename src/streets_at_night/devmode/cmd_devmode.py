@@ -13,6 +13,7 @@ from PIL import Image
 
 from ..camera.controls import MouseDragState, handle_input
 from ..config.loader import _build_devmode_config, load_config
+from ..config.paths import resolve_cache_dir
 from ..config.schema import SceneConfig
 from ..rendering.atmosphere_pass import render_atmosphere
 from ..rendering.compositor import render_composite
@@ -57,10 +58,8 @@ def cmd_devmode(args: argparse.Namespace, config: SceneConfig) -> None:
     """
     _ensure_devmode_config(config)
 
-    from ..main import _resolve_cache_dir
-
     use_real_tiles: bool = getattr(args, "real_tiles", False)
-    cache_dir: Path = _resolve_cache_dir(getattr(args, "cache_dir", Path("cache")), config)
+    cache_dir: Path = resolve_cache_dir(getattr(args, "cache_dir", Path("cache")), config)
 
     pygame.init()
     window = pygame.display.set_mode((_WINDOW_WIDTH, _WINDOW_HEIGHT))
@@ -78,9 +77,13 @@ def cmd_devmode(args: argparse.Namespace, config: SceneConfig) -> None:
 
     render_surface = _render_and_convert(scene, config, use_labels=not use_real_tiles)
 
-    registry, scroll, rerender_btn, save_btn, load_btn, section_list = build_control_panel(
-        manager, panel_rect, config
-    )
+    panel = build_control_panel(manager, panel_rect, config)
+    registry = panel.registry
+    scroll = panel.scroll
+    rerender_btn = panel.rerender_btn
+    save_btn = panel.save_btn
+    load_btn = panel.load_btn
+    section_list = panel.section_list
     read_config_to_widgets(config, registry)
 
     original_position = scene.camera.position.copy()

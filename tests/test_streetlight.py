@@ -17,7 +17,7 @@ from streets_at_night.models.streetlight import (
     FixturePool,
     FixtureProfile,
     StreetLight,
-    _config_to_fixture_profile,
+    config_to_fixture_profile,
     create_fixture_pool,
 )
 
@@ -300,7 +300,7 @@ def test_create_from_profile_derives_illumination_radius_from_height_and_beam(
 
 
 # ---------------------------------------------------------------------------
-# _config_to_fixture_profile — color temperature + master shift
+# config_to_fixture_profile — color temperature + master shift
 # ---------------------------------------------------------------------------
 
 
@@ -327,8 +327,8 @@ def test_config_to_fixture_profile_positive_shift_makes_color_cooler(rng):
     cfg = _make_profile_config(2700.0)
 
     # Act
-    base = _config_to_fixture_profile(cfg, rng, 0.0)
-    shifted = _config_to_fixture_profile(cfg, rng, 2000.0)
+    base = config_to_fixture_profile(cfg, rng, 0.0)
+    shifted = config_to_fixture_profile(cfg, rng, 2000.0)
 
     # Assert — a higher color temperature carries more blue
     assert shifted.fixture_color[2] > base.fixture_color[2]

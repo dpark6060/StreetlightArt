@@ -30,7 +30,8 @@ from .camera.coordinates import (
     wgs84_to_enu,
 )
 from .config.loader import load_config
-from .config.schema import BoundsConfig, SceneConfig
+from .config.paths import compute_origin, resolve_cache_dir
+from .config.schema import BoundsConfig, HeatHazeConfig, QualityPreset, SceneConfig
 from .rendering.heat_haze import HeatHaze, compute_depth_map
 from .data.osm_loader import load_buildings, load_land_use, load_roads
 from .data.road_classifier import classify_roads
@@ -241,7 +242,7 @@ def main() -> None:
     config = load_config(args.config)
 
     if args.command == "verify":
-        cmd_verify(config, args.output, _resolve_cache_dir(args.cache_dir, config))
+        cmd_verify(config, args.output, resolve_cache_dir(args.cache_dir, config))
     elif args.command == "preview":
         cmd_preview(args, config)
     elif args.command == "render":
@@ -249,7 +250,7 @@ def main() -> None:
             config,
             args.quality,
             args.output,
-            _resolve_cache_dir(args.cache_dir, config),
+            resolve_cache_dir(args.cache_dir, config),
             args.no_lights,
             width_override=args.width,
             height_override=args.height,
@@ -260,21 +261,6 @@ def main() -> None:
     elif args.command == "devmode":
         from .devmode.cmd_devmode import cmd_devmode
         cmd_devmode(args, config)
-
-
-def _resolve_cache_dir(base_dir: Path, config: SceneConfig) -> Path:
-    """Return the effective cache directory, applying region_name if set.
-
-    Args:
-        base_dir (Path): Base cache directory from CLI (default: cache/).
-        config (SceneConfig): Loaded scene config.
-
-    Returns:
-        Path: base_dir / region_name if region_name is set, else base_dir.
-    """
-    if config.region_name:
-        return base_dir / config.region_name
-    return base_dir
 
 
 def cmd_verify(config: SceneConfig, output_path: Path, cache_dir: Path) -> None:
@@ -329,7 +315,7 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
     from .rendering.raycast import build_ground_gbuffer
     from .camera.controls import handle_input, render_hud, MouseDragState
 
-    cache_dir = _resolve_cache_dir(getattr(args, "cache_dir", Path("cache")), config)
+    cache_dir = resolve_cache_dir(getattr(args, "cache_dir", Path("cache")), config)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     scene = _load_scene(config, args.quality, cache_dir)
@@ -532,7 +518,7 @@ def _load_animate_base_frame(
 
 def _build_animate_haze(
     config: SceneConfig,
-    heat_haze_cfg: t.Any,
+    heat_haze_cfg: HeatHazeConfig,
     base_frame: np.ndarray,
     display_width: int,
     display_height: int,
@@ -553,7 +539,7 @@ def _build_animate_haze(
     Returns:
         HeatHaze: Ready-to-use haze instance.
     """
-    transformer = create_transformer(*_compute_origin(config))
+    transformer = create_transformer(*compute_origin(config))
     camera = create_camera(
         position=_camera_position_enu(config, transformer),
         target=_target_position_enu(config, transformer),
@@ -576,7 +562,7 @@ def _build_animate_haze(
 def cmd_animate_record(
     args: argparse.Namespace,
     config: SceneConfig,
-    heat_haze_cfg: t.Any,
+    heat_haze_cfg: HeatHazeConfig,
 ) -> None:
     """Render an offline MP4 of heat-haze animation at high resolution.
 
@@ -637,7 +623,7 @@ def _resolve_record_dimensions(
     return int(width), int(height)
 
 
-def _default_video_duration(heat_haze_cfg: t.Any) -> float:
+def _default_video_duration(heat_haze_cfg: HeatHazeConfig) -> float:
     """Pick a default video duration covering one cycle of the slowest layer.
 
     For each layer, the cyclic period along an axis is
@@ -857,10 +843,10 @@ def _render_base_frame(
 
 
 def _apply_resolution_overrides(
-    preset: t.Any,
+    preset: QualityPreset,
     width_override: t.Optional[int],
     height_override: t.Optional[int],
-) -> t.Any:
+) -> QualityPreset:
     """Return a new preset with optional width and height overrides applied.
 
     Uses dataclasses.replace to avoid mutating the shared preset object.
@@ -934,7 +920,7 @@ def _load_scene(
     roads = classify_roads(roads_raw)
     print(f"  {len(roads)} road segments loaded.")
 
-    origin_lat, origin_lon = _compute_origin(config)
+    origin_lat, origin_lon = compute_origin(config)
     print(f"Coordinate origin: {origin_lat:.4f}N, {origin_lon:.4f}W")
     transformer = create_transformer(origin_lat, origin_lon)
 
@@ -1068,20 +1054,6 @@ def _bounds_to_bbox(bounds: BoundsConfig) -> tuple:
         tuple: (north, south, east, west) floats.
     """
     return (bounds.north, bounds.south, bounds.east, bounds.west)
-
-
-def _compute_origin(config: SceneConfig) -> t.Tuple[float, float]:
-    """Compute the local coordinate origin as the midpoint between camera and target.
-
-    Args:
-        config (SceneConfig): Scene configuration with camera section.
-
-    Returns:
-        tuple[float, float]: (origin_lat, origin_lon) in WGS84 degrees.
-    """
-    origin_lat = (config.camera.lat + config.camera.target_lat) / 2.0
-    origin_lon = (config.camera.lon + config.camera.target_lon) / 2.0
-    return origin_lat, origin_lon
 
 
 def _camera_position_enu(

@@ -50,7 +50,7 @@ def place_streetlights(
         if profile is None:
             continue
 
-        segment_lights = _place_lights_on_segment(segment, rng)
+        segment_lights = place_lights_on_segment(segment, rng)
         lights.extend(segment_lights)
 
     return lights
@@ -85,7 +85,7 @@ def _build_pools_per_road_type(
 # ---------------------------------------------------------------------------
 
 
-def _place_lights_on_segment(
+def place_lights_on_segment(
     segment: RoadSegment,
     rng: random.Random,
 ) -> t.List[LightSource]:

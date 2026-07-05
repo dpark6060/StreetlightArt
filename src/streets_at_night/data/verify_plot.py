@@ -12,8 +12,6 @@ from ..config.schema import CameraConfig, SceneConfig
 from ..models.road_types import RoadType
 from .zone_builder import _TAG_TO_ZONE_TYPE
 
-matplotlib.use("Agg")
-
 
 _ROAD_COLORS: t.Dict[RoadType, str] = {
     RoadType.HIGHWAY: "#FF6B6B",
@@ -78,6 +76,7 @@ def save_verification_plot(
         buildings_gdf (GeoDataFrame): Building footprint polygons.
         output_path (Path): Destination PNG path.
     """
+    matplotlib.use("Agg")
     fig = _build_verification_figure(config, roads_gdf, land_use_gdf, buildings_gdf)
     fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="#1a1a2e")
     plt.close(fig)

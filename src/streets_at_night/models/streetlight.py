@@ -96,7 +96,7 @@ class FixturePool:
         chosen = self._rng.choices(self._entries, weights=self._weights, k=1)[0]
         if chosen is None:
             return None
-        return _config_to_fixture_profile(chosen, self._rng, self._color_temp_shift_k)
+        return config_to_fixture_profile(chosen, self._rng, self._color_temp_shift_k)
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +211,7 @@ def _get_pool_entries_for_road_type(
     return getattr(config, attr)
 
 
-def _config_to_fixture_profile(
+def config_to_fixture_profile(
     cfg: FixtureProfileConfig,
     rng: random.Random,
     color_temp_shift_k: float,

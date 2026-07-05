@@ -9,13 +9,17 @@ from shapely.geometry import box
 
 from ..camera.coordinates import create_transformer
 from ..config.defaults import DEFAULTS
-from ..config.loader import _build_devmode_camera_config
+from ..config.loader import build_devmode_camera_config
+from ..config.paths import compute_origin
 from ..config.schema import SceneConfig
 from ..data.osm_loader import load_roads
 from ..data.road_classifier import classify_roads
 from ..placement.scene_builder import build_scene
 from ..scene.scene import Scene
 from .devmode_camera import build_devmode_camera
+
+if t.TYPE_CHECKING:
+    from ..camera.camera import Camera
 
 _DEFAULT_STRIP_HALF_WIDTH_DEG: float = 0.025  # ≈2.5 km per side
 
@@ -49,7 +53,7 @@ def build_real_scene_strip(
     roads = classify_roads(roads_gdf)
     print(f"  Classified {len(roads)} road segments in strip.")
 
-    origin_lat, origin_lon = _compute_origin(config)
+    origin_lat, origin_lon = compute_origin(config)
     transformer = create_transformer(origin_lat, origin_lon)
     camera = _build_devmode_camera(config)
 
@@ -158,20 +162,6 @@ def _build_strip_cache_filename(config: SceneConfig, strip_half_width_deg: float
     return f"debug_strip_{width_tag}_{target_lon_tag}_{bounds_hash}.gpkg"
 
 
-def _compute_origin(config: SceneConfig) -> t.Tuple[float, float]:
-    """Compute coordinate origin as the midpoint between camera and target.
-
-    Args:
-        config (SceneConfig): Scene configuration.
-
-    Returns:
-        tuple[float, float]: (origin_lat, origin_lon) in WGS84 degrees.
-    """
-    origin_lat = (config.camera.lat + config.camera.target_lat) / 2.0
-    origin_lon = (config.camera.lon + config.camera.target_lon) / 2.0
-    return origin_lat, origin_lon
-
-
 def _build_devmode_camera(config: SceneConfig) -> "Camera":
     """Build the devmode ENU camera from config (same as the synthetic scene).
 
@@ -181,14 +171,12 @@ def _build_devmode_camera(config: SceneConfig) -> "Camera":
     Returns:
         Camera: Configured ENU-space devmode camera.
     """
-    from ..camera.camera import Camera  # noqa: F401 — satisfies TYPE_CHECKING guard
-
     if config.devmode is not None:
         camera_cfg = config.devmode.camera
         width = config.devmode.render_width
         height = config.devmode.render_height
     else:
-        camera_cfg = _build_devmode_camera_config(DEFAULTS["devmode"]["camera"])
+        camera_cfg = build_devmode_camera_config(DEFAULTS["devmode"]["camera"])
         width = DEFAULTS["devmode"]["render_width"]
         height = DEFAULTS["devmode"]["render_height"]
 

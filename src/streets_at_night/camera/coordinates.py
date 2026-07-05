@@ -62,6 +62,73 @@ class CoordinateTransformer:
         self._to_utm = to_utm
         self._from_utm = from_utm
 
+    def wgs84_to_enu(
+        self,
+        lat: float,
+        lon: float,
+        alt_m: float = 0.0,
+    ) -> t.Tuple[float, float, float]:
+        """Convert a single WGS84 lat/lon/alt point to local ENU meters.
+
+        Args:
+            lat (float): Latitude in WGS84 degrees.
+            lon (float): Longitude in WGS84 degrees.
+            alt_m (float): Altitude in meters above the reference ellipsoid.
+
+        Returns:
+            tuple[float, float, float]: (east_m, north_m, up_m) in meters from origin.
+        """
+        easting, northing = self._to_utm.transform(lon, lat)
+        east_m = easting - self._origin_easting
+        north_m = northing - self._origin_northing
+        return float(east_m), float(north_m), float(alt_m)
+
+    def wgs84_to_enu_batch(
+        self,
+        lats: np.ndarray,
+        lons: np.ndarray,
+        alt_m: float = 0.0,
+    ) -> np.ndarray:
+        """Convert arrays of WGS84 lat/lon to local ENU meter coordinates.
+
+        Args:
+            lats (np.ndarray): Array of latitudes in WGS84 degrees.
+            lons (np.ndarray): Array of longitudes in WGS84 degrees.
+            alt_m (float): Altitude in meters, applied uniformly to all points.
+
+        Returns:
+            np.ndarray: Shape (N, 3) array of (east_m, north_m, up_m) values.
+        """
+        eastings, northings = self._to_utm.transform(lons, lats)
+        east_m = np.asarray(eastings) - self._origin_easting
+        north_m = np.asarray(northings) - self._origin_northing
+        up_m = np.full_like(east_m, alt_m)
+        return np.column_stack([east_m, north_m, up_m])
+
+    def enu_to_wgs84(
+        self,
+        east_m: float,
+        north_m: float,
+        up_m: float = 0.0,
+    ) -> t.Tuple[float, float, float]:
+        """Convert local ENU meters back to WGS84 lat/lon/alt.
+
+        Reverses the WGS84 → UTM → ENU conversion by adding the origin offset
+        back and projecting through the inverse UTM transformer.
+
+        Args:
+            east_m (float): East offset in meters from origin.
+            north_m (float): North offset in meters from origin.
+            up_m (float): Up (altitude) in meters.
+
+        Returns:
+            tuple[float, float, float]: (lat, lon, alt_m) in WGS84 degrees and meters.
+        """
+        easting = east_m + self._origin_easting
+        northing = north_m + self._origin_northing
+        lon, lat = self._from_utm.transform(easting, northing)
+        return float(lat), float(lon), float(up_m)
+
 
 def create_transformer(origin_lat: float, origin_lon: float) -> CoordinateTransformer:
     """Create a coordinate transformer centered on the given lat/lon origin.
@@ -103,10 +170,7 @@ def wgs84_to_enu(
     Returns:
         tuple[float, float, float]: (east_m, north_m, up_m) in meters from origin.
     """
-    easting, northing = transformer._to_utm.transform(lon, lat)
-    east_m = easting - transformer._origin_easting
-    north_m = northing - transformer._origin_northing
-    return float(east_m), float(north_m), float(alt_m)
+    return transformer.wgs84_to_enu(lat, lon, alt_m)
 
 
 def wgs84_to_enu_batch(
@@ -126,11 +190,7 @@ def wgs84_to_enu_batch(
     Returns:
         np.ndarray: Shape (N, 3) array of (east_m, north_m, up_m) values.
     """
-    eastings, northings = transformer._to_utm.transform(lons, lats)
-    east_m = np.asarray(eastings) - transformer._origin_easting
-    north_m = np.asarray(northings) - transformer._origin_northing
-    up_m = np.full_like(east_m, alt_m)
-    return np.column_stack([east_m, north_m, up_m])
+    return transformer.wgs84_to_enu_batch(lats, lons, alt_m)
 
 
 def convert_road_geometry(
@@ -232,7 +292,4 @@ def enu_to_wgs84(
     Returns:
         tuple[float, float, float]: (lat, lon, alt_m) in WGS84 degrees and meters.
     """
-    easting = east_m + transformer._origin_easting
-    northing = north_m + transformer._origin_northing
-    lon, lat = transformer._from_utm.transform(easting, northing)
-    return float(lat), float(lon), float(up_m)
+    return transformer.enu_to_wgs84(east_m, north_m, up_m)
