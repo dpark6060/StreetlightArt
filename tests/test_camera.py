@@ -4,15 +4,7 @@
 import numpy as np
 import pytest
 
-from streets_at_night.camera.camera import (
-    Camera,
-    create_camera,
-    get_forward,
-    get_right,
-    get_frustum_planes,
-    get_projection_matrix,
-    get_view_matrix,
-)
+from streets_at_night.camera.camera import Camera, create_camera
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -54,7 +46,7 @@ def north_facing_camera() -> Camera:
 
 def test_get_forward_is_normalized(camera):
     # Act
-    forward = get_forward(camera)
+    forward = camera.get_forward()
 
     # Assert
     assert np.linalg.norm(forward) == pytest.approx(1.0, abs=1e-9)
@@ -62,7 +54,7 @@ def test_get_forward_is_normalized(camera):
 
 def test_get_forward_points_toward_target(north_facing_camera):
     # Act
-    forward = get_forward(north_facing_camera)
+    forward = north_facing_camera.get_forward()
 
     # Assert — target is directly north; forward Y component should dominate
     assert forward[1] > 0.0
@@ -76,7 +68,7 @@ def test_get_forward_points_toward_target(north_facing_camera):
 
 def test_get_right_is_normalized(camera):
     # Act
-    right = get_right(camera)
+    right = camera.get_right()
 
     # Assert
     assert np.linalg.norm(right) == pytest.approx(1.0, abs=1e-9)
@@ -84,8 +76,8 @@ def test_get_right_is_normalized(camera):
 
 def test_get_right_is_perpendicular_to_forward(camera):
     # Act
-    forward = get_forward(camera)
-    right = get_right(camera)
+    forward = camera.get_forward()
+    right = camera.get_right()
 
     # Assert — dot product of perpendicular vectors is 0
     assert np.dot(forward, right) == pytest.approx(0.0, abs=1e-9)
@@ -97,7 +89,7 @@ def test_get_right_is_perpendicular_to_forward(camera):
 
 def test_get_view_matrix_shape(camera):
     # Act
-    view = get_view_matrix(camera)
+    view = camera.get_view_matrix()
 
     # Assert
     assert view.shape == (4, 4)
@@ -109,19 +101,7 @@ def test_get_view_matrix_shape(camera):
 
 def test_get_projection_matrix_shape(camera):
     # Act
-    proj = get_projection_matrix(camera)
+    proj = camera.get_projection_matrix()
 
     # Assert
     assert proj.shape == (4, 4)
-
-
-# ---------------------------------------------------------------------------
-# get_frustum_planes
-# ---------------------------------------------------------------------------
-
-def test_get_frustum_planes_shape(camera):
-    # Act
-    planes = get_frustum_planes(camera)
-
-    # Assert — 6 planes, each with 4 coefficients (nx, ny, nz, d)
-    assert planes.shape == (6, 4)

@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
+import dataclasses
 from dataclasses import dataclass
 
 from PIL import Image
@@ -787,8 +788,6 @@ def cmd_render(
         format_override (str | None): Force output format ("png" or "tiff").
             When None, format is auto-detected from the output path extension.
     """
-    import dataclasses
-
     cache_dir.mkdir(parents=True, exist_ok=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -876,8 +875,6 @@ def _apply_resolution_overrides(
     Returns:
         QualityPreset: New preset with overrides applied.
     """
-    import dataclasses
-
     kwargs: t.Dict[str, int] = {}
     if width_override is not None:
         kwargs["width"] = width_override
