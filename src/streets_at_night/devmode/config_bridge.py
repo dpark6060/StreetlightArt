@@ -61,6 +61,7 @@ def read_config_to_widgets(config: t.Any, registry: SliderRegistry) -> None:
     _read_sliders(config, registry)
     _read_bool_buttons(config, registry)
     _read_text_entries(config, registry)
+    _read_color_pools(config, registry)
 
 
 def apply_widgets_to_config(registry: SliderRegistry, config: t.Any) -> None:
@@ -79,6 +80,7 @@ def apply_widgets_to_config(registry: SliderRegistry, config: t.Any) -> None:
     _apply_sliders(registry, config)
     _apply_bool_buttons(registry, config)
     _apply_text_entries(registry, config)
+    _apply_color_pools(registry, config)
 
 
 def _read_sliders(config: t.Any, registry: SliderRegistry) -> None:
@@ -195,6 +197,51 @@ def _apply_text_entries(registry: SliderRegistry, config: t.Any) -> None:
         else:
             value = text
         set_nested(config, config_path, value)
+
+
+def _read_color_pools(config: t.Any, registry: SliderRegistry) -> None:
+    """Push current pool colours to each colour-pool row's hex/weight entries.
+
+    Fills only up to min(len(rows), len(colors)) so a row/colour count mismatch
+    cannot raise.
+
+    Args:
+        config (Any): Root object providing the source colour pools.
+        registry (SliderRegistry): Registry with colour-pool bindings.
+    """
+    for binding in registry.color_pools:
+        colors = get_nested(config, binding.config_path)
+        for i in range(min(len(binding.rows), len(colors))):
+            hex_entry, weight_entry = binding.rows[i]
+            hex_entry.set_text(colors[i][0])
+            weight_entry.set_text(f"{colors[i][1]:.3f}")
+
+
+def _apply_color_pools(registry: SliderRegistry, config: t.Any) -> None:
+    """Rebuild each colour pool's `colors` list from its row widgets.
+
+    The tuples in ColorPoolConfig.colors are immutable, so this REPLACES the
+    whole list with fresh (hex, weight) tuples rather than mutating elements. A
+    blank hex or unparseable weight falls back to the current value for that row.
+
+    Applying is unconditional (no dirty gate): rebuilding from the row widgets is
+    idempotent when untouched, unlike the slider extra_config_paths fan-out.
+
+    Args:
+        registry (SliderRegistry): Registry with colour-pool bindings.
+        config (Any): Root object to update in-place.
+    """
+    for binding in registry.color_pools:
+        current = get_nested(config, binding.config_path)
+        new_colors: t.List[t.Tuple[str, float]] = []
+        for i, (hex_entry, weight_entry) in enumerate(binding.rows):
+            hex_str = hex_entry.get_text().strip() or current[i][0]
+            try:
+                weight = float(weight_entry.get_text())
+            except ValueError:
+                weight = current[i][1]
+            new_colors.append((hex_str, weight))
+        set_nested(config, binding.config_path, new_colors)
 
 
 def _format_value(value: t.Any, is_int: bool) -> str:

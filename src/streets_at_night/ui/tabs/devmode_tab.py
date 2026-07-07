@@ -304,6 +304,7 @@ class DevmodeTab(Tab):
         registry.entry_to_slider.clear()
         registry.bool_buttons.clear()
         registry.text_entries.clear()
+        registry.color_pools.clear()
         registry.extra_widgets.clear()
         registry.dirty.clear()
 
@@ -375,7 +376,7 @@ class DevmodeTab(Tab):
         registry = self._active_registry()
         if entry in registry.entry_to_slider:
             apply_entry_to_slider(entry, registry)
-        elif entry not in registry.text_entries:
+        elif entry not in registry.text_entries and entry not in registry.color_pool_widgets():
             return
         self._apply_active_section()
 

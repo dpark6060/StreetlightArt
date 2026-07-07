@@ -31,6 +31,20 @@ class SliderDescriptor:
     extra_config_paths: t.List[tuple] = field(default_factory=list)
 
 
+@dataclass
+class ColorPoolBinding:
+    """Binds one ColorPoolConfig's `colors` list to its editor row widgets.
+
+    Attributes:
+        config_path: Path (relative to the section root) to the `colors` list,
+            e.g. ("parking_colors", "colors").
+        rows: One (hex_entry, weight_entry) widget pair per colour, in order.
+    """
+
+    config_path: tuple
+    rows: t.List[t.Tuple[t.Any, t.Any]]
+
+
 class SliderRegistry:
     """Holds all widget-to-config-path mappings for a single control panel section.
 
@@ -60,6 +74,7 @@ class SliderRegistry:
         self.bool_buttons: t.Dict[t.Any, tuple] = {}
         self.bool_states: t.Dict[t.Any, bool] = {}
         self.text_entries: t.Dict[t.Any, tuple] = {}
+        self.color_pools: t.List[ColorPoolBinding] = []
         self.extra_widgets: t.List[t.Any] = []
         self.dirty: t.Set[str] = set()
 
@@ -109,16 +124,40 @@ class SliderRegistry:
         """
         self.text_entries[entry] = config_path
 
+    def register_color_pool(self, config_path: tuple, rows: t.List[t.Tuple[t.Any, t.Any]]) -> None:
+        """Register a colour pool's editor rows against its `colors` list path.
+
+        Args:
+            config_path (tuple): Path to the ColorPoolConfig's `colors` list.
+            rows (list): One (hex_entry, weight_entry) widget pair per colour.
+        """
+        self.color_pools.append(ColorPoolBinding(config_path, rows))
+
+    def color_pool_widgets(self) -> t.List[t.Any]:
+        """Return a flat list of every hex/weight entry across all colour pools.
+
+        Returns:
+            list: All hex and weight entry widgets from every registered binding.
+        """
+        widgets: t.List[t.Any] = []
+        for binding in self.color_pools:
+            for hex_entry, weight_entry in binding.rows:
+                widgets.append(hex_entry)
+                widgets.append(weight_entry)
+        return widgets
+
     def all_widgets(self) -> t.List[t.Any]:
         """Return every tracked widget so callers can kill them all at once.
 
         Returns:
-            list: All sliders, value entries, bool buttons, text entries, and extra widgets.
+            list: All sliders, value entries, bool buttons, text entries,
+                colour-pool entries, and extra widgets.
         """
         widgets: t.List[t.Any] = []
         widgets.extend(self.sliders.keys())
         widgets.extend(self.value_entries.values())
         widgets.extend(self.bool_buttons.keys())
         widgets.extend(self.text_entries.keys())
+        widgets.extend(self.color_pool_widgets())
         widgets.extend(self.extra_widgets)
         return widgets

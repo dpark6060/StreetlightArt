@@ -119,6 +119,28 @@ def test_switching_light_kinds_preserves_edited_value(config, headless_manager, 
     assert returned_slider.get_current_value() == pytest.approx(0.42, abs=1e-2)
 
 
+def test_finishing_color_hex_entry_updates_working_config(config, headless_manager, content_rect, tmp_path):
+    # Arrange
+    tab, state, _ = _make_tab(config, tmp_path)
+    with mock.patch.object(devmode_tab_module, "render_devmode_scene"), mock.patch.object(
+        devmode_tab_module, "fit_image_to_viewport"
+    ), mock.patch.object(devmode_tab_module, "pil_to_pygame_surface"):
+        tab.build(headless_manager, content_rect)
+
+        # Switch to a colour-pool section and edit the first colour's hex.
+        tab._build_section("Commercial: Parking")
+        binding = tab._light_registry.color_pools[0]
+        hex_entry = binding.rows[0][0]
+        hex_entry.set_text("#0A0B0C")
+
+        # Act — finishing the entry must reach _apply_active_section (early-return fix).
+        tab._handle_entry_finished(hex_entry)
+
+    # Assert — the working config's parking pool reflects the edit.
+    assert state.config.lights.commercial.parking_colors.colors[0][0] == "#0A0B0C"
+    assert isinstance(state.config.lights.commercial.parking_colors.colors[0], tuple)
+
+
 def test_save_writes_config_to_existing_path(config, headless_manager, content_rect, tmp_path):
     # Arrange
     tab, state, _ = _make_tab(config, tmp_path)

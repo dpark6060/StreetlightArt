@@ -65,7 +65,7 @@ def test_build_dynamic_section_slider_config_path_relative_to_target(headless_ma
 
 
 def test_build_dynamic_section_prefix_filters_and_strips(headless_manager, scroll, config):
-    # Arrange — only headlight_ fields; headlight_colors (ColorPool) is skipped.
+    # Arrange — only headlight_ fields; headlight_colors (ColorPool) is not a slider.
     kind = LightKind("Cars: Headlights", config.lights.cars, "headlight_")
     registry = SliderRegistry()
 
@@ -83,17 +83,37 @@ def test_build_dynamic_section_prefix_filters_and_strips(headless_manager, scrol
     assert not any("colors" in p for p in paths)
 
 
-def test_build_dynamic_section_skips_color_pool_with_visible_label(headless_manager, scroll, config):
+def test_build_dynamic_section_renders_color_pool_rows_and_binding(headless_manager, scroll, config):
+    # Arrange — Commercial: Parking exposes parking_colors (a ColorPoolConfig).
+    kind = LightKind("Commercial: Parking", config.lights.commercial, "parking_")
+    pool = config.lights.commercial.parking_colors
+    registry = SliderRegistry()
+
+    # Act
+    height = build_dynamic_section(headless_manager, scroll.scrollable_container, 0, registry, kind)
+
+    # Assert — one binding whose rows match the colour count, positive height.
+    assert len(registry.color_pools) == 1
+    binding = registry.color_pools[0]
+    assert binding.config_path == ("parking_colors", "colors")
+    assert len(binding.rows) == len(pool.colors)
+    assert height > 0
+
+
+def test_build_dynamic_section_color_pool_entries_prefilled(headless_manager, scroll, config):
     # Arrange
-    kind = LightKind("Cars: Headlights", config.lights.cars, "headlight_")
+    kind = LightKind("House Lights", config.lights.house_lights, None)
+    pool = config.lights.house_lights.colors
     registry = SliderRegistry()
 
     # Act
     build_dynamic_section(headless_manager, scroll.scrollable_container, 0, registry, kind)
-    label_texts = [w.text for w in registry.extra_widgets if hasattr(w, "text")]
+    binding = registry.color_pools[0]
 
-    # Assert — the color pool omission is surfaced as a label.
-    assert any("edit TOML" in text for text in label_texts)
+    # Assert — hex + weight entries pre-filled from the config colours.
+    first_hex, first_weight = binding.rows[0]
+    assert first_hex.get_text() == pool.colors[0][0]
+    assert first_weight.get_text() == f"{pool.colors[0][1]:.3f}"
 
 
 def test_build_dynamic_section_global_kind_only_shift_field(headless_manager, scroll, config):

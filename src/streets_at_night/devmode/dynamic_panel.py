@@ -19,6 +19,7 @@ import typing as t
 import pygame
 import pygame_gui
 
+from ..config.schema import ColorPoolConfig
 from .field_meta import get_field_meta
 from .light_catalog import LightKind
 from .slider_registry import SliderDescriptor, SliderRegistry
@@ -116,7 +117,8 @@ def _add_field_row(
     """Dispatch one field to the slider/bool/text/skip builder by its value type.
 
     bool is checked before int/float because ``bool`` is a subclass of ``int``.
-    ColorPoolConfig, lists, and nested dataclasses are skipped with a visible
+    ColorPoolConfig fields get an editable hex + weight row per colour.
+    Lists and other nested dataclasses are skipped with a visible
     "(colors: edit TOML)" label so the omission is not silent.
 
     Args:
@@ -144,6 +146,11 @@ def _add_field_row(
         )
     if isinstance(value, str):
         return _add_text_row(manager, container, y, registry, field_name, display, label_width, slider_width, entry_width)
+    if isinstance(value, ColorPoolConfig):
+        return _add_color_pool_rows(
+            manager, container, y, registry, field_name, value, display,
+            label_width, slider_width, entry_width,
+        )
     return _add_skip_label(manager, container, y, registry, display, label_width, slider_width, entry_width)
 
 
@@ -274,6 +281,78 @@ def _add_text_row(
     return y + _ROW_HEIGHT
 
 
+def _add_color_pool_rows(
+    manager: pygame_gui.UIManager,
+    container: t.Any,
+    y: int,
+    registry: SliderRegistry,
+    field_name: str,
+    pool: ColorPoolConfig,
+    display: str,
+    label_width: int,
+    slider_width: int,
+    entry_width: int,
+) -> int:
+    """Create a header plus one editable (hex, weight) row per colour in a pool.
+
+    The colour count is fixed (v1): add/remove colours via the TOML. Each row is
+    an index label, a hex entry, and a weight entry laid out on the shared
+    label/slider/entry columns. The whole pool is registered as one
+    ColorPoolBinding so config_bridge can rebuild the immutable tuple list.
+
+    Args:
+        manager (pygame_gui.UIManager): The UI manager.
+        container: The scrollable container.
+        y (int): Top Y coordinate for the header row.
+        registry (SliderRegistry): Registry to record widgets and the binding.
+        field_name (str): Dataclass field name of the ColorPoolConfig.
+        pool (ColorPoolConfig): The colour pool whose colours are edited.
+        display (str): Human display label used as the header.
+        label_width (int): Label column width.
+        slider_width (int): Slider column width (holds the hex entry).
+        entry_width (int): Value-entry column width (holds the weight entry).
+
+    Returns:
+        int: Total pixel height consumed (header + one row per colour).
+    """
+    header = pygame_gui.elements.UILabel(
+        relative_rect=pygame.Rect(0, y + (_ROW_HEIGHT - _LABEL_HEIGHT) // 2, label_width + slider_width + entry_width, _LABEL_HEIGHT),
+        text=display,
+        manager=manager,
+        container=container,
+    )
+    registry.extra_widgets.append(header)
+    y += _ROW_HEIGHT
+
+    rows: t.List[t.Tuple[t.Any, t.Any]] = []
+    for index, (hex_str, weight) in enumerate(pool.colors):
+        row_y = y + (_ROW_HEIGHT - _TEXT_HEIGHT) // 2
+        index_label = pygame_gui.elements.UILabel(
+            relative_rect=pygame.Rect(0, row_y, label_width, _TEXT_HEIGHT),
+            text=str(index),
+            manager=manager,
+            container=container,
+        )
+        registry.extra_widgets.append(index_label)
+        hex_entry = pygame_gui.elements.UITextEntryLine(
+            relative_rect=pygame.Rect(label_width, row_y, slider_width, _TEXT_HEIGHT),
+            manager=manager,
+            container=container,
+        )
+        hex_entry.set_text(hex_str)
+        weight_entry = pygame_gui.elements.UITextEntryLine(
+            relative_rect=pygame.Rect(label_width + slider_width, row_y, entry_width, _TEXT_HEIGHT),
+            manager=manager,
+            container=container,
+        )
+        weight_entry.set_text(f"{weight:.3f}")
+        rows.append((hex_entry, weight_entry))
+        y += _ROW_HEIGHT
+
+    registry.register_color_pool((field_name, "colors"), rows)
+    return y
+
+
 def _add_skip_label(
     manager: pygame_gui.UIManager,
     container: t.Any,
@@ -286,8 +365,8 @@ def _add_skip_label(
 ) -> int:
     """Add a small "(colors: edit TOML)" label for a skipped complex field.
 
-    Covers ColorPoolConfig, lists, and nested dataclasses that v1 does not edit
-    in the panel, so the omission is visible rather than silent.
+    Covers lists and nested dataclasses that v1 does not edit in the panel, so
+    the omission is visible rather than silent.
 
     Returns:
         int: Y coordinate of the next row.

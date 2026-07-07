@@ -5,10 +5,13 @@ from unittest import mock
 
 import pytest
 
+from streets_at_night.config.schema import ColorPoolConfig
 from streets_at_night.devmode.config_bridge import (
+    _apply_color_pools,
     _apply_sliders,
     _format_value,
     _hex_to_tuple,
+    _read_color_pools,
     _tuple_to_hex,
     apply_widgets_to_config,
     get_nested,
@@ -303,3 +306,107 @@ def test_hex_to_tuple_returns_black_on_invalid_input() -> None:
     result = _hex_to_tuple("not-a-color")
 
     assert result == (0, 0, 0)
+
+
+# ---------------------------------------------------------------------------
+# _read_color_pools / _apply_color_pools
+# ---------------------------------------------------------------------------
+
+
+class _Root:
+    """A root holding one ColorPoolConfig at attribute `pool`."""
+
+    def __init__(self, colors: list) -> None:
+        self.pool = ColorPoolConfig(colors=colors)
+
+
+def _entry(text: str = "") -> mock.MagicMock:
+    """Return a mock widget entry whose get_text returns `text`."""
+    entry = mock.MagicMock()
+    entry.get_text.return_value = text
+    return entry
+
+
+def _register_pool(registry: SliderRegistry, rows: list) -> None:
+    """Register a colour-pool binding at the ('pool', 'colors') path."""
+    registry.register_color_pool(("pool", "colors"), rows)
+
+
+def test_read_color_pools_fills_entries_from_config() -> None:
+    """_read_color_pools pushes each colour's hex/weight into its row entries."""
+
+    root = _Root([("#FF0000", 2.0), ("#00FF00", 0.5)])
+    registry = SliderRegistry()
+    rows = [(_entry(), _entry()), (_entry(), _entry())]
+    _register_pool(registry, rows)
+
+    _read_color_pools(root, registry)
+
+    rows[0][0].set_text.assert_called_once_with("#FF0000")
+    rows[0][1].set_text.assert_called_once_with("2.000")
+    rows[1][0].set_text.assert_called_once_with("#00FF00")
+    rows[1][1].set_text.assert_called_once_with("0.500")
+
+
+def test_apply_color_pools_rebuilds_list_with_fresh_tuples() -> None:
+    """_apply_color_pools writes the edited hex/weight as new (hex, weight) tuples."""
+
+    root = _Root([("#FF0000", 2.0), ("#00FF00", 0.5)])
+    registry = SliderRegistry()
+    rows = [
+        (_entry("#123456"), _entry("3.5")),
+        (_entry("#00FF00"), _entry("0.5")),
+    ]
+    _register_pool(registry, rows)
+
+    _apply_color_pools(registry, root)
+
+    assert root.pool.colors == [("#123456", 3.5), ("#00FF00", 0.5)]
+    assert all(isinstance(c, tuple) for c in root.pool.colors)
+
+
+def test_apply_color_pools_blank_hex_falls_back_to_prior() -> None:
+    """_apply_color_pools keeps the current hex when the entry is blank."""
+
+    root = _Root([("#ABCDEF", 1.0)])
+    registry = SliderRegistry()
+    _register_pool(registry, [(_entry("   "), _entry("2.0"))])
+
+    _apply_color_pools(registry, root)
+
+    assert root.pool.colors == [("#ABCDEF", 2.0)]
+
+
+def test_apply_color_pools_unparseable_weight_falls_back_to_prior() -> None:
+    """_apply_color_pools keeps the current weight when the entry is not a float."""
+
+    root = _Root([("#ABCDEF", 1.5)])
+    registry = SliderRegistry()
+    _register_pool(registry, [(_entry("#111111"), _entry("not-a-number"))])
+
+    _apply_color_pools(registry, root)
+
+    assert root.pool.colors == [("#111111", 1.5)]
+
+
+def test_color_pool_round_trip_edits_one_leaves_others() -> None:
+    """Read → edit one row → apply reflects the edit and leaves others unchanged."""
+
+    root = _Root([("#FF0000", 2.0), ("#00FF00", 0.5)])
+    registry = SliderRegistry()
+    rows = [
+        (_entry(), _entry()),
+        (_entry(), _entry()),
+    ]
+    _register_pool(registry, rows)
+    _read_color_pools(root, registry)
+
+    # Simulate the user editing only row 0's hex; other entries echo what was read.
+    rows[0][0].get_text.return_value = "#0000FF"
+    rows[0][1].get_text.return_value = "2.000"
+    rows[1][0].get_text.return_value = "#00FF00"
+    rows[1][1].get_text.return_value = "0.500"
+
+    _apply_color_pools(registry, root)
+
+    assert root.pool.colors == [("#0000FF", 2.0), ("#00FF00", 0.5)]

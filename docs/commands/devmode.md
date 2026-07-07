@@ -65,8 +65,9 @@ dataclass — there are no hand-authored per-field ranges. For each field:
 - **numbers** → a slider + a value box you can also type into
 - **booleans** → an ON/OFF toggle
 - **strings** (e.g. a fixture's `side`) → a text field
-- **weighted color pools** → skipped, shown as `… (colors: edit TOML)` — v1
-  doesn't edit color lists in the panel; set those in the TOML directly
+- **weighted color pools** → an editable hex + weight row per color. Edit a
+  color's hex or its weight inline; the count is fixed this version, so
+  add or remove colors via the TOML directly
 
 ### Sliders never clamp your values
 
