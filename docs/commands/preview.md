@@ -12,6 +12,12 @@ The preview uses a **flat-map warp** rather than per-segment 3D projection: a to
 
 If `[heat_haze].enabled = true`, the live preview applies the same Kolmogorov heat shimmer used by [`animate`](animate.md) on top of every frame.
 
+> **In the UI:** the **Preview** tab of [`ui`](ui.md) shows the same warp preview
+> but adds explicit controls on top of WASD/mouse — move-by-increment buttons
+> (N/S/E/W/Up/Down), rotate-by-increment buttons with a rotation reset, live
+> editable camera/target coordinate fields, and a Render button that applies
+> typed coordinates and saves `[camera]` on every click.
+
 ## Flags
 
 | Flag | Default | Description |

@@ -27,6 +27,7 @@ Renders an aerial night view of San Bernardino, CA using OpenStreetMap road data
 - Heat haze (`rendering/heat_haze.py`) is MPS-accelerated via `torch.nn.functional.grid_sample`; it falls back to whatever `torch` device is available if MPS isn't present (see `select_torch_device`)
 - Devmode config edits only persist when explicitly saved via its Save button; the CLI's other commands always read `scene_config.toml` (or `--config`) directly
 - The `ui` and `devmode` subcommands both dispatch to `run_ui`; `main()` passes `config_path=None` when the `--config` file does not exist so the UI opens in a blank/save-as state
+- The UI holds one in-memory "working config" (`AppState.config`) shared by every tab; edits mutate it and only reach disk on a tab's Save/Render. Slow work (OSM load, verify, render, MP4 record) runs on a single background `JobRunner` — one job at a time, and the tab bar is disabled while a job runs so a result can't be delivered to the wrong tab
 
 ## Structure
 
@@ -108,7 +109,7 @@ src/streets_at_night/
       preview_tab.py           # Preview tab — interactive warp preview + camera controls
       render_tab.py            # Render tab — quality/output controls + export render
       animate_tab.py           # Animate tab — heat-haze preview/record over a still
-      devmode_tab.py           # Devmode tab — synthetic/real scene + dynamic slider panel
+      devmode_tab.py           # Devmode tab — synthetic/real scene, dynamic light-kind panel, draggable minimap
     widgets/
       file_picker.py           # FilePickerRow — text entry + browse dialog
       labeled_entry.py         # LabeledEntry — label + text entry row
@@ -117,7 +118,7 @@ src/streets_at_night/
     real_scene.py              # Loads a clipped strip of real OSM road data for devmode
     devmode_camera.py          # Builds an ENU-space Camera from DevmodeCameraConfig
     dynamic_panel.py           # build_dynamic_section — data-driven slider panel from field metadata
-    field_meta.py              # Per-field slider metadata (ranges, int/bool/text) for the dynamic panel
+    field_meta.py              # Per-field slider ranges for the dynamic panel; widens to contain the current value (never clamps)
     light_catalog.py           # Enumerates the light config fields the devmode panel exposes
     render_helpers.py          # should_render_full / build_render_passes / render_devmode_scene (was in cmd_devmode)
     widget_sync.py             # Paired slider/entry/toggle update handlers used by the Devmode tab

@@ -19,6 +19,10 @@ Two modes:
 
 The base image is read once; output frames can be saved on demand with `P` (pygame mode) or are written directly to MP4 (record mode).
 
+> **In the UI:** the **Animate** tab of [`ui`](ui.md) has a base-image picker, a
+> live Preview toggle, and Record controls (path, fps, duration, seamless) with a
+> progress bar. It's disabled with a message if `[heat_haze] enabled = false`.
+
 ## Flags — pygame mode
 
 | Flag | Default | Description |

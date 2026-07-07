@@ -1,47 +1,105 @@
-# `devmode` — Interactive parameter tuning
+# `devmode` — Live lighting & atmosphere tuning
 
 ```bash
 uv run streets-at-night devmode
-uv run streets-at-night devmode --real-tiles
 ```
 
-Opens a 1280×720 window split into a **render view** (left) and a **control panel** (right). **This is how you dial in the look** — lighting colors, glow, ground pools, atmosphere — without editing `scene_config.toml` by hand and re-running `render` each time. Drag sliders, click **Re-render**, and when it looks right click **Save Config** to write a TOML you can hand to [`render`](render.md).
+`devmode` is now an **alias that opens the [tabbed UI](ui.md) on its Devmode
+tab** — the same view you get from `uv run streets-at-night ui --tab Devmode`.
+The old standalone pygame window and its hand-written per-road-type slider panel
+were removed in the UI rework; everything below describes the current tab.
 
-By default it renders a compact **synthetic scene**: rows of representative roads (one per road type) plus cars, commercial, and house lights, so every light category is on screen at once for fast comparison. Pass `--real-tiles` to tune against an actual strip of OSM road data instead.
+**This is how you dial in the look** — light colors, glow, ground pools,
+atmosphere — without hand-editing `scene_config.toml` and re-running `render`.
+Adjust values, click **Rerender**, and when it looks right click **Save** to
+write a TOML you can hand to [`render`](render.md).
+
+By default it renders a compact **synthetic scene**: rows of representative roads
+(one per road type) plus cars, commercial, and house lights, so every light
+category is on screen at once. Flip the **Real Tiles** toggle to tune against an
+actual strip of OSM road data instead.
 
 ## Flags
 
 | Flag | Default | Description |
 |---|---|---|
-| `--real-tiles` | `false` | Tune against a real OSM road strip instead of the synthetic test scene |
-| `--cache-dir` | `cache` | Directory for OSM cache files (only used with `--real-tiles`) |
+| `--cache-dir` | `cache` | Directory for OSM cache files (used by the Real Tiles mode) |
 
-The global `--config` flag picks the starting TOML (default: `scene_config.toml`).
+The old `--real-tiles` flag is gone — it's an in-panel toggle now. The global
+`--config` flag picks the starting TOML (default: `scene_config.toml`).
 
 ## Layout
 
-The control panel has three zones, top to bottom:
+- **Left — render view** with a **minimap** overlaid in the bottom-left corner.
+- **Right — control panel**, top to bottom:
+  1. **Cam height / Focal height** fields (camera and target Z, in ENU meters).
+  2. **Section list** — pick what to edit.
+  3. **Property editor** — the controls for the selected section.
+  4. **Action buttons** — `Rerender`, `Save`, `Load`, and the **Real Tiles** toggle.
 
-1. **Section list** — pick which parameter group to edit.
-2. **Sliders** — every tunable in the selected section, each with a live value box you can also type into directly.
-3. **Action buttons** — `Re-render`, `Save Config`, `Load Config`.
+## The section list
 
-### Sections
+Two hand-built sections sit at the top, followed by one entry per **light kind**
+the current config actually contains:
 
-| Section | Controls |
+| Section | What it edits |
 |---|---|
-| Atmosphere | Extinction/airlight coefficient (`falloff_distance`), airlight strength (`haze_alpha`) and color, the glow core + power-law-wing knobs (`glow_wing_exponent`, `glow_tail_strength`, `glow_cutoff_mult`), illumination brightness, vignette |
-| Streetlights: Highway … Service | Per-road-type fixture profile: **color temperature** (`color_temp_k`) + **saturation**, **beam angle** (drives the ground pool from pole height), glow radius, illumination intensity, brightness/height/spacing ranges |
-| Cars | Headlight / taillight brightness, glow, and ground-pool cone |
-| House Lights | Window/porch brightness, glow, ground-pool cone |
-| Sign / Parking / Storefront Lights | Commercial light brightness, glow, ground-pool cone |
+| Atmosphere | Extinction/airlight (`falloff_distance`), airlight strength (`haze_alpha`) + color, the glow core/wing knobs (`glow_wing_exponent`, `glow_tail_strength`, `glow_cutoff_mult`), illumination brightness, vignette |
 | Devmode Camera | Position, target, and FOV of the devmode camera (ENU meters) |
+| Streetlight: `<road type>` (pool N) | One entry **per fixture pool per road type** — its color temperature, saturation, beam angle, glow, illumination intensity, brightness/height/spacing ranges |
+| Cars: Headlights / Taillights / Density / Separation | The matching group of car-light fields |
+| House Lights | Window/porch brightness, glow, ground-pool cone |
+| Commercial: Signs / Parking / Storefronts | Per commercial light type: brightness, glow, ground-pool cone |
+| Streetlights: Global | The city-wide `color_temp_shift_k` lever (see below) |
 
-> Streetlight ground pools are derived physically from **pole height + beam angle**, so they have a `beam_angle_deg` slider instead of an explicit radius. Cars, signs, and house lights still use the authored cone model (`illumination_radius` / `falloff` / `inner_fraction`), so those sliders remain.
+> **Per-pool editing.** Each streetlight *pool* is its own section, so editing
+> "Streetlight: Highway (pool 0)" no longer collapses that road type's
+> sodium/LED mix to one temperature — the old panel's foot-gun. Edit each pool
+> independently to keep an authored mix.
 
-### Camera navigation
+## The property editor (how it's built)
 
-The same keys as [`preview`](preview.md) move the camera in the render view; a camera move auto-re-renders:
+The editor is generated by reflecting over the selected light kind's config
+dataclass — there are no hand-authored per-field ranges. For each field:
+
+- **numbers** → a slider + a value box you can also type into
+- **booleans** → an ON/OFF toggle
+- **strings** (e.g. a fixture's `side`) → a text field
+- **weighted color pools** → skipped, shown as `… (colors: edit TOML)` — v1
+  doesn't edit color lists in the panel; set those in the TOML directly
+
+### Sliders never clamp your values
+
+Slider ranges are *typical editing* ranges, not hard caps. A value the config
+already holds is always representable — if it sits at or above a slider's max,
+the range widens to give headroom — and **typing a value beyond the range
+expands the range to fit it** rather than clamping. The UI imposes no artificial
+ceiling; type what you want.
+
+### Edits apply immediately
+
+Moving a slider, finishing a value box, or flipping a toggle writes into the
+in-memory working config **right away**. So you can edit one light kind, switch
+to another, come back, and your earlier edits are still there. (Disk is only
+touched on **Save**.)
+
+## The minimap
+
+The bottom-left overlay is a top-down map of the scene with two dots:
+
+- **Cyan** = camera, **orange** = focal point (target).
+- **Drag either dot** to move it in X/Y (the view re-renders as you drag).
+- Height is 2D-independent, so set Z with the **Cam height** / **Focal height**
+  fields above the section list.
+
+Dragging writes the new position into the devmode camera config and moves the
+live camera to match.
+
+## Camera navigation
+
+The same keys as [`preview`](preview.md) move the camera in the render view
+(only while the cursor is over the view); it shows a cheap frame while moving and
+a full-quality frame once you settle:
 
 | Key / input | Action |
 |---|---|
@@ -50,32 +108,49 @@ The same keys as [`preview`](preview.md) move the camera in the render view; a c
 | ↑ / ↓ / ← / → | Tilt and pan |
 | Right-click drag | Rotate view |
 | `R` | Reset camera |
-| `ESC` | Quit |
 
-Screenshot (`P`) and save-camera (`C`) are **not** wired in devmode — use **Save Config** to persist your work, and the **Devmode Camera** section to set the camera numerically.
+`ESC`, `P`, and `C` do **not** quit / screenshot / save here — those were the old
+standalone-window bindings. Use **Save** to persist your work and the **minimap
++ height fields** or the **Devmode Camera** section to set the camera.
 
 ## Workflow
 
-1. Pick a section, drag sliders (or type exact values in the value boxes).
-2. Click **Re-render**. This applies every widget value to the in-memory config, **rebuilds the scene**, and renders. Rebuilding is required because most light parameters (color, beam angle, height, spacing) are baked in when lights are placed — moving a slider alone does nothing until you re-render.
+1. Pick a section and adjust values (drag sliders or type exact numbers).
+2. Click **Rerender**. This rebuilds the scene and renders — a rebuild is
+   required because most light parameters (color, beam angle, height, spacing)
+   are baked in when lights are placed, so a value change only shows after a
+   rebuild.
 3. Repeat until it looks right.
-4. Click **Save Config**, enter a filename (default `scene_config_devmode.toml`), and it writes a full TOML.
+4. Click **Save**. With a config loaded it writes back to that file; with none
+   loaded it prompts for a path and writes the full config.
 5. Render it at print quality:
 
 ```bash
-uv run streets-at-night render --config scene_config_devmode.toml --quality high
+uv run streets-at-night render --config <your_saved>.toml --quality high
 ```
 
-**Load Config** reads an existing TOML back into the panel, so you can iterate on a saved file across sessions.
+**Load** reads an existing TOML back into the panel so you can iterate across
+sessions.
+
+## `color_temp_shift_k` — the global retrofit lever
+
+`color_temp_shift_k` is a single additive Kelvin offset applied to **all**
+streetlights at once — "retrofit the whole city from sodium to LED in one
+number," on top of the per-pool colors. It's editable in the **Streetlights:
+Global** section, or directly in `[lights.streetlights]` of your TOML.
 
 ## Notes
 
-- Saved TOMLs are complete round-trips: color temperature, saturation, beam angle, the glow wing knobs, the `color_temp_shift_k` master lever, and all atmosphere fields are preserved.
-- Adjusting a streetlight `color_temp_k` / `saturation` slider writes that value to **every** fixture in that road type, collapsing its sodium/LED mix to one temperature.
-- `color_temp_shift_k` is a global additive Kelvin offset applied to *all* streetlights at once — the "retrofit the whole city from sodium to LED in one number" lever. It is intentionally **not** a per-section slider; set it directly in `[lights.streetlights]` of your TOML when you want a global shift on top of the per-type colors.
+- Saved TOMLs are complete round-trips: color temperature, saturation, beam
+  angle, the glow wing knobs, `color_temp_shift_k`, and all atmosphere fields
+  are preserved.
+- Streetlight ground pools are derived physically from **pole height + beam
+  angle**, so streetlight sections expose `beam_angle_deg` rather than an
+  explicit radius. Cars, signs, and house lights use the authored cone model
+  (`illumination_radius` / `falloff` / `inner_fraction`).
 
 ## Related config
 
 - [`[lights.streetlights]`](../config.md) — fixture pools, color temperature, beam angle, master shift
 - [`[atmosphere]`](../config.md) — extinction, airlight, glow wings, vignette
-- [`[devmode]`](../config.md) — devmode camera defaults
+- [`[devmode]`](../config.md#devmode) — devmode camera + render-resolution defaults

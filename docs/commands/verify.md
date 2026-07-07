@@ -10,6 +10,10 @@ Downloads (or loads cached) OSM road, land use, and building data for the boundi
 
 The verify pass does not run any of the rendering pipeline — it stops after the matplotlib figure is written.
 
+> **In the UI:** this is the **Verify** tab of [`ui`](ui.md) — edit the N/S/E/W
+> bounds inline, click Rerender to fetch and plot, and Save to write `[bounds]`
+> back to the config.
+
 ## Flags
 
 | Flag | Default | Description |

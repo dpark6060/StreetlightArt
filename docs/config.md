@@ -393,7 +393,7 @@ This section has its own dedicated tuning guide — see **[`commands/animate.md`
 
 ## `[devmode]`
 
-Configuration for the experimental devmode parameter-tuning tool. Not used by the production commands.
+Configuration for the [Devmode tab](commands/devmode.md) (the live lighting/atmosphere tuning view in the [`ui`](commands/ui.md)). These fields set the devmode scene's render resolution and its camera; the production `render`/`preview` commands ignore them.
 
 | Key | Type | Default | Description |
 |---|---|---|---|

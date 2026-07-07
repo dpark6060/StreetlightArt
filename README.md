@@ -53,7 +53,7 @@ Each subcommand has its own reference page:
 
 | Command | Purpose | Docs |
 |---|---|---|
-| `ui` | Tabbed window wrapping all commands | — |
+| `ui` | Tabbed window wrapping all commands | [`docs/commands/ui.md`](docs/commands/ui.md) |
 | `verify` | Sanity-check OSM data with a top-down plot | [`docs/commands/verify.md`](docs/commands/verify.md) |
 | `render` | Static perspective render to PNG/TIFF | [`docs/commands/render.md`](docs/commands/render.md) |
 | `preview` | Interactive pygame camera placement | [`docs/commands/preview.md`](docs/commands/preview.md) |

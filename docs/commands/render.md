@@ -9,6 +9,11 @@ uv run streets-at-night render --width 4096 --height 2160 --format tiff
 
 Renders a single perspective image of the city scene to disk using the Pillow backend. This is the **export path** — it produces print-quality stills. For interactive camera placement use [`preview`](preview.md). For animation use [`animate`](animate.md).
 
+> **In the UI:** the **Render** tab of [`ui`](ui.md) offers an output picker, a
+> quality dropdown, and a per-pass progress bar, then displays the finished
+> image. The CLI is still the way to do scripted, headless, or `--width`/
+> `--height`/`--no-lights` renders — those flags are CLI-only.
+
 ## What it produces
 
 The full pass list (in order):
