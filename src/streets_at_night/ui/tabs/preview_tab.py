@@ -44,7 +44,6 @@ _ROW_HEIGHT = 28
 _BUTTON_HEIGHT = 30
 _ROW_GAP = 6
 _BTN_W = 70
-_DEBOUNCE_SECONDS = 0.15
 _DEFAULT_MOVE_STEP = 100.0
 _DEFAULT_ROTATE_STEP = 5.0
 
@@ -111,12 +110,10 @@ class PreviewTab(Tab):
         self._frame_surface: t.Optional[pygame.Surface] = None
         self._loaded = False
 
-        # Per-frame input + debounce bookkeeping.
+        # Per-frame input bookkeeping.
         self._frame_events: t.List[pygame.event.Event] = []
         self._drag_state = MouseDragState()
-        self._elapsed = 0.0
-        self._last_move_time: t.Optional[float] = None
-        self._render_pending = False
+        self._controls_state: t.Optional[t.Tuple[bool, bool]] = None
 
     # ------------------------------------------------------------------
     # Build / destroy
@@ -176,6 +173,7 @@ class PreviewTab(Tab):
         self._flat_map_array = None
         self._frame_surface = None
         self._loaded = False
+        self._controls_state = None
 
     # ------------------------------------------------------------------
     # Build helpers
@@ -364,23 +362,26 @@ class PreviewTab(Tab):
             self._save_dialog = None
 
     def update(self, dt: float) -> None:
-        """Gate controls, run keyboard/mouse passthrough, and debounce re-renders.
+        """Gate controls and run keyboard/mouse passthrough with a live re-render.
 
         Args:
             dt (float): Seconds since the previous frame.
         """
-        self._elapsed += dt
         events = self._frame_events
         self._frame_events = []
 
-        self._set_controls_enabled(self._loaded and not self.jobs.busy)
+        self._sync_controls_enabled()
         if not self._scene_ready():
             return
         self._process_camera_input(events, dt)
-        self._maybe_debounced_render()
 
     def _process_camera_input(self, events: t.List[pygame.event.Event], dt: float) -> None:
         """Feed events to controls.handle_input only when the cursor is over the view.
+
+        Renders every frame the camera actually moves, matching ``cmd_preview``'s
+        "warp every frame" feel — the warp is cheap enough to be interactive at
+        view size, so held-key/mouse flight stays live instead of freezing until
+        movement settles.
 
         Args:
             events (list): This frame's collected pygame events.
@@ -408,19 +409,8 @@ class PreviewTab(Tab):
             or camera.fov_deg != fov_before
         )
         if moved:
-            self._last_move_time = self._elapsed
-            self._render_pending = True
+            self._render_frame()
             self._refresh_coord_entries()
-
-    def _maybe_debounced_render(self) -> None:
-        """Render once movement has been still for at least the debounce window."""
-        if not self._render_pending or self._last_move_time is None:
-            return
-        if (self._elapsed - self._last_move_time) < _DEBOUNCE_SECONDS:
-            return
-        self._render_frame()
-        self._render_pending = False
-        self._last_move_time = None
 
     # ------------------------------------------------------------------
     # Camera mutation handlers (buttons — immediate render)
@@ -614,6 +604,18 @@ class PreviewTab(Tab):
             and self._flat_map is not None
             and self._original_target is not None
         )
+
+    def _sync_controls_enabled(self) -> None:
+        """Apply the enabled/disabled state only when (loaded, busy) actually changed.
+
+        Guards against re-running ``.enable()``/``.disable()`` on ~14 widgets every
+        frame, which would force needless pygame_gui surface rebuilds.
+        """
+        state = (self._loaded, self.jobs.busy)
+        if state == self._controls_state:
+            return
+        self._controls_state = state
+        self._set_controls_enabled(self._loaded and not self.jobs.busy)
 
     def _set_controls_enabled(self, enabled: bool) -> None:
         """Enable or disable every button and entry in the control panel."""

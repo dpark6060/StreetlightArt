@@ -14,6 +14,7 @@ import pygame_gui  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from streets_at_night.camera.camera import create_camera  # noqa: E402
+from streets_at_night.camera.controls import InputResult  # noqa: E402
 from streets_at_night.config.defaults import DEFAULTS  # noqa: E402
 from streets_at_night.config.schema import SceneConfig  # noqa: E402
 from streets_at_night.config.serde import dataclass_from_dict  # noqa: E402
@@ -194,6 +195,49 @@ def test_reset_rotation_restores_original_target_keeps_position(
     # Assert
     assert camera.target.tolist() == tab._original_target.tolist()
     assert camera.position.tolist() == pos_before.tolist()
+
+
+# ---------------------------------------------------------------------------
+# Live render during held-key/mouse flight
+# ---------------------------------------------------------------------------
+
+
+def test_update_renders_immediately_while_camera_moves(
+    config, headless_manager, content_rect, tmp_path
+):
+    # Arrange — cursor over the view, handle_input moves the camera this frame.
+    tab, _, _, camera = _ready_tab(config, headless_manager, content_rect, tmp_path)
+
+    def _fake_input(events, cam, dt, held, drag, opos, otgt, ofov):
+        cam.move(np.array([0.0, 10.0, 0.0]))
+        return InputResult()
+
+    # Act
+    with mock.patch(f"{_MODULE}.pygame.mouse.get_pos", return_value=(500, 400)), mock.patch(
+        f"{_MODULE}.handle_input", side_effect=_fake_input
+    ), mock.patch.object(tab, "_render_frame") as mock_render, mock.patch.object(
+        tab, "_refresh_coord_entries"
+    ):
+        tab.update(0.016)
+
+    # Assert — a frame is produced in the same frame the camera moved (no settle wait).
+    mock_render.assert_called_once()
+
+
+def test_update_does_not_render_when_camera_still(
+    config, headless_manager, content_rect, tmp_path
+):
+    # Arrange — cursor over the view but handle_input reports no movement.
+    tab, _, _, _ = _ready_tab(config, headless_manager, content_rect, tmp_path)
+
+    # Act
+    with mock.patch(f"{_MODULE}.pygame.mouse.get_pos", return_value=(500, 400)), mock.patch(
+        f"{_MODULE}.handle_input", return_value=InputResult()
+    ), mock.patch.object(tab, "_render_frame") as mock_render:
+        tab.update(0.016)
+
+    # Assert
+    mock_render.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
