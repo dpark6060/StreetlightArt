@@ -84,6 +84,7 @@ class VerifyTab(Tab):
         self._status: t.Optional[pygame_gui.elements.UILabel] = None
         self._save_dialog: t.Optional[pygame_gui.windows.UIFileDialog] = None
         self._plot_surface: t.Optional[pygame.Surface] = None
+        self._job_pending = False
 
     def build(self, manager: pygame_gui.UIManager, content_rect: pygame.Rect) -> None:
         """Create the view area, bounds entries, buttons, and status label.
@@ -192,11 +193,15 @@ class VerifyTab(Tab):
         Args:
             event (JobEvent): The job progress/completion event.
         """
+        if event.kind in ("done", "error") and not self._job_pending:
+            return
         if event.kind == "progress":
             self._set_status(event.message)
         elif event.kind == "done":
+            self._job_pending = False
             self._show_plot(event.result)
         elif event.kind == "error":
+            self._job_pending = False
             self._set_status(f"Verify failed: {event.message}")
 
     def update(self, dt: float) -> None:
@@ -237,6 +242,7 @@ class VerifyTab(Tab):
         self.state.invalidate_scene()
         config = self.state.config
         cache_dir = self.state.cache_dir
+        self._job_pending = True
         self.jobs.submit(
             lambda progress: run_verify_pipeline(config, cache_dir, _OUTPUT_PATH, progress)
         )

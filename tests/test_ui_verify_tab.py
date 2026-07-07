@@ -217,6 +217,7 @@ def test_handle_job_event_done_stores_surface_and_status(config, headless_manage
     # Arrange
     tab, _, _ = _make_tab(config, None, tmp_path)
     tab.build(headless_manager, content_rect)
+    tab._job_pending = True
     surface = pygame.Surface((10, 10))
 
     # Act
@@ -235,6 +236,7 @@ def test_handle_job_event_error_sets_status(config, headless_manager, content_re
     # Arrange
     tab, _, _ = _make_tab(config, None, tmp_path)
     tab.build(headless_manager, content_rect)
+    tab._job_pending = True
 
     # Act
     tab.handle_job_event(JobEvent("error", message="boom"))

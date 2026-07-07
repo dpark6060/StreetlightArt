@@ -109,6 +109,7 @@ class PreviewTab(Tab):
         self._original_fov: t.Optional[float] = None
         self._frame_surface: t.Optional[pygame.Surface] = None
         self._loaded = False
+        self._job_pending = False
 
         # Per-frame input bookkeeping.
         self._frame_events: t.List[pygame.event.Event] = []
@@ -298,6 +299,7 @@ class PreviewTab(Tab):
         config = self.state.config
         cache_dir = self.state.cache_dir
         existing = self.state.scene if not self.state.scene_dirty else None
+        self._job_pending = True
         self.jobs.submit(lambda progress: _load_preview_data(config, cache_dir, existing, progress))
         self._set_status("Loading scene...")
 
@@ -307,11 +309,15 @@ class PreviewTab(Tab):
         Args:
             event (JobEvent): The job progress/completion event.
         """
+        if event.kind in ("done", "error") and not self._job_pending:
+            return
         if event.kind == "progress":
             self._set_status(event.message)
         elif event.kind == "done":
+            self._job_pending = False
             self._adopt_loaded_data(event.result)
         elif event.kind == "error":
+            self._job_pending = False
             self._set_status(f"Load failed: {event.message}")
 
     def _adopt_loaded_data(self, result: t.Tuple[t.Any, t.Any, t.Any]) -> None:

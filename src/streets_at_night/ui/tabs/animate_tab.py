@@ -355,6 +355,8 @@ class AnimateTab(Tab):
         Args:
             event (JobEvent): The job progress/completion event.
         """
+        if event.kind in ("done", "error") and self._pending is None:
+            return
         if event.kind == "progress":
             self._on_progress(event.message, event.fraction)
         elif event.kind == "done":

@@ -72,7 +72,7 @@ class UIApp:
 
         self._active_tab = self._get_initial_tab(initial_tab)
         self._active_tab.build(self._manager, self._content_rect)
-        self._mark_active_button()
+        self._refresh_tab_bar()
 
         self._displayed_config_path = self.state.config_path
         self._running = False
@@ -84,6 +84,7 @@ class UIApp:
             dt = self._clock.tick(60) / 1000.0
             self._process_frame_events()
             self._pump_jobs()
+            self._refresh_tab_bar()
             self._sync_config_bar()
             self._active_tab.update(dt)
             self._manager.update(dt)
@@ -215,12 +216,19 @@ class UIApp:
         self._active_tab = tab
         self._active_tab.build(self._manager, self._content_rect)
         self._active_tab.refresh_from_state()
-        self._mark_active_button()
+        self._refresh_tab_bar()
 
-    def _mark_active_button(self) -> None:
-        """Disable the active tab's button and enable the rest."""
+    def _refresh_tab_bar(self) -> None:
+        """Set tab-bar button states from the active tab and the job-busy flag.
+
+        While a job runs, every tab-bar button is disabled so no tab switch can
+        start mid-job (the app runs one job at a time). When idle, the active
+        tab's button stays disabled as the current-tab indicator and the rest
+        are enabled.
+        """
+        busy = self.jobs.busy
         for button, tab in self._tab_buttons.items():
-            if tab is self._active_tab:
+            if busy or tab is self._active_tab:
                 button.disable()
             else:
                 button.enable()

@@ -146,6 +146,7 @@ def test_handle_job_event_done_stores_surface_caches_scene_and_status(config, he
     # Arrange
     tab, state, _ = _make_tab(config, tmp_path)
     tab.build(headless_manager, content_rect)
+    tab._job_pending = True
     surface = pygame.Surface((10, 10))
     built = mock.MagicMock()
     result = RenderResult(Path("output/render.png"), Image.new("RGB", (4, 4)), built, "medium")
@@ -168,6 +169,7 @@ def test_handle_job_event_done_reused_scene_leaves_cache_untouched(config, headl
     # Arrange
     tab, state, _ = _make_tab(config, tmp_path)
     tab.build(headless_manager, content_rect)
+    tab._job_pending = True
     original = mock.MagicMock()
     state.scene = original
     state.scene_quality = "low"
@@ -200,6 +202,7 @@ def test_handle_job_event_error_sets_status(config, headless_manager, content_re
     # Arrange
     tab, _, _ = _make_tab(config, tmp_path)
     tab.build(headless_manager, content_rect)
+    tab._job_pending = True
 
     # Act
     tab.handle_job_event(JobEvent("error", message="boom"))

@@ -380,8 +380,13 @@ class DevmodeTab(Tab):
         self._apply_active_section()
 
     def _apply_active_section(self) -> None:
-        """Write the active section's widget values into its root object."""
+        """Write the active section's widget values into its root object.
+
+        Invalidates the shared scene cache so a later Render/Preview rebuilds
+        with the edit instead of reusing a stale cached scene.
+        """
         apply_widgets_to_config(self._active_registry(), self._active_root())
+        self.state.invalidate_scene()
 
     # ------------------------------------------------------------------
     # Actions
@@ -667,6 +672,7 @@ class DevmodeTab(Tab):
         cam = self.state.config.devmode.camera
         cam.pos_z = parse_float_entry(self._cam_height_entry, cam.pos_z)
         cam.target_z = parse_float_entry(self._focal_height_entry, cam.target_z)
+        self.state.invalidate_scene()
         sync_camera_from_config(self._scene, self.state.config)
         self._last_move_time = self._elapsed
         self._render_cheap()

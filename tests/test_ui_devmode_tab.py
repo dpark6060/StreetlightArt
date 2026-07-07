@@ -234,6 +234,21 @@ def test_height_entry_finish_updates_pos_z_and_target_z(config, headless_manager
     mock_sync.assert_called_once_with(tab._scene, state.config)
 
 
+def test_apply_active_section_invalidates_shared_scene(config, tmp_path):
+    # Arrange — a clean cached scene on the shared state.
+    tab, state, _ = _make_tab(config, tmp_path)
+    state.scene = mock.MagicMock()
+    state.scene_quality = "low"
+    state.scene_dirty = False
+
+    # Act — a devmode edit writes working-config values.
+    tab._apply_active_section()
+
+    # Assert — shared scene cache is dropped so a later render rebuilds it.
+    assert state.scene is None
+    assert state.scene_dirty is True
+
+
 def test_toggle_real_tiles_submits_background_job(config, headless_manager, content_rect, tmp_path):
     # Arrange
     tab, _, jobs = _make_tab(config, tmp_path)

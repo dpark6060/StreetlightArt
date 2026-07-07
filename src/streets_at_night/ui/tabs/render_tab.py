@@ -137,6 +137,7 @@ class RenderTab(Tab):
         self._progress_bar: t.Optional[pygame_gui.elements.UIProgressBar] = None
         self._status: t.Optional[pygame_gui.elements.UILabel] = None
         self._image_surface: t.Optional[pygame.Surface] = None
+        self._job_pending = False
 
     def build(self, manager: pygame_gui.UIManager, content_rect: pygame.Rect) -> None:
         """Create the view area, output picker, quality menu, button, and bar.
@@ -280,11 +281,15 @@ class RenderTab(Tab):
         Args:
             event (JobEvent): The job progress/completion event.
         """
+        if event.kind in ("done", "error") and not self._job_pending:
+            return
         if event.kind == "progress":
             self._on_progress(event.message, event.fraction)
         elif event.kind == "done":
+            self._job_pending = False
             self._on_done(event.result)
         elif event.kind == "error":
+            self._job_pending = False
             self._on_error(event.message)
 
     def update(self, dt: float) -> None:
@@ -324,6 +329,7 @@ class RenderTab(Tab):
         config = self.state.config
         cache_dir = self.state.cache_dir
         existing = self._reusable_scene(quality)
+        self._job_pending = True
         self.jobs.submit(
             lambda progress: run_render(
                 config, quality, output_path, cache_dir, existing, progress
