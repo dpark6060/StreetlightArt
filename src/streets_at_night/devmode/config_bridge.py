@@ -2,7 +2,6 @@
 
 import typing as t
 
-from ..config.schema import SceneConfig
 from .slider_registry import SliderRegistry
 
 
@@ -47,14 +46,16 @@ def set_nested(obj: t.Any, path: tuple, value: t.Any) -> None:
         setattr(parent, final_key, value)
 
 
-def read_config_to_widgets(config: SceneConfig, registry: SliderRegistry) -> None:
+def read_config_to_widgets(config: t.Any, registry: SliderRegistry) -> None:
     """Populate all slider, button, and text widgets from current config values.
 
     Reads each registered widget's config path, extracts the current value,
     and pushes it to the widget. Also updates value entry text for sliders.
 
     Args:
-        config (SceneConfig): The source of truth for current parameter values.
+        config (Any): The root object widget paths traverse from — a full
+            SceneConfig for hand-written sections, or a light-config dataclass
+            for reflected dynamic sections.
         registry (SliderRegistry): Widget registry for the active panel section.
     """
     _read_sliders(config, registry)
@@ -62,7 +63,7 @@ def read_config_to_widgets(config: SceneConfig, registry: SliderRegistry) -> Non
     _read_text_entries(config, registry)
 
 
-def apply_widgets_to_config(registry: SliderRegistry, config: SceneConfig) -> None:
+def apply_widgets_to_config(registry: SliderRegistry, config: t.Any) -> None:
     """Write all current widget values back into config.
 
     Reads each widget's current state and writes it to the appropriate config
@@ -72,18 +73,19 @@ def apply_widgets_to_config(registry: SliderRegistry, config: SceneConfig) -> No
 
     Args:
         registry (SliderRegistry): Widget registry holding all active widgets.
-        config (SceneConfig): The config object to update in-place.
+        config (Any): The root object widget paths traverse from — a full
+            SceneConfig, or a light-config dataclass for dynamic sections.
     """
     _apply_sliders(registry, config)
     _apply_bool_buttons(registry, config)
     _apply_text_entries(registry, config)
 
 
-def _read_sliders(config: SceneConfig, registry: SliderRegistry) -> None:
+def _read_sliders(config: t.Any, registry: SliderRegistry) -> None:
     """Push current config values to all registered sliders and their value entries.
 
     Args:
-        config (SceneConfig): Config providing the source values.
+        config (Any): Root object providing the source values.
         registry (SliderRegistry): Registry with slider-to-descriptor mappings.
     """
     for slider, descriptor in registry.sliders.items():
@@ -94,13 +96,13 @@ def _read_sliders(config: SceneConfig, registry: SliderRegistry) -> None:
             value_entry.set_text(_format_value(value, descriptor.is_int))
 
 
-def _read_bool_buttons(config: SceneConfig, registry: SliderRegistry) -> None:
+def _read_bool_buttons(config: t.Any, registry: SliderRegistry) -> None:
     """Push current config boolean values to all registered toggle buttons.
 
     Also syncs registry.bool_states so the in-memory state matches config.
 
     Args:
-        config (SceneConfig): Config providing the source values.
+        config (Any): Root object providing the source values.
         registry (SliderRegistry): Registry with button-to-path mappings.
     """
     for button, config_path in registry.bool_buttons.items():
@@ -109,13 +111,13 @@ def _read_bool_buttons(config: SceneConfig, registry: SliderRegistry) -> None:
         button.set_text("ON" if value else "OFF")
 
 
-def _read_text_entries(config: SceneConfig, registry: SliderRegistry) -> None:
+def _read_text_entries(config: t.Any, registry: SliderRegistry) -> None:
     """Push current config string values to all registered text entries.
 
     Converts haze_color tuples to '#RRGGBB' hex strings when encountered.
 
     Args:
-        config (SceneConfig): Config providing the source values.
+        config (Any): Root object providing the source values.
         registry (SliderRegistry): Registry with entry-to-path mappings.
     """
     for entry, config_path in registry.text_entries.items():
@@ -127,7 +129,7 @@ def _read_text_entries(config: SceneConfig, registry: SliderRegistry) -> None:
         entry.set_text(text)
 
 
-def _apply_sliders(registry: SliderRegistry, config: SceneConfig) -> None:
+def _apply_sliders(registry: SliderRegistry, config: t.Any) -> None:
     """Read dirty slider values and write them into config.
 
     Writes the slider value to descriptor.config_path and to every path in
@@ -150,7 +152,7 @@ def _apply_sliders(registry: SliderRegistry, config: SceneConfig) -> None:
 
     Args:
         registry (SliderRegistry): Registry with slider-to-descriptor mappings.
-        config (SceneConfig): Config to update in-place.
+        config (Any): Root object to update in-place.
     """
     for slider, descriptor in registry.sliders.items():
         if descriptor.label not in registry.dirty:
@@ -165,26 +167,26 @@ def _apply_sliders(registry: SliderRegistry, config: SceneConfig) -> None:
             value_entry.set_text(_format_value(value, descriptor.is_int))
 
 
-def _apply_bool_buttons(registry: SliderRegistry, config: SceneConfig) -> None:
+def _apply_bool_buttons(registry: SliderRegistry, config: t.Any) -> None:
     """Read all toggle button states from registry.bool_states and write into config.
 
     Args:
         registry (SliderRegistry): Registry with button-to-path mappings and bool_states.
-        config (SceneConfig): Config to update in-place.
+        config (Any): Root object to update in-place.
     """
     for button, config_path in registry.bool_buttons.items():
         value = registry.bool_states.get(button, False)
         set_nested(config, config_path, value)
 
 
-def _apply_text_entries(registry: SliderRegistry, config: SceneConfig) -> None:
+def _apply_text_entries(registry: SliderRegistry, config: t.Any) -> None:
     """Read all text entry values and write them into config.
 
     Converts '#RRGGBB' strings back to (R, G, B) tuples for color fields.
 
     Args:
         registry (SliderRegistry): Registry with entry-to-path mappings.
-        config (SceneConfig): Config to update in-place.
+        config (Any): Root object to update in-place.
     """
     for entry, config_path in registry.text_entries.items():
         text = entry.get_text().strip()
