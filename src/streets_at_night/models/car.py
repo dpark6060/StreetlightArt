@@ -7,6 +7,7 @@ import typing as t
 import numpy as np
 
 from .color_pool import ColorPool
+from .illumination import ConeIllumination
 from .light_source import LightSource
 from ..config.schema import CarConfig
 
@@ -178,10 +179,8 @@ class CarLightPair:
             brightness=0.0,
             size=_LIGHT_SIZE,
             glow_radius=0.0,
-            illumination_radius=0.0,
             illumination_intensity=0.0,
-            illumination_falloff=2.0,
-            illumination_inner_fraction=0.0,
+            illumination=None,
         )
 
     # ------------------------------------------------------------------
@@ -204,10 +203,12 @@ class CarLightPair:
             light.color = self._headlight_color
             light.brightness = self._headlight_brightness
             light.glow_radius = self._config.headlight_glow_radius
-            light.illumination_radius = self._config.headlight_illumination_radius
             light.illumination_intensity = self._config.headlight_illumination_intensity
-            light.illumination_falloff = self._config.headlight_illumination_falloff
-            light.illumination_inner_fraction = self._config.headlight_illumination_inner_fraction
+            light.illumination = ConeIllumination(
+                self._config.headlight_illumination_radius,
+                self._config.headlight_illumination_falloff,
+                self._config.headlight_illumination_inner_fraction,
+            )
 
     def _apply_taillight_properties(self) -> None:
         """Set both lights to the pre-sampled taillight color, brightness, and glow."""
@@ -215,7 +216,9 @@ class CarLightPair:
             light.color = self._taillight_color
             light.brightness = self._taillight_brightness
             light.glow_radius = self._config.taillight_glow_radius
-            light.illumination_radius = self._config.taillight_illumination_radius
             light.illumination_intensity = self._config.taillight_illumination_intensity
-            light.illumination_falloff = self._config.taillight_illumination_falloff
-            light.illumination_inner_fraction = self._config.taillight_illumination_inner_fraction
+            light.illumination = ConeIllumination(
+                self._config.taillight_illumination_radius,
+                self._config.taillight_illumination_falloff,
+                self._config.taillight_illumination_inner_fraction,
+            )

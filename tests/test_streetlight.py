@@ -1,7 +1,6 @@
 # Radical
 """Tests for streets_at_night.models.streetlight module."""
 
-import math
 import random
 import typing as t
 
@@ -11,6 +10,7 @@ import pytest
 from streets_at_night.config.defaults import DEFAULTS
 from streets_at_night.config.loader import _build_streetlight_config
 from streets_at_night.config.schema import FixtureProfileConfig
+from streets_at_night.models.illumination import BeamIllumination
 from streets_at_night.models.light_source import LightSource
 from streets_at_night.models.road_types import RoadType
 from streets_at_night.models.streetlight import (
@@ -276,27 +276,15 @@ def test_create_from_profile_stores_position(sample_profile, sample_position):
     np.testing.assert_array_equal(light.position, sample_position)
 
 
-def test_create_from_profile_passes_beam_angle(sample_profile, sample_position):
+def test_create_from_profile_uses_beam_illumination_model(sample_profile, sample_position):
     # Act
     light = StreetLight.create_from_profile(
         sample_profile, sample_position, RoadType.MAJOR_ROAD
     )
 
-    # Assert — beam angle flows through so the illumination pass uses the physical model
-    assert light.beam_angle_deg == sample_profile.beam_angle_deg
-
-
-def test_create_from_profile_derives_illumination_radius_from_height_and_beam(
-    sample_profile, sample_position
-):
-    # Act
-    light = StreetLight.create_from_profile(
-        sample_profile, sample_position, RoadType.MAJOR_ROAD
-    )
-
-    # Assert — radius = height * tan(beam / 2)
-    expected = sample_profile.height * math.tan(math.radians(sample_profile.beam_angle_deg / 2.0))
-    assert light.illumination_radius == pytest.approx(expected)
+    # Assert — a physical beam model carrying the profile's beam angle; the
+    # illumination pass derives the actual pool radius from pole height + angle.
+    assert light.illumination == BeamIllumination(sample_profile.beam_angle_deg)
 
 
 # ---------------------------------------------------------------------------

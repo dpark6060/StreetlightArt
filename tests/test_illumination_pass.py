@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from streets_at_night.camera.camera import Camera
+from streets_at_night.models.illumination import BeamIllumination, ConeIllumination
 from streets_at_night.models.light_source import LightSource
 from streets_at_night.rendering.illumination_pass import (
     _auto_scale_illumination_resolution,
@@ -33,19 +34,30 @@ def _make_light(
     illumination_falloff: float = 2.0,
     illumination_inner_fraction: float = 0.0,
     beam_angle_deg=None,
+    illumination="cone",
 ) -> LightSource:
-    """Return a LightSource with sensible defaults, overriding selected fields."""
+    """Return a LightSource with sensible defaults, overriding selected fields.
+
+    ``illumination`` selects the ground-pool model: a ``beam_angle_deg`` makes
+    it a BeamIllumination, otherwise a ConeIllumination from the radius/falloff/
+    inner-fraction args. Pass ``illumination=None`` for a light with no pool.
+    """
+    if illumination is None:
+        model = None
+    elif beam_angle_deg is not None:
+        model = BeamIllumination(beam_angle_deg)
+    else:
+        model = ConeIllumination(
+            illumination_radius, illumination_falloff, illumination_inner_fraction
+        )
     return LightSource(
         position=position,
         color=(255, 255, 255),
         brightness=brightness,
         size=0.5,
         glow_radius=10.0,
-        illumination_radius=illumination_radius,
         illumination_intensity=illumination_intensity,
-        illumination_falloff=illumination_falloff,
-        illumination_inner_fraction=illumination_inner_fraction,
-        beam_angle_deg=beam_angle_deg,
+        illumination=model,
     )
 
 
@@ -334,6 +346,31 @@ def test_effective_pool_radius_legacy_light_uses_authored_radius():
 
     # Assert
     assert radius == 42.0
+
+
+def test_effective_pool_radius_beam_light_at_ground_level_raises():
+    # Arrange — a BeamIllumination light at z=0 has an undefined physical pool
+    light = _make_light(position=np.array([0.0, 0.0, 0.0]), beam_angle_deg=120.0)
+
+    # Act & Assert — fail loud rather than silently produce a wrong pool
+    with pytest.raises(ValueError, match="positive pole height"):
+        _effective_pool_radius(light)
+
+
+def test_build_illumination_map_none_illumination_paints_nothing():
+    # Arrange — a light with no ground-pool model
+    light = _make_light(position=np.array([100.0, 100.0, 5.0]), illumination=None)
+    bounds = (0.0, 0.0, 200.0, 200.0)
+
+    # Act
+    illum_map, _ = _build_illumination_map(
+        [light], bounds, resolution=1.0, illumination_brightness=200,
+        camera_position=np.array([0.0, 0.0, 100.0]), falloff_distance=10000.0,
+        min_brightness_threshold=0.0,
+    )
+
+    # Assert — nothing was painted
+    assert illum_map.sum() == 0.0
 
 
 # ---------------------------------------------------------------------------

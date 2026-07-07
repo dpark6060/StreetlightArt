@@ -123,7 +123,7 @@ def test_create_sign_light_illumination_radius_in_range(rng, commercial_config):
     light = create_sign_light(pos, commercial_config, rng)
 
     # Assert
-    assert light.illumination_radius == commercial_config.sign_illumination_radius
+    assert light.illumination.radius == commercial_config.sign_illumination_radius
 
 
 def test_create_sign_light_color_is_valid_rgb(position, rng, commercial_config):
@@ -188,7 +188,7 @@ def test_create_parking_lot_light_has_large_illumination(rng, commercial_config)
     light = create_parking_lot_light(pos, commercial_config, rng)
 
     # Assert — parking lots have wide coverage
-    assert light.illumination_radius == commercial_config.parking_illumination_radius
+    assert light.illumination.radius == commercial_config.parking_illumination_radius
 
 
 def test_create_parking_lot_light_color_is_valid_rgb(position, rng, commercial_config):
@@ -264,7 +264,7 @@ def test_create_storefront_light_has_correct_illumination(rng, commercial_config
     light = create_storefront_light(pos, commercial_config, rng)
 
     # Assert
-    assert light.illumination_radius == commercial_config.storefront_illumination_radius
+    assert light.illumination.radius == commercial_config.storefront_illumination_radius
 
 
 def test_create_storefront_light_color_is_valid_rgb(position, rng, commercial_config):

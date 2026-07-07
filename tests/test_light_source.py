@@ -6,6 +6,7 @@ import dataclasses
 import numpy as np
 import pytest
 
+from streets_at_night.models.illumination import ConeIllumination
 from streets_at_night.models.light_source import LightSource
 
 
@@ -29,10 +30,8 @@ def sample_light(sample_position):
         brightness=1.5,
         size=0.3,
         glow_radius=20.0,
-        illumination_radius=15.0,
         illumination_intensity=0.6,
-        illumination_falloff=2.0,
-        illumination_inner_fraction=0.0,
+        illumination=ConeIllumination(15.0, 2.0, 0.0),
     )
 
 
@@ -51,10 +50,8 @@ def test_construction_succeeds_with_all_fields(sample_position):
         brightness=1.0,
         size=0.5,
         glow_radius=10.0,
-        illumination_radius=8.0,
         illumination_intensity=0.4,
-        illumination_falloff=2.0,
-        illumination_inner_fraction=0.0,
+        illumination=ConeIllumination(8.0, 2.0, 0.0),
     )
 
     # Assert
@@ -101,11 +98,11 @@ def test_attributes_glow_radius_stored_correctly(sample_light):
     assert sample_light.glow_radius == 20.0
 
 
-def test_attributes_illumination_radius_stored_correctly(sample_light):
-    # Arrange — fixture light has illumination_radius 15.0
+def test_attributes_illumination_model_stored_correctly(sample_light):
+    # Arrange — fixture light has a cone pool of radius 15.0
 
     # Act & Assert
-    assert sample_light.illumination_radius == 15.0
+    assert sample_light.illumination == ConeIllumination(15.0, 2.0, 0.0)
 
 
 def test_attributes_illumination_intensity_stored_correctly(sample_light):

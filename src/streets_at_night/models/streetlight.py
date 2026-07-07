@@ -1,6 +1,5 @@
 """FixtureProfile, FixturePool, and StreetLight factory for road-mounted lights."""
 
-import math
 import random
 import typing as t
 from dataclasses import dataclass
@@ -9,6 +8,7 @@ import numpy as np
 
 from ..config.schema import FixturePoolEntry, FixtureProfileConfig, StreetLightConfig
 from ..utils.colors import kelvin_to_rgb
+from .illumination import BeamIllumination
 from .light_source import LightSource
 from .road_types import RoadType
 
@@ -131,22 +131,14 @@ class StreetLight:
         Returns:
             LightSource: A fully configured light ready for rendering.
         """
-        half_angle = math.radians(fixture_profile.beam_angle_deg / 2.0)
-        derived_radius = fixture_profile.height * math.tan(half_angle)
         return LightSource(
             position=position,
             color=fixture_profile.fixture_color,
             brightness=fixture_profile.brightness,
             size=0.3,
             glow_radius=fixture_profile.glow_radius,
-            # illumination_radius is derived from height + beam angle and kept as
-            # a fallback; the physical branch in the illumination pass recomputes
-            # it. illumination_falloff / inner_fraction are unused when beam is set.
-            illumination_radius=derived_radius,
             illumination_intensity=fixture_profile.illumination_intensity,
-            illumination_falloff=2.0,
-            illumination_inner_fraction=0.0,
-            beam_angle_deg=fixture_profile.beam_angle_deg,
+            illumination=BeamIllumination(fixture_profile.beam_angle_deg),
         )
 
 

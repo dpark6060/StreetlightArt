@@ -22,6 +22,7 @@ import numpy as np
 
 from ..camera.camera import Camera
 from .backend import RenderBackend
+from ..models.illumination import BeamIllumination
 from .color_space import srgb255_to_linear
 from .raycast import GroundHit, build_ground_gbuffer
 from .render_utils import apply_brightness_falloff, camera_distance
@@ -209,21 +210,33 @@ def _auto_scale_illumination_resolution(
 def _effective_pool_radius(light: "LightSource") -> float:
     """Compute the effective ground pool radius for a light, in meters.
 
-    Physical lights (pole height + beam_angle_deg) derive the pool radius from
-    the beam cone geometry; all other lights use the authored
-    illumination_radius. Shared by AABB culling and blob painting so the two
-    can't drift apart.
+    ``BeamIllumination`` lights derive the pool radius from the beam cone
+    geometry (pole height + angle); ``ConeIllumination`` lights use the
+    authored radius. Shared by AABB culling and blob painting so the two
+    can't drift apart. ``None`` (no ground pool) is not a valid input here —
+    callers skip those lights before reaching this helper.
 
     Args:
-        light (LightSource): Light source with position and beam fields.
+        light (LightSource): Light source with a non-None illumination model.
 
     Returns:
         float: Effective ground pool radius in meters.
+
+    Raises:
+        ValueError: If a BeamIllumination light has no positive pole height
+            (a physical pool is undefined at ground level — fail loud rather
+            than silently producing a wrong pool).
     """
-    height = float(light.position[2])
-    if light.beam_angle_deg is not None and height > 0.0:
-        return height * math.tan(math.radians(light.beam_angle_deg / 2.0))
-    return light.illumination_radius
+    model = light.illumination
+    if isinstance(model, BeamIllumination):
+        height = float(light.position[2])
+        if height <= 0.0:
+            raise ValueError(
+                "BeamIllumination light requires a positive pole height "
+                f"(position z); got z={height}"
+            )
+        return height * math.tan(math.radians(model.beam_angle_deg / 2.0))
+    return model.radius
 
 
 def _is_light_visible(
@@ -306,6 +319,8 @@ def _build_illumination_map(
     illum_map = np.zeros((height, width, 3), dtype=np.float32)
 
     for light in lights:
+        if light.illumination is None:
+            continue
         if not _is_light_visible(
             light, bounds, camera_position, falloff_distance, min_brightness_threshold
         ):
@@ -333,14 +348,14 @@ def _paint_illumination_blob(
 
     Two falloff models are supported, selected per light:
 
-    - Physical (``light.beam_angle_deg`` set and pole height > 0): the pool
-      radius is derived from pole height and beam angle, and intensity follows
-      the inverse-square + cosine-incidence law for a point source at height h,
+    - Physical (``BeamIllumination``): the pool radius is derived from pole
+      height and beam angle, and intensity follows the inverse-square +
+      cosine-incidence law for a point source at height h,
       ``1 / (1 + (r/h)^2)^1.5``. A taller pole gives a wider, flatter, dimmer
       pool for free. Used by streetlights, which have a real pole height.
-    - Legacy two-zone cone (``beam_angle_deg`` is None): the authored
-      ``illumination_radius`` with an inner flat zone and ``illumination_falloff``
-      fade. Used by lights with no meaningful pole height (cars, signs, houses).
+    - Authored two-zone cone (``ConeIllumination``): the authored ``radius``
+      with an inner flat zone and ``falloff`` fade. Used by lights with no
+      meaningful pole height (cars, signs, houses).
 
     Light brightness is attenuated by exponential distance falloff from the
     camera before computing the peak, matching the formula used in the glow pass.
@@ -350,7 +365,7 @@ def _paint_illumination_blob(
     Args:
         illum_map (np.ndarray): (H, W, 3) float32 array to paint into (modified in-place).
         light (LightSource): Light source with position, color, brightness, and
-            either beam_angle_deg (physical) or the cone-model fields.
+            a BeamIllumination (physical) or ConeIllumination model.
         min_x (float): World x coordinate corresponding to pixel column 0.
         max_y (float): World y coordinate corresponding to pixel row 0.
         resolution (float): Meters per pixel.
@@ -360,7 +375,7 @@ def _paint_illumination_blob(
             exponential brightness attenuation.
     """
     height = float(light.position[2])
-    is_physical = light.beam_angle_deg is not None and height > 0.0
+    is_physical = isinstance(light.illumination, BeamIllumination)
     radius_m = _effective_pool_radius(light)
 
     cx = (light.position[0] - min_x) / resolution
@@ -390,9 +405,8 @@ def _paint_illumination_blob(
     if is_physical:
         falloff = _physical_falloff(dist_m, height, radius_m)
     else:
-        falloff = _cone_falloff(
-            dist_m, radius_m, light.illumination_inner_fraction, light.illumination_falloff
-        )
+        cone = light.illumination
+        falloff = _cone_falloff(dist_m, radius_m, cone.inner_fraction, cone.falloff)
 
     dist = camera_distance(light.position, camera_position)
     effective_brightness = apply_brightness_falloff(light.brightness, dist, falloff_distance)

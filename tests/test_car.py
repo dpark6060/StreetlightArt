@@ -529,7 +529,7 @@ def test_headlight_illumination_radius_comes_from_config():
     lights = pair.get_lights()
 
     # Assert
-    assert all(light.illumination_radius == 40.0 for light in lights)
+    assert all(light.illumination.radius == 40.0 for light in lights)
 
 
 def test_headlight_illumination_intensity_comes_from_config():
@@ -586,7 +586,7 @@ def test_taillight_illumination_radius_comes_from_config():
     lights = pair.get_lights()
 
     # Assert
-    assert all(light.illumination_radius == 7.0 for light in lights)
+    assert all(light.illumination.radius == 7.0 for light in lights)
 
 
 def test_taillight_illumination_intensity_comes_from_config():

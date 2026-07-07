@@ -24,6 +24,7 @@ from streets_at_night.config.schema import (
     ZoneColorsConfig,
     ZoneConfig,
 )
+from streets_at_night.models.illumination import ConeIllumination
 from streets_at_night.models.light_source import LightSource
 from streets_at_night.models.road_segment import RoadSegment
 from streets_at_night.models.road_types import RoadType
@@ -233,10 +234,8 @@ def test_populate_lights_adds_all_lights_to_scene(
         brightness=0.9,
         size=0.3,
         glow_radius=25.0,
-        illumination_radius=40.0,
         illumination_intensity=0.85,
-        illumination_falloff=2.0,
-        illumination_inner_fraction=0.0,
+        illumination=ConeIllumination(40.0, 2.0, 0.0),
     )
     car_light = LightSource(
         position=np.array([10.0, 0.0, 0.5]),
@@ -244,10 +243,8 @@ def test_populate_lights_adds_all_lights_to_scene(
         brightness=0.8,
         size=0.15,
         glow_radius=8.0,
-        illumination_radius=15.0,
         illumination_intensity=0.6,
-        illumination_falloff=2.0,
-        illumination_inner_fraction=0.0,
+        illumination=ConeIllumination(15.0, 2.0, 0.0),
     )
     mock_streetlights.return_value = [street_light]
     mock_cars.return_value = ([car_light], [])

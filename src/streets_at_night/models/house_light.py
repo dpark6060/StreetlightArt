@@ -6,6 +6,7 @@ import typing as t
 import numpy as np
 
 from .color_pool import ColorPool
+from .illumination import ConeIllumination
 from .light_source import LightSource
 from ..config.schema import HouseLightConfig
 
@@ -42,8 +43,10 @@ def create_house_light(
         brightness=brightness,
         size=0.2,
         glow_radius=config.glow_radius,
-        illumination_radius=config.illumination_radius,
         illumination_intensity=config.illumination_intensity,
-        illumination_falloff=config.illumination_falloff,
-        illumination_inner_fraction=config.illumination_inner_fraction,
+        illumination=ConeIllumination(
+            config.illumination_radius,
+            config.illumination_falloff,
+            config.illumination_inner_fraction,
+        ),
     )

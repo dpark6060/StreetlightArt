@@ -10,6 +10,7 @@ import pytest
 from streets_at_night.config.defaults import DEFAULTS
 from streets_at_night.config.loader import _build_atmosphere_config
 from streets_at_night.config.schema import AtmosphereConfig
+from streets_at_night.models.illumination import ConeIllumination
 from streets_at_night.models.light_source import LightSource
 from streets_at_night.rendering.backend import RenderBackend
 from streets_at_night.rendering.light_pass import (
@@ -52,10 +53,8 @@ def sample_light() -> LightSource:
         brightness=1.0,
         size=0.5,
         glow_radius=10.0,
-        illumination_radius=20.0,
         illumination_intensity=0.8,
-        illumination_falloff=2.0,
-        illumination_inner_fraction=0.0,
+        illumination=ConeIllumination(20.0, 2.0, 0.0),
     )
 
 
@@ -486,10 +485,8 @@ def test_render_lights_export_accumulates_tiny_far_light(
         brightness=1.0,
         size=0.01,
         glow_radius=1.0,
-        illumination_radius=2.0,
         illumination_intensity=0.5,
-        illumination_falloff=2.0,
-        illumination_inner_fraction=0.0,
+        illumination=ConeIllumination(2.0, 2.0, 0.0),
     )
     screen_coords = np.array([[320.0, 180.0]])
     valid_mask = np.array([True])

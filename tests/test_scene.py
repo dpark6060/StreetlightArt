@@ -8,6 +8,7 @@ from shapely.geometry import Polygon
 
 from streets_at_night.models.road_segment import RoadSegment, get_default_width
 from streets_at_night.models.road_types import RoadType
+from streets_at_night.models.illumination import ConeIllumination
 from streets_at_night.models.light_source import LightSource
 from streets_at_night.models.zones import CommercialZone, DarkZone, ResidentialZone
 from streets_at_night.scene.spatial_index import SpatialIndex
@@ -164,10 +165,8 @@ def sample_light() -> LightSource:
         brightness=1.0,
         size=0.5,
         glow_radius=10.0,
-        illumination_radius=20.0,
         illumination_intensity=0.8,
-        illumination_falloff=2.0,
-        illumination_inner_fraction=0.0,
+        illumination=ConeIllumination(20.0, 2.0, 0.0),
     )
 
 
@@ -526,10 +525,8 @@ def test_scene_get_lights_near_with_index_excludes_far_light(
         brightness=1.0,
         size=0.5,
         glow_radius=10.0,
-        illumination_radius=20.0,
         illumination_intensity=0.8,
-        illumination_falloff=2.0,
-        illumination_inner_fraction=0.0,
+        illumination=ConeIllumination(20.0, 2.0, 0.0),
     )
     scene = Scene(three_segments, camera, scene_config)
     scene.build_spatial_index()
