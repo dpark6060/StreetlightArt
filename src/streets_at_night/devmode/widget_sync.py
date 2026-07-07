@@ -1,9 +1,8 @@
 """Shared slider/entry/toggle widget-sync handlers for devmode panels.
 
-Public versions of the paired-widget update logic that ``cmd_devmode`` keeps as
-private copies. The UI Devmode tab imports these; ``cmd_devmode`` keeps its own
-copies until change 09 removes it. All three mark the touched slider dirty so
-``config_bridge`` only writes widgets the user actually changed.
+The UI Devmode tab imports these paired-widget update handlers. All three mark
+the touched slider dirty so ``config_bridge`` only writes widgets the user
+actually changed.
 """
 
 import typing as t

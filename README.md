@@ -16,6 +16,18 @@ uv sync
 
 Tested on macOS / Apple Silicon. The MPS backend on PyTorch is required for real-time animation; CPU-only works but is slower.
 
+## UI
+
+The fastest way in is the tabbed UI, which wraps every command (Verify, Preview, Render, Animate, Devmode) in one window with a shared config bar:
+
+```bash
+uv run streets-at-night ui
+# jump straight to a tab
+uv run streets-at-night ui --tab Render
+```
+
+Each command also still runs standalone from the CLI (see below).
+
 ## Quick start
 
 ```bash
@@ -32,7 +44,7 @@ uv run streets-at-night render --quality high
 uv run streets-at-night animate --image output/render.png
 
 # Tune lighting/atmosphere live with sliders, then save a config
-uv run streets-at-night devmode
+uv run streets-at-night devmode   # opens the UI on the Devmode tab
 ```
 
 ## Commands
@@ -41,11 +53,12 @@ Each subcommand has its own reference page:
 
 | Command | Purpose | Docs |
 |---|---|---|
+| `ui` | Tabbed window wrapping all commands | — |
 | `verify` | Sanity-check OSM data with a top-down plot | [`docs/commands/verify.md`](docs/commands/verify.md) |
 | `render` | Static perspective render to PNG/TIFF | [`docs/commands/render.md`](docs/commands/render.md) |
 | `preview` | Interactive pygame camera placement | [`docs/commands/preview.md`](docs/commands/preview.md) |
 | `animate` | Heat shimmer over a static render | [`docs/commands/animate.md`](docs/commands/animate.md) |
-| `devmode` | Live slider tuning of lights & atmosphere | [`docs/commands/devmode.md`](docs/commands/devmode.md) |
+| `devmode` | Opens the UI on the Devmode tab (live slider tuning) | [`docs/commands/devmode.md`](docs/commands/devmode.md) |
 
 All commands accept a global `--config` flag to point at an alternate TOML file (default: `scene_config.toml`).
 

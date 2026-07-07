@@ -221,21 +221,29 @@ def main() -> None:
         help="Crossfade duration in seconds when --seamless is set (default: 0.5).",
     )
 
+    ui_parser = subparsers.add_parser("ui", help="Launch the tabbed UI")
+    ui_parser.add_argument(
+        "--tab",
+        default="Verify",
+        choices=["Verify", "Preview", "Render", "Animate", "Devmode"],
+        help="Tab to open on launch (default: Verify)",
+    )
+    ui_parser.add_argument(
+        "--cache-dir",
+        type=Path,
+        default=Path("cache"),
+        help="Directory for OSM data cache files",
+    )
+
     devmode_parser = subparsers.add_parser(
         "devmode",
-        help="Launch interactive devmode parameter tuning tool",
-    )
-    devmode_parser.add_argument(
-        "--real-tiles",
-        action="store_true",
-        default=False,
-        help="Load a strip of real OSM road data instead of the synthetic scene",
+        help="Launch the devmode parameter tuning tool (opens the UI on the Devmode tab)",
     )
     devmode_parser.add_argument(
         "--cache-dir",
         type=Path,
         default=Path("cache"),
-        help="Directory for OSM data cache files (used with --real-tiles)",
+        help="Directory for OSM data cache files",
     )
 
     args = parser.parse_args()
@@ -258,9 +266,22 @@ def main() -> None:
         )
     elif args.command == "animate":
         cmd_animate(args, config)
+    elif args.command == "ui":
+        from .ui.app import run_ui
+        run_ui(
+            config,
+            args.config if args.config.exists() else None,
+            resolve_cache_dir(args.cache_dir, config),
+            initial_tab=args.tab,
+        )
     elif args.command == "devmode":
-        from .devmode.cmd_devmode import cmd_devmode
-        cmd_devmode(args, config)
+        from .ui.app import run_ui
+        run_ui(
+            config,
+            args.config if args.config.exists() else None,
+            resolve_cache_dir(args.cache_dir, config),
+            initial_tab="Devmode",
+        )
 
 
 def cmd_verify(config: SceneConfig, output_path: Path, cache_dir: Path) -> None:

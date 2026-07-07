@@ -10,7 +10,8 @@ Renders an aerial night view of San Bernardino, CA using OpenStreetMap road data
 2. **`preview`** — Builds a fully populated `Scene` (roads, zones, streetlights, cars, commercial and house lights; ENU meters via UTM Zone 11N; spatial index at 500m cell size). Generates a flat top-down road map (`PIL.Image`, cached as `cache/flat_map_*.png`). Runs a pygame event loop at 1280x720 where each frame raycasts every screen pixel through the camera to the z=0 ground plane and samples the flat map, then optionally applies heat-haze distortion. WASD/QE/arrows/mouse-drag for camera control. P for screenshot, R for reset, C to save the current camera position back to the TOML config, ESC to quit. `--no-lights` skips light rendering for a faster preview.
 3. **`render`** — Builds the same fully populated Scene, but renders via `PillowBackend` at a configurable quality preset (low=1920x1080, medium=3840x2160, high=7680x4320, overridable with `--width`/`--height`). Runs the full linear-HDR pass pipeline (ground, roads, illumination, lights, atmosphere, compositor) with progress reporting per pass. Saves PNG or TIFF to `output/render.png` (`--format`, `--no-lights` to skip illumination/light passes).
 4. **`animate`** — Animates Kolmogorov heat-haze distortion over a previously rendered still image (`output/render.png` by default). Two modes: an interactive pygame window (default, press P to save a frame, ESC to quit), or `--record FILE` which renders frames offline through `imageio`/ffmpeg to an MP4 at a chosen quality/resolution, optionally with `--seamless` looping via a crossfade tail. Requires `[heat_haze] enabled = true` in the config; the depth map used for haze distortion is rebuilt from the config camera at the target resolution.
-5. **`devmode`** — Interactive pygame + pygame-gui tool for authoring config values. Renders either a synthetic 10-row test scene (default) or a real clipped strip of OSM roads (`--real-tiles`) next to a slider panel covering config categories (atmosphere, lights, zones, roads, etc.). Sliders write live into an in-memory `SceneConfig`; a Rerender button re-runs the export pipeline; Save/Load buttons read and write TOML files via `config_writer`/`config_bridge`.
+5. **`devmode`** — Alias that opens the tabbed `ui` directly on its Devmode tab (`run_ui(..., initial_tab="Devmode")`). Keeps `--cache-dir`; the old `--real-tiles` flag is gone (the tab has a synthetic/real toggle). The standalone `cmd_devmode` event loop and hand-written control panel were removed in the Fable UI rework — the Devmode tab now owns scene rendering and panel construction.
+6. **`ui`** — Launches the tabbed pygame + pygame-gui window (`ui/app.py`, `run_ui`) that wraps every command as a tab (Verify, Preview, Render, Animate, Devmode) behind a shared config bar. `--tab` picks the tab to open on launch (default `Verify`); `--cache-dir` sets the OSM cache directory. Tabs run work off the main thread via `ui/jobs.py` (`JobRunner`) and share an `AppState` (`ui/app_state.py`) holding the working `SceneConfig`, its path, and the cache dir.
 
 **Key constraints:**
 
@@ -25,6 +26,7 @@ Renders an aerial night view of San Bernardino, CA using OpenStreetMap road data
 - Streetlight ground pools can be "physical" (derived from pole height + `beam_angle_deg`, when both are set) or a legacy authored two-zone cone (inner flat zone + falloff curve), selected per-fixture in `illumination_pass.py`
 - Heat haze (`rendering/heat_haze.py`) is MPS-accelerated via `torch.nn.functional.grid_sample`; it falls back to whatever `torch` device is available if MPS isn't present (see `select_torch_device`)
 - Devmode config edits only persist when explicitly saved via its Save button; the CLI's other commands always read `scene_config.toml` (or `--config`) directly
+- The `ui` and `devmode` subcommands both dispatch to `run_ui`; `main()` passes `config_path=None` when the `--config` file does not exist so the UI opens in a blank/save-as state
 
 ## Structure
 
@@ -35,11 +37,15 @@ cache/                     # OSM .gpkg caches, flat map PNG/JSON cache, ground t
 output/                    # Rendered images, screenshots, recorded animations
 src/streets_at_night/
   __main__.py              # python -m entry, calls main()
-  main.py                  # CLI: verify/preview/render/animate/devmode subcommands, scene loading
+  main.py                  # CLI: verify/preview/render/animate/ui/devmode subcommands, scene loading
+  scene_loader.py          # load_scene / bounds_to_bbox — OSM→Scene assembly shared by CLI + UI
   config/
     schema.py              # Dataclasses: SceneConfig and all nested config sections
     defaults.py            # DEFAULTS dict — base config values
     loader.py              # load_config() — TOML → SceneConfig with deep merge
+    serde.py               # dataclass_from_dict / dataclass_to_dict reflection walkers
+    camera_io.py           # save_camera_position — write camera pose back to a TOML config
+    paths.py               # resolve_cache_dir and other path helpers
   models/
     road_types.py          # RoadType enum (HIGHWAY..MINOR)
     road_segment.py        # RoadSegment dataclass — geometry, type, width, fixture_profile
@@ -90,13 +96,33 @@ src/streets_at_night/
     atmosphere_pass.py        # render_atmosphere — horizon glow + depth-based airlight veil
     compositor.py             # render_composite — stars, vignette, exposure, tone-map, sRGB encode
     heat_haze.py               # HeatHaze — multi-layer Kolmogorov phase-screen distortion (torch/MPS)
+    animate_service.py         # build_animate_haze / load_animate_base_frame / record_haze[_seamless] — heat-haze animation helpers shared by CLI + Animate tab
+  ui/
+    app.py                     # UIApp + run_ui — window, tab bar, shared config bar, event loop
+    app_state.py               # AppState — working SceneConfig, config_path, cache_dir
+    jobs.py                    # JobRunner — runs tab work off-thread, polled per frame
+    imaging.py                 # compute_viewport_fit + PIL↔pygame surface helpers (was in cmd_devmode)
+    tabs/
+      base.py                  # Tab ABC — build/destroy/update/draw/handle_event/refresh_from_state
+      verify_tab.py            # Verify tab — bounds entry + OSM verification plot
+      preview_tab.py           # Preview tab — interactive warp preview + camera controls
+      render_tab.py            # Render tab — quality/output controls + export render
+      animate_tab.py           # Animate tab — heat-haze preview/record over a still
+      devmode_tab.py           # Devmode tab — synthetic/real scene + dynamic slider panel
+    widgets/
+      file_picker.py           # FilePickerRow — text entry + browse dialog
+      labeled_entry.py         # LabeledEntry — label + text entry row
   devmode/
-    cmd_devmode.py            # Main event loop for the devmode parameter tuning tool
     synthetic_scene.py        # Builds the 10-row synthetic ENU test scene
     real_scene.py              # Loads a clipped strip of real OSM road data for devmode
     devmode_camera.py          # Builds an ENU-space Camera from DevmodeCameraConfig
-    control_panel.py           # Creates and lays out the full devmode control panel
-    panel_sections.py          # Builds pygame-gui widget sections for each config category
+    dynamic_panel.py           # build_dynamic_section — data-driven slider panel from field metadata
+    field_meta.py              # Per-field slider metadata (ranges, int/bool/text) for the dynamic panel
+    light_catalog.py           # Enumerates the light config fields the devmode panel exposes
+    render_helpers.py          # should_render_full / build_render_passes / render_devmode_scene (was in cmd_devmode)
+    widget_sync.py             # Paired slider/entry/toggle update handlers used by the Devmode tab
+    minimap.py                 # Top-down minimap overlay for the devmode scene
+    panel_sections.py          # build_atmosphere_section + build_devmode_camera_section (light-section builders removed in change 09)
     slider_registry.py         # Maps pygame-gui slider widgets to SceneConfig field paths
     config_bridge.py           # Two-way sync between SceneConfig and slider widget values
     config_writer.py           # Serializes SceneConfig back to a TOML-compatible dict and writes it
