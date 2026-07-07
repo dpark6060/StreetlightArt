@@ -24,8 +24,10 @@ def project_points(
 ) -> t.Tuple[np.ndarray, np.ndarray]:
     """Project 3D world points to 2D screen coordinates.
 
-    Applies the view matrix then the projection matrix, performs the perspective
-    divide, and maps NDC coordinates to pixel coordinates.
+    Thin wrapper around project_points_full that keeps the original two-value
+    return signature (screen coordinates + on-screen validity) for callers
+    that need point-sprite semantics, such as light passes and horizon
+    computation.
 
     Args:
         points_3d (np.ndarray): Shape (N, 3) world coordinates in ENU meters.
@@ -36,8 +38,41 @@ def project_points(
     Returns:
         tuple[np.ndarray, np.ndarray]:
             - screen_coords: (N, 2) pixel coordinates (float).
-            - valid_mask: (N,) bool — True if the point is in front of camera
-              and within NDC screen bounds (x, y ∈ [-1, 1]).
+            - on_screen_mask: (N,) bool — True if the point is in front of
+              camera and within NDC screen bounds (x, y ∈ [-1, 1]).
+    """
+    screen_coords, _, on_screen_mask = project_points_full(
+        points_3d, view_matrix, proj_matrix, screen_size
+    )
+    return screen_coords, on_screen_mask
+
+
+def project_points_full(
+    points_3d: np.ndarray,
+    view_matrix: np.ndarray,
+    proj_matrix: np.ndarray,
+    screen_size: t.Tuple[int, int],
+) -> t.Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Project 3D world points to 2D screen coordinates with both validity masks.
+
+    Applies the view matrix then the projection matrix, performs the perspective
+    divide, and maps NDC coordinates to pixel coordinates. Distinguishes
+    "in front of camera" (correct for line/polygon vertices, which backends
+    clip to the screen themselves) from "on screen" (correct for point
+    sprites, which need no downstream clipping).
+
+    Args:
+        points_3d (np.ndarray): Shape (N, 3) world coordinates in ENU meters.
+        view_matrix (np.ndarray): (4, 4) world-to-camera matrix.
+        proj_matrix (np.ndarray): (4, 4) perspective projection matrix.
+        screen_size (tuple[int, int]): (width, height) of the output image.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray, np.ndarray]:
+            - screen_coords: (N, 2) pixel coordinates (float).
+            - in_front_mask: (N,) bool — True if the point is in front of the
+              camera (view_z < 0 and w > 0), regardless of screen bounds.
+            - on_screen_mask: (N,) bool — in_front_mask AND NDC x, y ∈ [-1, 1].
     """
     width, height = screen_size
     homogeneous = _to_homogeneous(points_3d)
@@ -45,8 +80,9 @@ def project_points(
     clip_coords = _apply_matrix(proj_matrix, view_coords)
     ndc, w = _perspective_divide(clip_coords)
     screen_coords = _ndc_to_screen(ndc, width, height)
-    valid_mask = _compute_valid_mask(view_coords, w, ndc)
-    return screen_coords, valid_mask
+    in_front_mask = _compute_in_front_mask(view_coords, w)
+    on_screen_mask = in_front_mask & _compute_on_screen_mask(ndc)
+    return screen_coords, in_front_mask, on_screen_mask
 
 
 def clip_polygon_to_near_plane(
@@ -215,20 +251,19 @@ def _ndc_to_screen(ndc: np.ndarray, width: int, height: int) -> np.ndarray:
     return np.column_stack([screen_x, screen_y])
 
 
-def _compute_valid_mask(
+def _compute_in_front_mask(
     view_coords: np.ndarray,
     w: np.ndarray,
-    ndc: np.ndarray,
 ) -> np.ndarray:
-    """Compute a boolean mask indicating which projected points are valid.
+    """Compute a boolean mask indicating which projected points are in front.
 
-    A point is valid if it is in front of the camera (view_z < 0 and w > 0)
-    and its NDC x and y coordinates fall within [-1, 1] (i.e. on screen).
+    A point is in front of the camera if its camera-space z is negative and
+    its clip-space w is positive. This mask is correct for line and polygon
+    vertices — backends clip off-screen pixel coordinates themselves.
 
     Args:
         view_coords (np.ndarray): (N, 4) camera-space coordinates.
         w (np.ndarray): (N,) clip-space w values (positive = in front).
-        ndc (np.ndarray): (N, 3) normalized device coordinates after perspective divide.
 
     Returns:
         np.ndarray: (N,) boolean mask.
@@ -236,9 +271,22 @@ def _compute_valid_mask(
     view_z = view_coords[:, 2]
     in_front = view_z < 0.0
     w_positive = w > 0.0
+    return in_front & w_positive
+
+
+def _compute_on_screen_mask(ndc: np.ndarray) -> np.ndarray:
+    """Compute a boolean mask indicating which NDC coordinates lie on screen.
+
+    Args:
+        ndc (np.ndarray): (N, 3) normalized device coordinates after perspective divide.
+
+    Returns:
+        np.ndarray: (N,) boolean mask — True where NDC x and y both fall
+        within [-1, 1].
+    """
     in_screen_x = (ndc[:, 0] >= -1.0) & (ndc[:, 0] <= 1.0)
     in_screen_y = (ndc[:, 1] >= -1.0) & (ndc[:, 1] <= 1.0)
-    return in_front & w_positive & in_screen_x & in_screen_y
+    return in_screen_x & in_screen_y
 
 
 def _camera_z(point_world: np.ndarray, view_matrix: np.ndarray) -> float:

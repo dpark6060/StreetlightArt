@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
+import dataclasses
 from dataclasses import dataclass
 
 from PIL import Image
@@ -29,7 +30,8 @@ from .camera.coordinates import (
     wgs84_to_enu,
 )
 from .config.loader import load_config
-from .config.schema import BoundsConfig, SceneConfig
+from .config.paths import compute_origin, resolve_cache_dir
+from .config.schema import BoundsConfig, HeatHazeConfig, QualityPreset, SceneConfig
 from .rendering.heat_haze import HeatHaze, compute_depth_map
 from .data.osm_loader import load_buildings, load_land_use, load_roads
 from .data.road_classifier import classify_roads
@@ -43,6 +45,10 @@ from .rendering.render_pipeline import (
 )
 from .placement.scene_builder import build_scene
 from .scene.scene import Scene
+
+if t.TYPE_CHECKING:
+    from .rendering.flat_map import FlatMapMeta
+    from .rendering.raycast import GroundHit
 
 
 @dataclass
@@ -236,7 +242,7 @@ def main() -> None:
     config = load_config(args.config)
 
     if args.command == "verify":
-        cmd_verify(config, args.output, _resolve_cache_dir(args.cache_dir, config))
+        cmd_verify(config, args.output, resolve_cache_dir(args.cache_dir, config))
     elif args.command == "preview":
         cmd_preview(args, config)
     elif args.command == "render":
@@ -244,7 +250,7 @@ def main() -> None:
             config,
             args.quality,
             args.output,
-            _resolve_cache_dir(args.cache_dir, config),
+            resolve_cache_dir(args.cache_dir, config),
             args.no_lights,
             width_override=args.width,
             height_override=args.height,
@@ -255,21 +261,6 @@ def main() -> None:
     elif args.command == "devmode":
         from .devmode.cmd_devmode import cmd_devmode
         cmd_devmode(args, config)
-
-
-def _resolve_cache_dir(base_dir: Path, config: SceneConfig) -> Path:
-    """Return the effective cache directory, applying region_name if set.
-
-    Args:
-        base_dir (Path): Base cache directory from CLI (default: cache/).
-        config (SceneConfig): Loaded scene config.
-
-    Returns:
-        Path: base_dir / region_name if region_name is set, else base_dir.
-    """
-    if config.region_name:
-        return base_dir / config.region_name
-    return base_dir
 
 
 def cmd_verify(config: SceneConfig, output_path: Path, cache_dir: Path) -> None:
@@ -321,19 +312,18 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
     import pygame
     from .rendering.pygame_backend import PygameBackend
     from .rendering.flat_map import get_flat_map
-    from .rendering.render_pipeline import get_preview_passes_warp
+    from .rendering.raycast import build_ground_gbuffer
     from .camera.controls import handle_input, render_hud, MouseDragState
 
-    cache_dir = _resolve_cache_dir(getattr(args, "cache_dir", Path("cache")), config)
+    cache_dir = resolve_cache_dir(getattr(args, "cache_dir", Path("cache")), config)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     scene = _load_scene(config, args.quality, cache_dir)
 
     print("Generating flat map for preview...")
     flat_map, flat_meta = get_flat_map(scene, cache_dir)
+    flat_map_array = np.asarray(flat_map)
     print(f"Flat map ready: {flat_map.size[0]}x{flat_map.size[1]}px")
-
-    warp_passes = get_preview_passes_warp(flat_map, flat_meta)
 
     pygame.init()
     preview_width, preview_height = 1280, 720
@@ -350,8 +340,12 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
     drag_state = MouseDragState()
 
     print("Building initial base frame...")
+    gbuffer = build_ground_gbuffer(scene.camera, preview_width, preview_height)
     anim = AnimationState(
-        base_frame=_render_base_frame(scene, warp_passes, preview_width, preview_height)
+        base_frame=_render_base_frame(
+            scene, flat_map, flat_meta, flat_map_array,
+            preview_width, preview_height, gbuffer,
+        )
     )
 
     heat_haze_cfg = config.heat_haze
@@ -359,8 +353,11 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
     if heat_haze_cfg is not None and heat_haze_cfg.enabled:
         haze = HeatHaze(preview_width, preview_height, heat_haze_cfg)
         haze.set_base_frame(anim.base_frame)
-        haze.set_depth_map(_compute_preview_depth(scene.camera, heat_haze_cfg,
-                                                  preview_width, preview_height))
+        haze.set_depth_map(compute_depth_map(
+            scene.camera, preview_width, preview_height,
+            heat_haze_cfg.max_distance_m, heat_haze_cfg.sky_distance_factor,
+            gbuffer=gbuffer,
+        ))
 
     running = True
     while running:
@@ -399,14 +396,18 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
             anim.base_frame_dirty = True
 
         if anim.base_frame_dirty:
+            gbuffer = build_ground_gbuffer(scene.camera, preview_width, preview_height)
             anim.base_frame = _render_base_frame(
-                scene, warp_passes, preview_width, preview_height
+                scene, flat_map, flat_meta, flat_map_array,
+                preview_width, preview_height, gbuffer,
             )
             anim.base_frame_dirty = False
             if haze is not None:
                 haze.set_base_frame(anim.base_frame)
-                haze.set_depth_map(_compute_preview_depth(
-                    scene.camera, heat_haze_cfg, preview_width, preview_height
+                haze.set_depth_map(compute_depth_map(
+                    scene.camera, preview_width, preview_height,
+                    heat_haze_cfg.max_distance_m, heat_haze_cfg.sky_distance_factor,
+                    gbuffer=gbuffer,
                 ))
 
         anim.elapsed_t += dt
@@ -419,7 +420,7 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
         else:
             frame = anim.base_frame
 
-        backend.blit_pil_image(Image.fromarray(frame))
+        backend.blit_array(frame)
         fps = clock.get_fps()
         render_hud(screen, scene.camera, fps, 0, font)
         backend.present()
@@ -456,6 +457,7 @@ def cmd_animate(args: argparse.Namespace, config: SceneConfig) -> None:
         return
 
     import pygame
+    from .rendering.pygame_backend import PygameBackend
 
     display_width = args.width if args.width is not None else 1280
     display_height = args.height if args.height is not None else 720
@@ -467,6 +469,7 @@ def cmd_animate(args: argparse.Namespace, config: SceneConfig) -> None:
     screen = pygame.display.set_mode((display_width, display_height))
     pygame.display.set_caption("Streets At Night — Heat Haze")
     clock = pygame.time.Clock()
+    backend = PygameBackend(screen)
 
     elapsed_t = 0.0
     running = True
@@ -483,10 +486,8 @@ def cmd_animate(args: argparse.Namespace, config: SceneConfig) -> None:
 
         elapsed_t += dt
         frame = haze.apply(elapsed_t)
-        pil_frame = Image.fromarray(frame)
-        pg_surface = pygame.image.fromstring(pil_frame.tobytes(), pil_frame.size, pil_frame.mode)
-        screen.blit(pg_surface, (0, 0))
-        pygame.display.flip()
+        backend.blit_array(frame)
+        backend.present()
 
     pygame.quit()
 
@@ -517,7 +518,7 @@ def _load_animate_base_frame(
 
 def _build_animate_haze(
     config: SceneConfig,
-    heat_haze_cfg: t.Any,
+    heat_haze_cfg: HeatHazeConfig,
     base_frame: np.ndarray,
     display_width: int,
     display_height: int,
@@ -538,7 +539,7 @@ def _build_animate_haze(
     Returns:
         HeatHaze: Ready-to-use haze instance.
     """
-    transformer = create_transformer(*_compute_origin(config))
+    transformer = create_transformer(*compute_origin(config))
     camera = create_camera(
         position=_camera_position_enu(config, transformer),
         target=_target_position_enu(config, transformer),
@@ -561,7 +562,7 @@ def _build_animate_haze(
 def cmd_animate_record(
     args: argparse.Namespace,
     config: SceneConfig,
-    heat_haze_cfg: t.Any,
+    heat_haze_cfg: HeatHazeConfig,
 ) -> None:
     """Render an offline MP4 of heat-haze animation at high resolution.
 
@@ -578,12 +579,16 @@ def cmd_animate_record(
     """
     out_path: Path = args.record
     out_w, out_h = _resolve_record_dimensions(args, config)
-    duration = args.duration if args.duration is not None else _default_video_duration(heat_haze_cfg)
     fps = max(1, int(args.fps))
-    n_frames = max(1, int(round(duration * fps)))
 
     base_frame = _load_animate_base_frame(args.image, out_w, out_h)
     haze = _build_animate_haze(config, heat_haze_cfg, base_frame, out_w, out_h)
+
+    # Duration is derived from the *built* haze so its loop period reflects the
+    # effective (resolution-scaled) screens; computing it from raw config would
+    # miss the loop point at any width != 1920 and break --seamless.
+    duration = args.duration if args.duration is not None else _default_video_duration(haze)
+    n_frames = max(1, int(round(duration * fps)))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     print(
@@ -622,28 +627,26 @@ def _resolve_record_dimensions(
     return int(width), int(height)
 
 
-def _default_video_duration(heat_haze_cfg: t.Any) -> float:
-    """Pick a default video duration covering one cycle of the slowest layer.
+def _default_video_duration(haze: HeatHaze) -> float:
+    """Pick a default video duration covering one cyclic loop of the haze.
 
-    For each layer, the cyclic period along an axis is
-    ``screen_dim / |wind_along_axis|``. The slowest layer's period (across
-    both axes) sets the natural "loop length".
+    Uses the haze's ``loop_period_s()`` — computed from the effective
+    (resolution-scaled, clamped) phase screens and winds — so the default
+    ``--duration`` lands exactly on the cycle boundary at any output width.
+    Deriving it from raw config instead would miss the loop point by the
+    resolution scale factor and make ``--seamless`` crossfade mid-cycle.
 
     Args:
-        heat_haze_cfg: Active HeatHazeConfig.
+        haze (HeatHaze): The built haze whose loop period sets the length.
 
     Returns:
-        float: Default duration in seconds, no less than 4 s.
+        float: Default duration in seconds, no less than 4 s (10 s if the
+        haze has no moving layers).
     """
-    if not heat_haze_cfg.layers:
+    period = haze.loop_period_s()
+    if period <= 0.0:
         return 10.0
-    longest = 0.0
-    for lc in heat_haze_cfg.layers:
-        if abs(lc.wind_y_pxs) > 1e-9:
-            longest = max(longest, heat_haze_cfg.screen_height_px / abs(lc.wind_y_pxs))
-        if abs(lc.wind_x_pxs) > 1e-9:
-            longest = max(longest, heat_haze_cfg.screen_width_px / abs(lc.wind_x_pxs))
-    return max(4.0, longest)
+    return max(4.0, period)
 
 
 def _record_haze(haze: HeatHaze, fps: int, n_frames: int, out_path: Path) -> None:
@@ -745,29 +748,6 @@ def _save_animate_frame(haze: HeatHaze, elapsed_t: float) -> None:
     print(f"Frame saved: {out_path}")
 
 
-def _compute_preview_depth(
-    camera: t.Any,
-    heat_haze_cfg: t.Any,
-    width: int,
-    height: int,
-) -> np.ndarray:
-    """Compute the per-pixel depth map for the live preview camera.
-
-    Args:
-        camera (Camera): Active scene camera.
-        heat_haze_cfg (HeatHazeConfig): Active heat haze config.
-        width (int): Preview width in pixels.
-        height (int): Preview height in pixels.
-
-    Returns:
-        np.ndarray: (H, W) float32 depth map in meters.
-    """
-    return compute_depth_map(
-        camera, width, height,
-        heat_haze_cfg.max_distance_m, heat_haze_cfg.sky_distance_factor,
-    )
-
-
 def cmd_render(
     config: SceneConfig,
     quality: str,
@@ -796,8 +776,6 @@ def cmd_render(
         format_override (str | None): Force output format ("png" or "tiff").
             When None, format is auto-detected from the output path extension.
     """
-    import dataclasses
-
     cache_dir.mkdir(parents=True, exist_ok=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -829,34 +807,48 @@ def cmd_render(
 
 def _render_base_frame(
     scene: Scene,
-    warp_passes: t.List,
+    flat_map: Image.Image,
+    flat_meta: "FlatMapMeta",
+    flat_map_array: np.ndarray,
     width: int,
     height: int,
+    gbuffer: "GroundHit",
 ) -> np.ndarray:
-    """Render the full warp pipeline once and return the result as a numpy array.
+    """Render one warp-preview frame and return the result as a numpy array.
 
-    Uses a PillowBackend so the output is a PIL Image that can be converted to
-    a (H, W, 3) uint8 numpy array for per-frame manipulation.
+    Uses a PillowBackend so the output can be converted to a (H, W, 3) uint8
+    numpy array for per-frame manipulation. Calls render_warp_preview directly
+    (rather than through the generic render-pass pipeline) so the caller's
+    already-built GroundHit can be reused instead of raycasting again.
 
     Args:
         scene (Scene): The current world scene.
-        warp_passes (list): Render pass list (warp preview pass).
+        flat_map (Image.Image): Pre-rendered top-down road map.
+        flat_meta (FlatMapMeta): World bounds and resolution metadata.
+        flat_map_array (np.ndarray): Pre-converted (H, W, 3) uint8 flat map array.
         width (int): Output width in pixels.
         height (int): Output height in pixels.
+        gbuffer (GroundHit): Pre-computed ground raycast for the scene camera
+            at this size, shared with the heat-haze depth computation.
 
     Returns:
         np.ndarray: (H, W, 3) uint8 array of the composited frame.
     """
+    from .rendering.warp_preview import render_warp_preview
+
     pillow_backend = PillowBackend(width, height)
-    render_scene_frame(scene, pillow_backend, passes=warp_passes)
+    render_warp_preview(
+        scene, scene.camera, pillow_backend, flat_map, flat_meta,
+        flat_map_array=flat_map_array, gbuffer=gbuffer,
+    )
     return np.asarray(pillow_backend.get_image()).copy()
 
 
 def _apply_resolution_overrides(
-    preset: t.Any,
+    preset: QualityPreset,
     width_override: t.Optional[int],
     height_override: t.Optional[int],
-) -> t.Any:
+) -> QualityPreset:
     """Return a new preset with optional width and height overrides applied.
 
     Uses dataclasses.replace to avoid mutating the shared preset object.
@@ -871,8 +863,6 @@ def _apply_resolution_overrides(
     Returns:
         QualityPreset: New preset with overrides applied.
     """
-    import dataclasses
-
     kwargs: t.Dict[str, int] = {}
     if width_override is not None:
         kwargs["width"] = width_override
@@ -932,7 +922,7 @@ def _load_scene(
     roads = classify_roads(roads_raw)
     print(f"  {len(roads)} road segments loaded.")
 
-    origin_lat, origin_lon = _compute_origin(config)
+    origin_lat, origin_lon = compute_origin(config)
     print(f"Coordinate origin: {origin_lat:.4f}N, {origin_lon:.4f}W")
     transformer = create_transformer(origin_lat, origin_lon)
 
@@ -1066,20 +1056,6 @@ def _bounds_to_bbox(bounds: BoundsConfig) -> tuple:
         tuple: (north, south, east, west) floats.
     """
     return (bounds.north, bounds.south, bounds.east, bounds.west)
-
-
-def _compute_origin(config: SceneConfig) -> t.Tuple[float, float]:
-    """Compute the local coordinate origin as the midpoint between camera and target.
-
-    Args:
-        config (SceneConfig): Scene configuration with camera section.
-
-    Returns:
-        tuple[float, float]: (origin_lat, origin_lon) in WGS84 degrees.
-    """
-    origin_lat = (config.camera.lat + config.camera.target_lat) / 2.0
-    origin_lon = (config.camera.lon + config.camera.target_lon) / 2.0
-    return origin_lat, origin_lon
 
 
 def _camera_position_enu(

@@ -8,6 +8,7 @@ from shapely.geometry import Polygon
 
 from streets_at_night.models.road_segment import RoadSegment, get_default_width
 from streets_at_night.models.road_types import RoadType
+from streets_at_night.models.illumination import ConeIllumination
 from streets_at_night.models.light_source import LightSource
 from streets_at_night.models.zones import CommercialZone, DarkZone, ResidentialZone
 from streets_at_night.scene.spatial_index import SpatialIndex
@@ -164,10 +165,8 @@ def sample_light() -> LightSource:
         brightness=1.0,
         size=0.5,
         glow_radius=10.0,
-        illumination_radius=20.0,
         illumination_intensity=0.8,
-        illumination_falloff=2.0,
-        illumination_inner_fraction=0.0,
+        illumination=ConeIllumination(20.0, 2.0, 0.0),
     )
 
 
@@ -392,7 +391,8 @@ def test_scene_build_spatial_index_noop_for_empty_scene(
     # Should not raise
     scene.build_spatial_index()
 
-    assert scene._spatial_index is None
+    assert scene._road_index is None
+    assert scene._zone_index is None
 
 
 # ---------------------------------------------------------------------------
@@ -525,10 +525,8 @@ def test_scene_get_lights_near_with_index_excludes_far_light(
         brightness=1.0,
         size=0.5,
         glow_radius=10.0,
-        illumination_radius=20.0,
         illumination_intensity=0.8,
-        illumination_falloff=2.0,
-        illumination_inner_fraction=0.0,
+        illumination=ConeIllumination(20.0, 2.0, 0.0),
     )
     scene = Scene(three_segments, camera, scene_config)
     scene.build_spatial_index()
@@ -635,6 +633,45 @@ def test_scene_get_zones_in_rect_deduplicates_zones(
     assert count == 1
 
 
+def test_scene_build_spatial_index_uses_separate_road_and_zone_indexes(
+    three_segments: list,
+    camera: object,
+    scene_config: SceneConfig,
+    residential_zone_near: ResidentialZone,
+) -> None:
+    scene = Scene(
+        three_segments,
+        camera,
+        scene_config,
+        residential_zones=[residential_zone_near],
+    )
+    scene.build_spatial_index()
+
+    assert scene._road_index is not None
+    assert scene._zone_index is not None
+    assert scene._road_index is not scene._zone_index
+
+
+def test_scene_get_roads_in_rect_never_returns_zones(
+    three_segments: list,
+    camera: object,
+    scene_config: SceneConfig,
+    residential_zone_near: ResidentialZone,
+) -> None:
+    # A zone occupying the same area as the first road segment
+    scene = Scene(
+        three_segments,
+        camera,
+        scene_config,
+        residential_zones=[residential_zone_near],
+    )
+    scene.build_spatial_index()
+
+    result = scene.get_roads_in_rect(0.0, -50.0, 200.0, 300.0)
+
+    assert all(isinstance(item, RoadSegment) for item in result)
+
+
 def test_scene_build_spatial_index_covers_zone_beyond_roads(
     three_segments: list,
     camera: object,
@@ -664,34 +701,3 @@ def test_pygame_can_be_imported() -> None:
     import pygame
 
     assert pygame is not None
-
-
-def test_pygame_backend_can_be_instantiated_with_mock_surface() -> None:
-    from streets_at_night.rendering.pygame_backend import PygameBackend
-    import pygame
-
-    mock_surface = mock.MagicMock(spec=pygame.Surface)
-    mock_surface.get_size.return_value = (640, 360)
-
-    backend = PygameBackend(mock_surface)
-
-    assert backend.get_surface_size() == (640, 360)
-
-
-def test_pygame_backend_draw_line_calls_pygame_draw(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from streets_at_night.rendering.pygame_backend import PygameBackend
-    import pygame
-
-    mock_surface = mock.MagicMock(spec=pygame.Surface)
-    mock_surface.get_size.return_value = (640, 360)
-
-    backend = PygameBackend(mock_surface)
-
-    with mock.patch("streets_at_night.rendering.pygame_backend.pygame") as mock_pygame:
-        mock_pygame.draw = mock.MagicMock()
-        backend._surface = mock_surface
-        backend.draw_line((10.0, 20.0), (50.0, 60.0), (255, 255, 255), 1)
-
-        mock_pygame.draw.line.assert_called_once()

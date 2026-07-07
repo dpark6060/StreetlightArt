@@ -4,11 +4,7 @@
 import pytest
 
 from streets_at_night.config.defaults import DEFAULTS
-from streets_at_night.config.loader import (
-    _build_atmosphere_config,
-    _build_light_config,
-    _build_scene_config,
-)
+from streets_at_night.config.serde import dataclass_from_dict
 from streets_at_night.config.schema import (
     AtmosphereConfig,
     BoundsConfig,
@@ -101,9 +97,9 @@ def scene_config(
         quality_presets={"low": QualityPreset(width=640, height=360)},
         seed=42,
         zones=zone_config,
-        lights=_build_light_config(DEFAULTS["lights"]),
+        lights=dataclass_from_dict(LightConfig, DEFAULTS["lights"]),
         roads=RoadsConfig(export=road_style, preview=road_style),
-        atmosphere=_build_atmosphere_config(DEFAULTS["atmosphere"]),
+        atmosphere=dataclass_from_dict(AtmosphereConfig, DEFAULTS["atmosphere"]),
         devmode=None,
     )
 
@@ -156,7 +152,7 @@ def test_config_writer_round_trips(scene_config: SceneConfig) -> None:
     """config_to_dict produces a dict that _build_scene_config re-loads correctly."""
 
     data = config_to_dict(scene_config)
-    reloaded = _build_scene_config(data)
+    reloaded = dataclass_from_dict(SceneConfig, data)
 
     assert reloaded.seed == scene_config.seed
     assert reloaded.bounds.north == scene_config.bounds.north
@@ -186,7 +182,7 @@ def test_config_writer_round_trips_devmode(scene_config: SceneConfig) -> None:
     )
 
     data = config_to_dict(scene_config)
-    reloaded = _build_scene_config(data)
+    reloaded = dataclass_from_dict(SceneConfig, data)
 
     assert reloaded.devmode is not None
     assert reloaded.devmode.render_width == 896

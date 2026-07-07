@@ -12,18 +12,21 @@ import typing as t
 import numpy as np
 
 from ..config.defaults import DEFAULTS
-from ..config.loader import _build_devmode_camera_config
+from ..config.loader import build_devmode_camera_config
 from ..config.schema import SceneConfig
 from ..models.commercial import create_parking_lot_light, create_sign_light, create_storefront_light
 from ..models.house_light import create_house_light
 from ..models.light_source import LightSource
 from ..models.road_segment import RoadSegment, get_default_width
 from ..models.road_types import RoadType
-from ..models.streetlight import FixtureProfile, _config_to_fixture_profile
+from ..models.streetlight import FixtureProfile, config_to_fixture_profile
 from ..placement.car_placer import place_cars
 from ..placement.streetlight_placer import place_streetlights
 from ..scene.scene import Scene
 from .devmode_camera import build_devmode_camera
+
+if t.TYPE_CHECKING:
+    from ..camera.camera import Camera
 
 
 # Row layout: (label, y_offset_in_enu_meters)
@@ -86,7 +89,7 @@ def build_synthetic_scene(config: SceneConfig) -> Scene:
     return scene
 
 
-def _build_camera(config: SceneConfig) -> "Scene":
+def _build_camera(config: SceneConfig) -> "Camera":
     """Construct the devmode camera from config or built-in defaults.
 
     Args:
@@ -95,14 +98,12 @@ def _build_camera(config: SceneConfig) -> "Scene":
     Returns:
         Camera: Configured ENU-space camera.
     """
-    from ..camera.camera import Camera
-
     if config.devmode is not None:
         camera_cfg = config.devmode.camera
         width = config.devmode.render_width
         height = config.devmode.render_height
     else:
-        camera_cfg = _build_devmode_camera_config(DEFAULTS["devmode"]["camera"])
+        camera_cfg = build_devmode_camera_config(DEFAULTS["devmode"]["camera"])
         width = DEFAULTS["devmode"]["render_width"]
         height = DEFAULTS["devmode"]["render_height"]
 
@@ -182,7 +183,7 @@ def _build_road_segments() -> t.List[RoadSegment]:
 
 def _create_scene(
     road_segments: t.List[RoadSegment],
-    camera: t.Any,
+    camera: "Camera",
     config: SceneConfig,
 ) -> Scene:
     """Instantiate a Scene with the given segments and camera.
@@ -266,7 +267,7 @@ def _force_lights_on_dark_segments(
         list[LightSource]: Lights for all previously-dark segments, or empty
             if all segments already had profiles.
     """
-    from ..placement.streetlight_placer import _place_lights_on_segment
+    from ..placement.streetlight_placer import place_lights_on_segment
 
     lights: t.List[LightSource] = []
     for segment in road_segments:
@@ -276,7 +277,7 @@ def _force_lights_on_dark_segments(
         if profile is None:
             continue
         segment.fixture_profile = profile
-        lights.extend(_place_lights_on_segment(segment, rng))
+        lights.extend(place_lights_on_segment(segment, rng))
     return lights
 
 
@@ -311,7 +312,7 @@ def _pick_first_real_profile(
     entries = getattr(config.lights.streetlights, rt_attr)
     for entry in entries:
         if entry.profile is not None:
-            return _config_to_fixture_profile(entry.profile, rng, shift)
+            return config_to_fixture_profile(entry.profile, rng, shift)
     return None
 
 

@@ -62,6 +62,73 @@ class CoordinateTransformer:
         self._to_utm = to_utm
         self._from_utm = from_utm
 
+    def wgs84_to_enu(
+        self,
+        lat: float,
+        lon: float,
+        alt_m: float = 0.0,
+    ) -> t.Tuple[float, float, float]:
+        """Convert a single WGS84 lat/lon/alt point to local ENU meters.
+
+        Args:
+            lat (float): Latitude in WGS84 degrees.
+            lon (float): Longitude in WGS84 degrees.
+            alt_m (float): Altitude in meters above the reference ellipsoid.
+
+        Returns:
+            tuple[float, float, float]: (east_m, north_m, up_m) in meters from origin.
+        """
+        easting, northing = self._to_utm.transform(lon, lat)
+        east_m = easting - self._origin_easting
+        north_m = northing - self._origin_northing
+        return float(east_m), float(north_m), float(alt_m)
+
+    def wgs84_to_enu_batch(
+        self,
+        lats: np.ndarray,
+        lons: np.ndarray,
+        alt_m: float = 0.0,
+    ) -> np.ndarray:
+        """Convert arrays of WGS84 lat/lon to local ENU meter coordinates.
+
+        Args:
+            lats (np.ndarray): Array of latitudes in WGS84 degrees.
+            lons (np.ndarray): Array of longitudes in WGS84 degrees.
+            alt_m (float): Altitude in meters, applied uniformly to all points.
+
+        Returns:
+            np.ndarray: Shape (N, 3) array of (east_m, north_m, up_m) values.
+        """
+        eastings, northings = self._to_utm.transform(lons, lats)
+        east_m = np.asarray(eastings) - self._origin_easting
+        north_m = np.asarray(northings) - self._origin_northing
+        up_m = np.full_like(east_m, alt_m)
+        return np.column_stack([east_m, north_m, up_m])
+
+    def enu_to_wgs84(
+        self,
+        east_m: float,
+        north_m: float,
+        up_m: float = 0.0,
+    ) -> t.Tuple[float, float, float]:
+        """Convert local ENU meters back to WGS84 lat/lon/alt.
+
+        Reverses the WGS84 → UTM → ENU conversion by adding the origin offset
+        back and projecting through the inverse UTM transformer.
+
+        Args:
+            east_m (float): East offset in meters from origin.
+            north_m (float): North offset in meters from origin.
+            up_m (float): Up (altitude) in meters.
+
+        Returns:
+            tuple[float, float, float]: (lat, lon, alt_m) in WGS84 degrees and meters.
+        """
+        easting = east_m + self._origin_easting
+        northing = north_m + self._origin_northing
+        lon, lat = self._from_utm.transform(easting, northing)
+        return float(lat), float(lon), float(up_m)
+
 
 def create_transformer(origin_lat: float, origin_lon: float) -> CoordinateTransformer:
     """Create a coordinate transformer centered on the given lat/lon origin.
@@ -103,10 +170,7 @@ def wgs84_to_enu(
     Returns:
         tuple[float, float, float]: (east_m, north_m, up_m) in meters from origin.
     """
-    easting, northing = transformer._to_utm.transform(lon, lat)
-    east_m = easting - transformer._origin_easting
-    north_m = northing - transformer._origin_northing
-    return float(east_m), float(north_m), float(alt_m)
+    return transformer.wgs84_to_enu(lat, lon, alt_m)
 
 
 def wgs84_to_enu_batch(
@@ -126,11 +190,7 @@ def wgs84_to_enu_batch(
     Returns:
         np.ndarray: Shape (N, 3) array of (east_m, north_m, up_m) values.
     """
-    eastings, northings = transformer._to_utm.transform(lons, lats)
-    east_m = np.asarray(eastings) - transformer._origin_easting
-    north_m = np.asarray(northings) - transformer._origin_northing
-    up_m = np.full_like(east_m, alt_m)
-    return np.column_stack([east_m, north_m, up_m])
+    return transformer.wgs84_to_enu_batch(lats, lons, alt_m)
 
 
 def convert_road_geometry(
@@ -143,6 +203,10 @@ def convert_road_geometry(
     array of ENU meter coordinates. The Z coordinate is set to 0 (ground level).
     Geometries that are None or not LineString-like are skipped.
 
+    All valid segments are converted in a single batched pyproj transform
+    (coordinates from every segment concatenated, transformed once, then
+    split back by segment length) rather than one transform call per segment.
+
     Args:
         transformer (CoordinateTransformer): Configured transformer.
         roads_gdf (GeoDataFrame): Road features with WGS84 geometry column.
@@ -150,12 +214,38 @@ def convert_road_geometry(
     Returns:
         list[np.ndarray]: One (N, 3) array per road segment. Z is always 0.
     """
-    segments = []
+    valid_coords = _collect_valid_road_coords(roads_gdf)
+    if not valid_coords:
+        return []
+
+    lengths = [len(coords) for coords in valid_coords]
+    all_coords = np.concatenate(valid_coords, axis=0)
+    enu_all = wgs84_to_enu_batch(transformer, all_coords[:, 1], all_coords[:, 0], alt_m=0.0)
+
+    split_points = np.cumsum(lengths)[:-1]
+    return np.split(enu_all, split_points)
+
+
+def _collect_valid_road_coords(roads_gdf: gpd.GeoDataFrame) -> t.List[np.ndarray]:
+    """Collect WGS84 (lon, lat) coordinate arrays for every valid road geometry.
+
+    Args:
+        roads_gdf (GeoDataFrame): Road features with WGS84 geometry column.
+
+    Returns:
+        list[np.ndarray]: One (N, 2) lon/lat coordinate array per road
+            geometry with at least 2 vertices. Geometries that are None or
+            lack `.coords` are skipped.
+    """
+    valid_coords = []
     for geom in roads_gdf.geometry:
-        segment = _geometry_to_enu_array(transformer, geom)
-        if segment is not None:
-            segments.append(segment)
-    return segments
+        if geom is None or not hasattr(geom, "coords"):
+            continue
+        coords = np.array(geom.coords)
+        if coords.shape[0] < 2:
+            continue
+        valid_coords.append(coords)
+    return valid_coords
 
 
 def feet_to_meters(altitude_ft: float) -> float:
@@ -202,30 +292,4 @@ def enu_to_wgs84(
     Returns:
         tuple[float, float, float]: (lat, lon, alt_m) in WGS84 degrees and meters.
     """
-    easting = east_m + transformer._origin_easting
-    northing = north_m + transformer._origin_northing
-    lon, lat = transformer._from_utm.transform(easting, northing)
-    return float(lat), float(lon), float(up_m)
-
-
-def _geometry_to_enu_array(
-    transformer: CoordinateTransformer,
-    geom: t.Any,
-) -> t.Optional[np.ndarray]:
-    """Convert a single shapely geometry to an ENU coordinate array.
-
-    Args:
-        transformer (CoordinateTransformer): Configured transformer.
-        geom: Shapely geometry object.
-
-    Returns:
-        np.ndarray: Shape (N, 3) ENU coordinates, or None if geometry is invalid.
-    """
-    if geom is None or not hasattr(geom, "coords"):
-        return None
-    coords = np.array(geom.coords)
-    if coords.shape[0] < 2:
-        return None
-    lons = coords[:, 0]
-    lats = coords[:, 1]
-    return wgs84_to_enu_batch(transformer, lats, lons, alt_m=0.0)
+    return transformer.enu_to_wgs84(east_m, north_m, up_m)

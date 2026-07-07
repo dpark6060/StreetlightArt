@@ -28,17 +28,9 @@ sodium_pool = ColorPool([
 color = sodium_pool.pick()
 ```
 
-### RangeParam
-Numeric parameter that picks from a range on each instantiation.
-Accepts a seeded RNG for reproducibility.
-```
-RangeParam
-    min_val: float
-    max_val: float
-    distribution: str = "uniform"   # "uniform", "normal", "exponential"
-    rng: Random                      # seeded RNG instance
-    pick() -> float
-```
+### Numeric ranges
+No shared abstraction — numeric ranges are sampled directly at the call site with
+`rng.uniform(min_val, max_val)` using a seeded RNG for reproducibility.
 
 ---
 
@@ -160,7 +152,7 @@ CarLightPair
 ```
 
 On init:
-- Pair separation randomized from RangeParam(1.6, 2.4)
+- Pair separation randomized via `rng.uniform(1.6, 2.4)`
 - Two lights offset perpendicular to travel_bearing by ±(separation/2)
 - Lights created with placeholder color (white) — actual color set by resolve_facing()
 
@@ -225,7 +217,7 @@ SignLight
 ```
 - Bright, varied colors
 - Color pool: warm white 35%, red 12%, blue 12%, green 10%, yellow 10%, purple 8%, orange 8%, pink 5%
-- Size: RangeParam(1.0, 6.0) width, proportional height
+- Size: `rng.uniform(1.0, 6.0)` width, proportional height
 - Positioned along road-facing building edges in commercial zones
 - Large illumination radius (signs cast a lot of ambient light)
 

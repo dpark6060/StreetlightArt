@@ -2,12 +2,13 @@
 """Unit tests for the ground_tiles module."""
 
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 from shapely.geometry import Polygon
 
 from streets_at_night.camera.camera import create_camera
@@ -31,6 +32,7 @@ from streets_at_night.models.road_types import RoadType
 from streets_at_night.models.zones import DarkZone
 from streets_at_night.scene.ground_tiles import (
     GroundTileGrid,
+    _draw_polygon_on_tile,
     create_tile_grid,
     generate_tile,
     get_tile,
@@ -325,3 +327,120 @@ def test_get_tile_world_bounds_nonzero_indices_offset_correctly(tile_grid):
     assert min_y == pytest.approx(tile_grid.origin_y + tile_y * tile_grid.tile_size)
     assert max_x == pytest.approx(min_x + tile_grid.tile_size)
     assert max_y == pytest.approx(min_y + tile_grid.tile_size)
+
+
+# ---------------------------------------------------------------------------
+# get_tile_cache_dir — cache key must cover seed, bounds, and tile geometry
+# ---------------------------------------------------------------------------
+
+
+def test_get_tile_cache_dir_differs_for_different_seed(scene_config):
+    # Arrange — same colors, different seed (house colors/layout are seed-derived)
+    other_config = replace(scene_config, seed=scene_config.seed + 1)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache_dir = Path(tmpdir)
+
+        # Act
+        dir1 = get_tile_cache_dir(cache_dir, scene_config)
+        dir2 = get_tile_cache_dir(cache_dir, other_config)
+
+        # Assert
+        assert dir1 != dir2
+
+
+def test_get_tile_cache_dir_differs_for_different_tile_resolution(scene_config, zone_config):
+    # Arrange — different tile_resolution_px must invalidate the cache
+    other_zones = replace(zone_config, tile_resolution_px=zone_config.tile_resolution_px + 1)
+    other_config = replace(scene_config, zones=other_zones)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cache_dir = Path(tmpdir)
+
+        # Act
+        dir1 = get_tile_cache_dir(cache_dir, scene_config)
+        dir2 = get_tile_cache_dir(cache_dir, other_config)
+
+        # Assert
+        assert dir1 != dir2
+
+
+# ---------------------------------------------------------------------------
+# _draw_polygon_on_tile — hole drawing
+# ---------------------------------------------------------------------------
+
+
+def test_draw_polygon_on_tile_with_hole_color_draws_hole_as_underlying_color(tile_grid):
+    # Arrange — a filled square with a smaller square hole cut out of its middle
+    tile_bounds = tile_grid.get_tile_world_bounds(0, 0)
+    min_x, min_y, max_x, max_y = tile_bounds
+
+    outer = Polygon(
+        [
+            (min_x + 10, min_y + 10),
+            (max_x - 10, min_y + 10),
+            (max_x - 10, max_y - 10),
+            (min_x + 10, max_y - 10),
+        ]
+    )
+    hole = Polygon(
+        [
+            (min_x + 100, min_y + 100),
+            (min_x + 150, min_y + 100),
+            (min_x + 150, min_y + 150),
+            (min_x + 100, min_y + 150),
+        ]
+    )
+    polygon_with_hole = Polygon(outer.exterior.coords, holes=[hole.exterior.coords])
+
+    img = Image.new("RGB", (tile_grid.tile_res, tile_grid.tile_res), (0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Act
+    _draw_polygon_on_tile(
+        draw, polygon_with_hole, tile_bounds, tile_grid, (255, 0, 0), (0, 255, 0)
+    )
+
+    # Assert — a point inside the hole shows the underlying color, not the fill
+    scale = tile_grid.tile_res / tile_grid.tile_size
+    hole_center_x, hole_center_y = min_x + 125, min_y + 125
+    px = int((hole_center_x - min_x) * scale)
+    py = int((max_y - hole_center_y) * scale)
+    assert img.getpixel((px, py)) == (0, 255, 0)
+
+
+def test_draw_polygon_on_tile_without_hole_color_ignores_holes(tile_grid):
+    # Arrange — same polygon-with-hole, but no hole_color given (preview behavior)
+    tile_bounds = tile_grid.get_tile_world_bounds(0, 0)
+    min_x, min_y, max_x, max_y = tile_bounds
+
+    outer = Polygon(
+        [
+            (min_x + 10, min_y + 10),
+            (max_x - 10, min_y + 10),
+            (max_x - 10, max_y - 10),
+            (min_x + 10, max_y - 10),
+        ]
+    )
+    hole = Polygon(
+        [
+            (min_x + 100, min_y + 100),
+            (min_x + 150, min_y + 100),
+            (min_x + 150, min_y + 150),
+            (min_x + 100, min_y + 150),
+        ]
+    )
+    polygon_with_hole = Polygon(outer.exterior.coords, holes=[hole.exterior.coords])
+
+    img = Image.new("RGB", (tile_grid.tile_res, tile_grid.tile_res), (0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Act — hole_color omitted
+    _draw_polygon_on_tile(draw, polygon_with_hole, tile_bounds, tile_grid, (255, 0, 0))
+
+    # Assert — hole area still shows the fill color
+    scale = tile_grid.tile_res / tile_grid.tile_size
+    hole_center_x, hole_center_y = min_x + 125, min_y + 125
+    px = int((hole_center_x - min_x) * scale)
+    py = int((max_y - hole_center_y) * scale)
+    assert img.getpixel((px, py)) == (255, 0, 0)

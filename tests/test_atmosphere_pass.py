@@ -7,8 +7,8 @@ import numpy as np
 import pytest
 
 from streets_at_night.config.defaults import DEFAULTS
-from streets_at_night.config.loader import _build_atmosphere_config
 from streets_at_night.config.schema import AtmosphereConfig
+from streets_at_night.config.serde import dataclass_from_dict
 from streets_at_night.rendering.atmosphere_pass import (
     _column_alpha_to_linear_layer,
     _render_airlight,
@@ -27,7 +27,7 @@ from streets_at_night.rendering.raycast import GroundHit
 @pytest.fixture
 def default_atmosphere() -> AtmosphereConfig:
     """Return a default AtmosphereConfig built from DEFAULTS."""
-    return _build_atmosphere_config(DEFAULTS["atmosphere"])
+    return dataclass_from_dict(AtmosphereConfig, DEFAULTS["atmosphere"])
 
 
 @pytest.fixture
@@ -67,7 +67,10 @@ def _make_gbuffer(
     h, w = hit_x.shape
     ray_dirs = np.zeros((h, w, 3), dtype=np.float64)
     ray_dirs[:, :, 2] = ray_z
-    return GroundHit(ray_dirs=ray_dirs, hit_x=hit_x, hit_y=hit_y, ground_mask=ground_mask)
+    hit_t = np.where(ground_mask, 1.0, -1.0)
+    return GroundHit(
+        ray_dirs=ray_dirs, hit_x=hit_x, hit_y=hit_y, hit_t=hit_t, ground_mask=ground_mask,
+    )
 
 
 def _capture_layer(backend: mock.MagicMock) -> list:

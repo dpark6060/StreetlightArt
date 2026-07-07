@@ -65,9 +65,9 @@ def two_layer_config() -> HeatHazeConfig:
         screen_width_px=512,
         screen_height_px=256,
         layers=[
-            HeatHazeLayerConfig(r0=0.10, L0=2.0, pixel_scale_m=0.2,
+            HeatHazeLayerConfig(L0=2.0, pixel_scale_m=0.2,
                                 weight=1.0, wind_x_pxs=50.0, wind_y_pxs=2.0),
-            HeatHazeLayerConfig(r0=0.10, L0=0.5, pixel_scale_m=0.1,
+            HeatHazeLayerConfig(L0=0.5, pixel_scale_m=0.1,
                                 weight=0.5, wind_x_pxs=120.0, wind_y_pxs=-3.0),
         ],
     )
@@ -80,7 +80,7 @@ def two_layer_config() -> HeatHazeConfig:
 
 def test_kolmogorov_screen_fft_returns_correct_shape():
     # Act
-    screen = kolmogorov_screen_fft(64, 128, pixel_scale_m=0.1, r0=0.15, L0=10.0, seed=0)
+    screen = kolmogorov_screen_fft(64, 128, pixel_scale_m=0.1, L0=10.0, seed=0)
 
     # Assert
     assert screen.shape == (64, 128)
@@ -88,7 +88,7 @@ def test_kolmogorov_screen_fft_returns_correct_shape():
 
 def test_kolmogorov_screen_fft_returns_float32():
     # Act
-    screen = kolmogorov_screen_fft(64, 64, pixel_scale_m=0.1, r0=0.15, L0=10.0, seed=0)
+    screen = kolmogorov_screen_fft(64, 64, pixel_scale_m=0.1, L0=10.0, seed=0)
 
     # Assert
     assert screen.dtype == np.float32
@@ -98,7 +98,7 @@ def test_kolmogorov_screen_fft_is_zero_mean():
     # Arrange — DC component is explicitly zeroed in the PSD
 
     # Act
-    screen = kolmogorov_screen_fft(128, 128, pixel_scale_m=0.1, r0=0.15, L0=10.0, seed=42)
+    screen = kolmogorov_screen_fft(128, 128, pixel_scale_m=0.1, L0=10.0, seed=42)
 
     # Assert
     assert abs(screen.mean()) < 1e-3
@@ -106,8 +106,8 @@ def test_kolmogorov_screen_fft_is_zero_mean():
 
 def test_kolmogorov_screen_fft_is_deterministic_per_seed():
     # Act
-    a = kolmogorov_screen_fft(32, 32, pixel_scale_m=0.1, r0=0.15, L0=10.0, seed=7)
-    b = kolmogorov_screen_fft(32, 32, pixel_scale_m=0.1, r0=0.15, L0=10.0, seed=7)
+    a = kolmogorov_screen_fft(32, 32, pixel_scale_m=0.1, L0=10.0, seed=7)
+    b = kolmogorov_screen_fft(32, 32, pixel_scale_m=0.1, L0=10.0, seed=7)
 
     # Assert
     np.testing.assert_array_equal(a, b)
@@ -115,8 +115,8 @@ def test_kolmogorov_screen_fft_is_deterministic_per_seed():
 
 def test_kolmogorov_screen_fft_differs_across_seeds():
     # Act
-    a = kolmogorov_screen_fft(32, 32, pixel_scale_m=0.1, r0=0.15, L0=10.0, seed=1)
-    b = kolmogorov_screen_fft(32, 32, pixel_scale_m=0.1, r0=0.15, L0=10.0, seed=2)
+    a = kolmogorov_screen_fft(32, 32, pixel_scale_m=0.1, L0=10.0, seed=1)
+    b = kolmogorov_screen_fft(32, 32, pixel_scale_m=0.1, L0=10.0, seed=2)
 
     # Assert
     assert not np.array_equal(a, b)
@@ -284,6 +284,88 @@ def test_hazefield_sample_changes_over_time(two_layer_config):
     assert not np.array_equal(dx0, dx1)
 
 
+def _reference_slide(screen: np.ndarray, x_off: float, y_off: float, w_out: int, h_out: int) -> np.ndarray:
+    """Pre-optimization reference implementation of HazeField._slide.
+
+    Copied verbatim (modulo parameter names) from the implementation prior to
+    the row-gather/column-gather refactor, to pin down output equivalence.
+    """
+    h_scr, w_scr = screen.shape
+
+    x_off = x_off % w_scr
+    i0 = int(np.floor(x_off))
+    fx = x_off - i0
+    cols = (np.arange(w_out) + i0) % w_scr
+    cols_p1 = (cols + 1) % w_scr
+
+    y_off_pix = y_off % h_scr
+    j0 = int(np.floor(y_off_pix))
+    fy = y_off_pix - j0
+    rows = (np.arange(h_out) + j0) % h_scr
+    rows_p1 = (rows + 1) % h_scr
+
+    a = screen[rows][:, cols]
+    b = screen[rows][:, cols_p1]
+    c = screen[rows_p1][:, cols]
+    d = screen[rows_p1][:, cols_p1]
+    return (
+        (1 - fx) * (1 - fy) * a
+        + fx * (1 - fy) * b
+        + (1 - fx) * fy * c
+        + fx * fy * d
+    ).astype(np.float32)
+
+
+def test_hazefield_slide_matches_reference_implementation(two_layer_config):
+    # Arrange — fixed seed/layers/time so both implementations see identical
+    # phase screens and identical (x_off, y_off) offsets.
+    field = HazeField(
+        out_height=72, out_width=128, screen_height=256, screen_width=512,
+        amplitude_px=two_layer_config.amplitude_px,
+        layers=two_layer_config.layers, seed=two_layer_config.seed,
+    )
+    lay = field._layers[0]
+    x_off, y_off = lay["wind_x"] * 1.7, lay["wind_y"] * 1.7
+
+    # Act
+    indices = field._slide_indices(x_off, y_off, *lay["dx"].shape)
+    optimized = field._slide(lay["dx"], indices)
+    reference = _reference_slide(lay["dx"], x_off, y_off, w_out=128, h_out=72)
+
+    # Assert
+    np.testing.assert_allclose(optimized, reference, rtol=1e-6, atol=1e-6)
+
+
+def test_hazefield_sample_matches_reference_slide_end_to_end(two_layer_config):
+    # Arrange — verify the full sample() path (which hoists shared index math
+    # across the dx/dy calls per layer) matches per-call reference slides.
+    field = HazeField(
+        out_height=72, out_width=128, screen_height=256, screen_width=512,
+        amplitude_px=two_layer_config.amplitude_px,
+        layers=two_layer_config.layers, seed=two_layer_config.seed,
+    )
+    t = 3.25
+
+    # Act
+    dx, dy = field.sample(t)
+
+    # Assert — recompute expected dx/dy from the reference slide directly
+    expected_dx = np.zeros((72, 128), dtype=np.float32)
+    expected_dy = np.zeros((72, 128), dtype=np.float32)
+    for lay in field._layers:
+        expected_dx += _reference_slide(
+            lay["dx"], lay["wind_x"] * t, lay["wind_y"] * t, w_out=128, h_out=72,
+        )
+        expected_dy += _reference_slide(
+            lay["dy"], lay["wind_x"] * t, lay["wind_y"] * t, w_out=128, h_out=72,
+        )
+    expected_dx *= field.amplitude_px
+    expected_dy *= field.amplitude_px
+
+    np.testing.assert_allclose(dx, expected_dx, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(dy, expected_dy, rtol=1e-6, atol=1e-6)
+
+
 def test_hazefield_sample_amplitude_scaling(two_layer_config):
     # Arrange — same layers, different amplitudes
     f1 = HazeField(
@@ -411,3 +493,39 @@ def test_heathaze_uses_warper_to_produce_output(two_layer_config, downward_camer
     # Assert
     mock_warp.assert_called_once()
     np.testing.assert_array_equal(result, expected_out)
+
+
+# ---------------------------------------------------------------------------
+# loop_period_s
+# ---------------------------------------------------------------------------
+
+
+def test_hazefield_loop_period_s_is_slowest_axis():
+    # Arrange — one layer; period_x = 512/50 = 10.24, period_y = 256/2 = 128
+    field = HazeField(
+        out_height=256, out_width=512, screen_height=256, screen_width=512,
+        amplitude_px=1.0,
+        layers=[HeatHazeLayerConfig(L0=2.0, pixel_scale_m=0.2,
+                                    weight=1.0, wind_x_pxs=50.0, wind_y_pxs=2.0)],
+        seed=0,
+    )
+
+    # Act
+    period = field.loop_period_s()
+
+    # Assert — the slower (vertical) axis wins
+    assert period == pytest.approx(128.0)
+
+
+def test_heathaze_loop_period_s_is_resolution_invariant(two_layer_config):
+    # Arrange — same config, two output resolutions at the same aspect ratio
+    haze_1080 = HeatHaze(1920, 1080, two_layer_config)
+    haze_2160 = HeatHaze(3840, 2160, two_layer_config)
+
+    # Act
+    period_1080 = haze_1080.loop_period_s()
+    period_2160 = haze_2160.loop_period_s()
+
+    # Assert — the loop period does not drift with output resolution, so a
+    # --seamless recording of period*fps frames loops cleanly at any width
+    assert period_1080 == pytest.approx(period_2160)

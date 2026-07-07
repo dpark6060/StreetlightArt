@@ -1,6 +1,5 @@
 """FixtureProfile, FixturePool, and StreetLight factory for road-mounted lights."""
 
-import math
 import random
 import typing as t
 from dataclasses import dataclass
@@ -9,6 +8,7 @@ import numpy as np
 
 from ..config.schema import FixturePoolEntry, FixtureProfileConfig, StreetLightConfig
 from ..utils.colors import kelvin_to_rgb
+from .illumination import BeamIllumination
 from .light_source import LightSource
 from .road_types import RoadType
 
@@ -53,38 +53,50 @@ class FixtureProfile:
 
 
 class FixturePool:
-    """Weighted collection of FixtureProfiles (or None) for a road type.
+    """Weighted collection of FixtureProfileConfigs (or None) for a road type.
 
     None entries represent segments with no streetlights. The weight of
     a None entry controls how frequently a road type has dark segments.
+
+    Each entry stores a config, not a materialized FixtureProfile. Numeric
+    ranges (height, brightness, spacing) are sampled fresh on every pick()
+    call, so each road segment gets its own values instead of the whole
+    road type collapsing onto a handful of pre-built variants.
     """
 
     def __init__(
         self,
-        profiles_with_weights: t.List[t.Tuple[t.Optional[FixtureProfile], float]],
+        entries_with_weights: t.List[t.Tuple[t.Optional[FixtureProfileConfig], float]],
         rng: random.Random,
+        color_temp_shift_k: float,
     ) -> None:
-        """Initialize a FixturePool with weighted profiles and a seeded RNG.
+        """Initialize a FixturePool with weighted config entries and a seeded RNG.
 
         Args:
-            profiles_with_weights (List[Tuple[Optional[FixtureProfile], float]]):
-                List of (profile, weight) pairs. A None profile means no lights.
+            entries_with_weights (List[Tuple[Optional[FixtureProfileConfig], float]]):
+                List of (config, weight) pairs. A None config means no lights.
                 Weights are relative and do not need to sum to 1.
-            rng (random.Random): Seeded RNG for reproducible selection.
+            rng (random.Random): Seeded RNG for reproducible selection and
+                range sampling.
+            color_temp_shift_k (float): City-wide additive Kelvin offset
+                applied to every sampled profile's authored color temperature.
         """
         self._rng = rng
-        self._profiles = [p for p, _ in profiles_with_weights]
-        self._weights = [w for _, w in profiles_with_weights]
+        self._color_temp_shift_k = color_temp_shift_k
+        self._entries = [e for e, _ in entries_with_weights]
+        self._weights = [w for _, w in entries_with_weights]
 
     def pick(self) -> t.Optional[FixtureProfile]:
-        """Pick a profile using weighted random selection.
+        """Pick a config using weighted random selection and sample a profile.
 
         Returns:
-            Optional[FixtureProfile]: A profile, or None if this segment
-                should have no streetlights.
+            Optional[FixtureProfile]: A freshly sampled profile, or None if
+                this segment should have no streetlights.
         """
-        chosen = self._rng.choices(self._profiles, weights=self._weights, k=1)
-        return chosen[0]
+        chosen = self._rng.choices(self._entries, weights=self._weights, k=1)[0]
+        if chosen is None:
+            return None
+        return config_to_fixture_profile(chosen, self._rng, self._color_temp_shift_k)
 
 
 # ---------------------------------------------------------------------------
@@ -119,22 +131,14 @@ class StreetLight:
         Returns:
             LightSource: A fully configured light ready for rendering.
         """
-        half_angle = math.radians(fixture_profile.beam_angle_deg / 2.0)
-        derived_radius = fixture_profile.height * math.tan(half_angle)
         return LightSource(
             position=position,
             color=fixture_profile.fixture_color,
             brightness=fixture_profile.brightness,
             size=0.3,
             glow_radius=fixture_profile.glow_radius,
-            # illumination_radius is derived from height + beam angle and kept as
-            # a fallback; the physical branch in the illumination pass recomputes
-            # it. illumination_falloff / inner_fraction are unused when beam is set.
-            illumination_radius=derived_radius,
             illumination_intensity=fixture_profile.illumination_intensity,
-            illumination_falloff=2.0,
-            illumination_inner_fraction=0.0,
-            beam_angle_deg=fixture_profile.beam_angle_deg,
+            illumination=BeamIllumination(fixture_profile.beam_angle_deg),
         )
 
 
@@ -162,8 +166,9 @@ def create_fixture_pool(
     """Create a fixture pool for the given road type from config.
 
     Reads the weighted pool entries for the road type from the provided
-    StreetLightConfig. Each entry with a profile is converted to a
-    FixtureProfile by sampling its height, brightness, and spacing ranges.
+    StreetLightConfig and wraps their configs (not materialized profiles)
+    in a FixturePool. Each entry's height, brightness, and spacing ranges
+    are sampled fresh every time the pool is picked from, not once here.
     Entries with no profile (None) become dark-segment slots in the pool.
 
     MINOR roads use the residential pool since no dedicated config exists.
@@ -171,16 +176,14 @@ def create_fixture_pool(
     Args:
         road_type (RoadType): The road classification.
         config (StreetLightConfig): Streetlight config with pool entries per road type.
-        rng (random.Random): Seeded RNG for sampling profile parameter ranges.
+        rng (random.Random): Seeded RNG shared for selection and range sampling.
 
     Returns:
         FixturePool: Pool appropriate for the road type.
     """
     pool_entries = _get_pool_entries_for_road_type(road_type, config)
-    profiles_with_weights = _build_profiles_with_weights(
-        pool_entries, rng, config.color_temp_shift_k
-    )
-    return FixturePool(profiles_with_weights, rng)
+    entries_with_weights = [(entry.profile, entry.weight) for entry in pool_entries]
+    return FixturePool(entries_with_weights, rng, config.color_temp_shift_k)
 
 
 def _get_pool_entries_for_road_type(
@@ -200,33 +203,7 @@ def _get_pool_entries_for_road_type(
     return getattr(config, attr)
 
 
-def _build_profiles_with_weights(
-    pool_entries: t.List[FixturePoolEntry],
-    rng: random.Random,
-    color_temp_shift_k: float,
-) -> t.List[t.Tuple[t.Optional[FixtureProfile], float]]:
-    """Convert pool entries to (profile, weight) pairs for FixturePool.
-
-    Args:
-        pool_entries (List[FixturePoolEntry]): Weighted pool entries from config.
-        rng (random.Random): Seeded RNG for sampling parameter ranges.
-        color_temp_shift_k (float): City-wide additive Kelvin offset applied to
-            every profile's authored color temperature.
-
-    Returns:
-        List[Tuple[Optional[FixtureProfile], float]]: Pairs ready for FixturePool.
-    """
-    result = []
-    for entry in pool_entries:
-        if entry.profile is None:
-            result.append((None, entry.weight))
-        else:
-            profile = _config_to_fixture_profile(entry.profile, rng, color_temp_shift_k)
-            result.append((profile, entry.weight))
-    return result
-
-
-def _config_to_fixture_profile(
+def config_to_fixture_profile(
     cfg: FixtureProfileConfig,
     rng: random.Random,
     color_temp_shift_k: float,

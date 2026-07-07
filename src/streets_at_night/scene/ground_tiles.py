@@ -33,6 +33,11 @@ if t.TYPE_CHECKING:
     from ..models.zones import CommercialZone, DarkZone, ResidentialZone
 
 
+# Bump this when the tile rendering/caching logic changes in a way that isn't
+# already captured by the hashed config fields below, to force cache regeneration.
+_TILE_CACHE_VERSION: int = 1
+
+
 @dataclass
 class GroundTileGrid:
     """Metadata describing the full ground tile grid for a scene.
@@ -183,9 +188,9 @@ def generate_tile(
     img = Image.new("RGB", (grid.tile_res, grid.tile_res), default_color)
     draw = ImageDraw.Draw(img)
 
-    _draw_dark_zones(draw, scene.dark_zones, tile_bounds, grid)
-    _draw_commercial_zones(draw, scene.commercial_zones, tile_bounds, grid, scene)
-    _draw_residential_zones(draw, scene.residential_zones, tile_bounds, grid, scene)
+    _draw_dark_zones(draw, scene.dark_zones, tile_bounds, grid, default_color)
+    _draw_commercial_zones(draw, scene.commercial_zones, tile_bounds, grid, scene, default_color)
+    _draw_residential_zones(draw, scene.residential_zones, tile_bounds, grid, scene, default_color)
 
     return img
 
@@ -200,6 +205,7 @@ def _draw_dark_zones(
     zones: "t.List[DarkZone]",
     tile_bounds: t.Tuple[float, float, float, float],
     grid: GroundTileGrid,
+    default_ground_color: t.Tuple[int, int, int],
 ) -> None:
     """Draw all dark zones that overlap this tile.
 
@@ -208,11 +214,15 @@ def _draw_dark_zones(
         zones (list[DarkZone]): All dark zones in the scene.
         tile_bounds (Tuple): (min_x, min_y, max_x, max_y) of the tile.
         grid (GroundTileGrid): Tile grid metadata for coordinate conversion.
+        default_ground_color (Tuple[int, int, int]): Ground color drawn into
+            any holes (e.g. a lake carved out of a park polygon).
     """
     for zone in zones:
         if not _bounds_overlap(tile_bounds, zone.boundary.bounds):
             continue
-        _draw_polygon_on_tile(draw, zone.boundary, tile_bounds, grid, zone.base_color)
+        _draw_polygon_on_tile(
+            draw, zone.boundary, tile_bounds, grid, zone.base_color, default_ground_color
+        )
 
 
 def _draw_commercial_zones(
@@ -221,6 +231,7 @@ def _draw_commercial_zones(
     tile_bounds: t.Tuple[float, float, float, float],
     grid: GroundTileGrid,
     scene: "Scene",
+    default_ground_color: t.Tuple[int, int, int],
 ) -> None:
     """Draw all commercial zones that overlap this tile.
 
@@ -230,12 +241,14 @@ def _draw_commercial_zones(
         tile_bounds (Tuple): (min_x, min_y, max_x, max_y) of the tile.
         grid (GroundTileGrid): Tile grid metadata for coordinate conversion.
         scene (Scene): Scene providing config colors.
+        default_ground_color (Tuple[int, int, int]): Ground color drawn into
+            any holes in the zone boundary.
     """
     color = hex_to_rgb(scene.config.zones.colors.commercial)
     for zone in zones:
         if not _bounds_overlap(tile_bounds, zone.boundary.bounds):
             continue
-        _draw_polygon_on_tile(draw, zone.boundary, tile_bounds, grid, color)
+        _draw_polygon_on_tile(draw, zone.boundary, tile_bounds, grid, color, default_ground_color)
 
 
 def _draw_residential_zones(
@@ -244,6 +257,7 @@ def _draw_residential_zones(
     tile_bounds: t.Tuple[float, float, float, float],
     grid: GroundTileGrid,
     scene: "Scene",
+    default_ground_color: t.Tuple[int, int, int],
 ) -> None:
     """Draw residential zones: yard fill first, then per-house footprints.
 
@@ -253,6 +267,8 @@ def _draw_residential_zones(
         tile_bounds (Tuple): (min_x, min_y, max_x, max_y) of the tile.
         grid (GroundTileGrid): Tile grid metadata for coordinate conversion.
         scene (Scene): Scene providing config colors.
+        default_ground_color (Tuple[int, int, int]): Ground color drawn into
+            any holes in the zone boundary.
     """
     default_yard = hex_to_rgb(scene.config.zones.house.yard_base_color)
 
@@ -260,7 +276,9 @@ def _draw_residential_zones(
         if not _bounds_overlap(tile_bounds, zone.boundary.bounds):
             continue
         yard_color = _get_zone_yard_color(zone, default_yard)
-        _draw_polygon_on_tile(draw, zone.boundary, tile_bounds, grid, yard_color)
+        _draw_polygon_on_tile(
+            draw, zone.boundary, tile_bounds, grid, yard_color, default_ground_color
+        )
         _draw_house_footprints(draw, zone, tile_bounds, grid)
 
 
@@ -295,6 +313,7 @@ def _draw_polygon_on_tile(
     tile_bounds: t.Tuple[float, float, float, float],
     grid: GroundTileGrid,
     color: t.Tuple[int, int, int],
+    hole_color: t.Optional[t.Tuple[int, int, int]] = None,
 ) -> None:
     """Rasterize a world-space polygon onto a tile using PIL.
 
@@ -302,44 +321,60 @@ def _draw_polygon_on_tile(
     coordinates and calls PIL ImageDraw.polygon(). Requires at least 3
     vertices to form a valid polygon.
 
+    PIL's `ImageDraw.polygon()` cannot fill a polygon with holes in one
+    call, so a polygon with interior rings is drawn in two passes: the
+    exterior is filled with `color`, then each interior ring is re-drawn
+    on top in `hole_color` (typically the ground color underneath the
+    zone), carving the hole back out.
+
     Args:
         draw (ImageDraw.ImageDraw): PIL draw context.
         polygon: Shapely Polygon in ENU meters.
         tile_bounds (Tuple): (min_x, min_y, max_x, max_y) of the tile.
         grid (GroundTileGrid): Tile grid metadata (tile_size and tile_res).
-        color (Tuple[int, int, int]): RGB fill color.
+        color (Tuple[int, int, int]): RGB fill color for the exterior.
+        hole_color (Tuple[int, int, int], optional): RGB fill color for
+            interior rings. If None, interior rings are left unfilled (the
+            exterior color shows through, i.e. holes are ignored).
     """
-    pixel_coords = _polygon_to_tile_pixels(polygon, tile_bounds, grid)
-    if len(pixel_coords) < 3:
+    exterior_pixels = _ring_to_tile_pixels(polygon.exterior.coords, tile_bounds, grid)
+    if len(exterior_pixels) < 3:
         return
-    draw.polygon(pixel_coords, fill=color)
+    draw.polygon(exterior_pixels, fill=color)
+
+    if hole_color is None:
+        return
+    for interior in polygon.interiors:
+        hole_pixels = _ring_to_tile_pixels(interior.coords, tile_bounds, grid)
+        if len(hole_pixels) >= 3:
+            draw.polygon(hole_pixels, fill=hole_color)
 
 
-def _polygon_to_tile_pixels(
-    polygon: t.Any,
+def _ring_to_tile_pixels(
+    ring_coords: t.Any,
     tile_bounds: t.Tuple[float, float, float, float],
     grid: GroundTileGrid,
 ) -> t.List[t.Tuple[float, float]]:
-    """Convert a polygon's exterior vertices to tile-local pixel coordinates.
+    """Convert a ring's vertices to tile-local pixel coordinates.
 
     World Y increases northward; image Y increases downward. So pixel_y is
     computed as (tile_max_y - world_y) * scale — matching the convention in
     flat_map.py.
 
     Args:
-        polygon: Shapely Polygon in ENU meters.
+        ring_coords: Iterable of (world_x, world_y) coordinates — a
+            Shapely exterior or interior ring's `.coords`.
         tile_bounds (Tuple): (min_x, min_y, max_x, max_y) of the tile.
         grid (GroundTileGrid): Tile grid metadata.
 
     Returns:
-        List[Tuple[float, float]]: Pixel (x, y) coordinates of exterior ring.
+        List[Tuple[float, float]]: Pixel (x, y) coordinates of the ring.
     """
     tile_min_x, tile_min_y, _tile_max_x, tile_max_y = tile_bounds
     scale = grid.tile_res / grid.tile_size
 
-    coords = list(polygon.exterior.coords)
     pixel_coords = []
-    for world_x, world_y in coords:
+    for world_x, world_y in ring_coords:
         px = (world_x - tile_min_x) * scale
         py = (tile_max_y - world_y) * scale
         pixel_coords.append((px, py))
@@ -516,10 +551,14 @@ def get_tile_cache_dir(cache_dir: Path, config: "SceneConfig") -> Path:
 
 
 def _config_cache_key(config: "SceneConfig") -> str:
-    """Compute an 8-character hash of all color fields that affect tile rendering.
+    """Compute an 8-character hash of all fields that affect tile rendering.
 
     Hashes ZoneColorsConfig fields, HouseConfig.exterior_colors, yard_base_color,
-    and yard_variation. Any change to these values produces a different key.
+    and yard_variation (color-relevant fields), plus config.seed (house colors
+    and synthetic lot layout are seed-derived), config.bounds (tile indices are
+    relative to a bounds-derived origin), tile_size_meters, tile_resolution_px,
+    and a cache schema version. Any change to these values produces a different
+    key, forcing stale tiles to regenerate.
 
     Args:
         config (SceneConfig): Full scene configuration.
@@ -529,6 +568,7 @@ def _config_cache_key(config: "SceneConfig") -> str:
     """
     colors = config.zones.colors
     house = config.zones.house
+    bounds = config.bounds
 
     parts = [
         colors.commercial,
@@ -540,6 +580,11 @@ def _config_cache_key(config: "SceneConfig") -> str:
         str(house.exterior_colors.colors),
         house.yard_base_color,
         str(house.yard_variation),
+        str(config.seed),
+        str((bounds.north, bounds.south, bounds.east, bounds.west)),
+        str(config.zones.tile_size_meters),
+        str(config.zones.tile_resolution_px),
+        str(_TILE_CACHE_VERSION),
     ]
     raw = "|".join(parts)
     return hashlib.md5(raw.encode()).hexdigest()[:8]

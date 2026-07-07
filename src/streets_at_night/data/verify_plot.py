@@ -10,8 +10,7 @@ import geopandas as gpd
 
 from ..config.schema import CameraConfig, SceneConfig
 from ..models.road_types import RoadType
-
-matplotlib.use("Agg")
+from .zone_builder import _TAG_TO_ZONE_TYPE
 
 
 _ROAD_COLORS: t.Dict[RoadType, str] = {
@@ -32,21 +31,21 @@ _ROAD_LINEWIDTHS: t.Dict[RoadType, float] = {
     RoadType.MINOR: 0.4,
 }
 
-_LAND_USE_COLORS: t.Dict[str, str] = {
+
+# Base fill color per zone bucket. `_LAND_USE_COLORS` is derived below from
+# `zone_builder._TAG_TO_ZONE_TYPE` (the single source of truth for which OSM
+# tag values belong to which zone) so the verification plot can never show —
+# or silently drop — a tag that the zone builder classifies differently.
+_BUCKET_COLORS: t.Dict[str, str] = {
     "residential": "#228B22",
     "commercial": "#DC143C",
-    "retail": "#DC143C",
     "industrial": "#696969",
     "park": "#006400",
-    "recreation_ground": "#006400",
-    "grass": "#006400",
-    "garden": "#006400",
-    "nature_reserve": "#006400",
     "water": "#00008B",
-    "riverbank": "#00008B",
-    "wood": "#013220",
-    "forest": "#013220",
-    "grassland": "#2E7D32",
+}
+
+_LAND_USE_COLORS: t.Dict[str, str] = {
+    tag: _BUCKET_COLORS[bucket] for tag, bucket in _TAG_TO_ZONE_TYPE.items()
 }
 
 _LAND_USE_TAG_COLUMNS: t.List[str] = ["landuse", "leisure", "natural", "waterway"]
@@ -77,6 +76,7 @@ def save_verification_plot(
         buildings_gdf (GeoDataFrame): Building footprint polygons.
         output_path (Path): Destination PNG path.
     """
+    matplotlib.use("Agg")
     fig = _build_verification_figure(config, roads_gdf, land_use_gdf, buildings_gdf)
     fig.savefig(output_path, dpi=150, bbox_inches="tight", facecolor="#1a1a2e")
     plt.close(fig)
@@ -285,16 +285,23 @@ def _build_road_patches(roads: gpd.GeoDataFrame) -> t.List[mpatches.Patch]:
 def _build_land_use_patches() -> t.List[mpatches.Patch]:
     """Build legend patches for land use categories.
 
+    One patch per zone bucket in `_BUCKET_COLORS` — kept in sync with
+    `_LAND_USE_COLORS` (and therefore with `zone_builder._TAG_TO_ZONE_TYPE`)
+    since both are derived from the same bucket color map.
+
     Returns:
-        list[Patch]: Fixed set of land use category patches.
+        list[Patch]: One patch per land use zone bucket.
     """
+    labels = {
+        "residential": "Residential",
+        "commercial": "Commercial/Retail",
+        "industrial": "Industrial",
+        "park": "Park/Green",
+        "water": "Water",
+    }
     return [
-        mpatches.Patch(color="#228B22", alpha=0.5, label="Residential"),
-        mpatches.Patch(color="#DC143C", alpha=0.5, label="Commercial/Retail"),
-        mpatches.Patch(color="#696969", alpha=0.5, label="Industrial"),
-        mpatches.Patch(color="#006400", alpha=0.5, label="Park/Green"),
-        mpatches.Patch(color="#00008B", alpha=0.5, label="Water"),
-        mpatches.Patch(color="#013220", alpha=0.5, label="Forest/Wood"),
+        mpatches.Patch(color=_BUCKET_COLORS[bucket], alpha=0.5, label=label)
+        for bucket, label in labels.items()
     ]
 
 

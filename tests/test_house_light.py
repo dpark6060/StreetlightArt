@@ -124,7 +124,7 @@ def test_create_house_light_has_correct_illumination_radius(position, rng, house
     light = create_house_light(position, house_light_config, rng)
 
     # Assert
-    assert light.illumination_radius == house_light_config.illumination_radius
+    assert light.illumination.radius == house_light_config.illumination_radius
 
 
 # ---------------------------------------------------------------------------
@@ -171,4 +171,4 @@ def test_create_house_light_illumination_radius_from_config(rng, house_light_con
     light = create_house_light(pos, house_light_config, rng)
 
     # Assert
-    assert light.illumination_radius == house_light_config.illumination_radius
+    assert light.illumination.radius == house_light_config.illumination_radius

@@ -530,7 +530,6 @@ DEFAULTS: dict = {
         # is what real heat shimmer looks like — hot air rising.
         "layers": [
             {
-                "r0": 0.10,
                 "L0": 2.5,
                 "pixel_scale_m": 0.5,
                 "weight": 0.6,
@@ -538,7 +537,6 @@ DEFAULTS: dict = {
                 "wind_y_pxs": 35.0,
             },
             {
-                "r0": 0.10,
                 "L0": 1.0,
                 "pixel_scale_m": 0.2,
                 "weight": 0.8,
@@ -546,7 +544,6 @@ DEFAULTS: dict = {
                 "wind_y_pxs": 70.0,
             },
             {
-                "r0": 0.10,
                 "L0": 0.3,
                 "pixel_scale_m": 0.1,
                 "weight": 1.0,
@@ -554,6 +551,44 @@ DEFAULTS: dict = {
                 "wind_y_pxs": 120.0,
             },
         ],
+    },
+    "buildings": {
+        "enabled": True,
+        "floor_height_m": 3.2,
+        "height_jitter": 0.12,
+        "building_max_distance_m": 12000.0,
+        "window_max_distance_m": 6000.0,
+        "wall_color": "#0B0A09",
+        "roof_color": "#080807",
+        "face_shade_strength": 0.2,
+        # windows
+        "window_lit_fraction": 0.12,
+        "window_width_m": 1.4,
+        "window_height_m": 1.1,
+        "window_pitch_m": 2.4,
+        "window_side_margin_m": 0.8,
+        "window_sill_margin_m": 0.9,
+        "window_roof_margin_m": 0.6,
+        "window_color_temp_min_k": 1900.0,
+        "window_color_temp_max_k": 5500.0,
+        "window_saturation": 0.85,
+        "window_brightness_min": 0.15,
+        "window_brightness_max": 0.5,
+        "window_glow_px": 0.0,
+        # height defaults per building tag
+        "height_defaults": {
+            "house": 4.5,
+            "detached": 4.5,
+            "residential": 4.5,
+            "garage": 4.5,
+            "apartments": 9.6,
+            "retail": 6.5,
+            "commercial": 6.5,
+            "office": 6.5,
+            "industrial": 8.0,
+            "warehouse": 8.0,
+            "default": 5.0,
+        },
     },
     "devmode": {
         "render_width": 896,

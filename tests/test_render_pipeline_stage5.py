@@ -15,7 +15,8 @@ from streets_at_night.rendering.render_pipeline import (
 def _get_illumination_pass_index(passes):
     """Return the index of the illumination closure in the export pass list.
 
-    The illumination pass is at index 2: ground(0), roads(1), illumination(2), lights(3).
+    The illumination pass is at index 3: ground(0), roads(1), buildings(2),
+    illumination(3), lights(4).
 
     Args:
         passes (list): Export pass list from get_export_passes().
@@ -23,7 +24,7 @@ def _get_illumination_pass_index(passes):
     Returns:
         int: Index of the illumination closure.
     """
-    return 2
+    return 3
 
 
 # ---------------------------------------------------------------------------
@@ -94,10 +95,10 @@ def test_get_export_passes_includes_illumination():
     # Act
     passes = get_export_passes()
 
-    # Assert — six passes: ground, roads, illumination closure, lights,
-    # atmosphere, compositor. Illumination is a closure so identity cannot be
-    # checked directly.
-    assert len(passes) == 6
+    # Assert — seven passes: ground, roads, buildings, illumination closure,
+    # lights, atmosphere, compositor. Illumination is a closure so identity
+    # cannot be checked directly.
+    assert len(passes) == 7
 
 
 def test_get_export_passes_includes_light_export_pass():
@@ -120,12 +121,13 @@ def test_get_export_passes_includes_road_pass():
     assert render_roads_export in passes
 
 
-def test_get_export_passes_returns_six_passes():
+def test_get_export_passes_returns_seven_passes():
     # Act
     passes = get_export_passes()
 
-    # Assert — ground, roads, illumination, lights, atmosphere, compositor = exactly six
-    assert len(passes) == 6
+    # Assert — ground, roads, buildings, illumination, lights, atmosphere,
+    # compositor = exactly seven
+    assert len(passes) == 7
 
 
 def test_get_export_passes_illumination_before_lights():
@@ -140,6 +142,23 @@ def test_get_export_passes_illumination_before_lights():
     lights_idx = passes.index(render_lights_export)
 
     assert illumination_idx < lights_idx
+
+
+def test_get_export_passes_buildings_between_roads_and_illumination():
+    # Arrange
+    from streets_at_night.rendering.road_pass import render_roads_export
+
+    # Act — buildings pass is a gbuffer-sharing closure, so check by name
+    from streets_at_night.rendering.render_pipeline import get_export_pass_names
+
+    names = get_export_pass_names()
+    passes = get_export_passes()
+    roads_idx = passes.index(render_roads_export)
+    illumination_idx = _get_illumination_pass_index(passes)
+    buildings_idx = names.index("buildings")
+
+    # Assert — buildings sits strictly between roads and illumination
+    assert roads_idx < buildings_idx < illumination_idx
 
 
 def test_get_export_passes_roads_before_illumination():
@@ -167,9 +186,9 @@ def test_get_export_passes_default_includes_illumination_and_lights():
     # Act
     passes = get_export_passes()
 
-    # Assert — 6 passes: illumination and lights are both present;
+    # Assert — 7 passes: illumination and lights are both present;
     # lights export pass is referenced directly so we can check it
-    assert len(passes) == 6
+    assert len(passes) == 7
     assert render_lights_export in passes
 
 
@@ -180,8 +199,9 @@ def test_get_export_passes_no_lights_omits_illumination_and_light_passes():
     # Act
     passes = get_export_passes(no_lights=True)
 
-    # Assert — with no_lights: ground, roads, atmosphere, compositor = 4 passes
-    assert len(passes) == 4
+    # Assert — with no_lights: ground, roads, buildings, atmosphere,
+    # compositor = 5 passes
+    assert len(passes) == 5
     assert render_lights_export not in passes
 
 
@@ -190,11 +210,11 @@ def test_get_export_passes_no_lights_still_includes_ground_and_roads():
     passes = get_export_passes(no_lights=True)
 
     # Assert — ground and road passes are always present regardless of flag;
-    # atmosphere and compositor also always run, so 4 passes total
+    # buildings, atmosphere, and compositor also always run, so 5 passes total
     from streets_at_night.rendering.road_pass import render_roads_export
 
     assert render_roads_export in passes
-    assert len(passes) == 4
+    assert len(passes) == 5
 
 
 # ---------------------------------------------------------------------------

@@ -6,21 +6,22 @@ Passes are represented as callables with the signature:
 New passes for Stage 5+ can be added by extending the list returned by
 get_preview_passes() or get_export_passes() without modifying this module.
 
-The warp-preview path (get_preview_passes_warp) is used for the interactive
-pygame preview. It replaces per-segment projection with a single PIL
-perspective warp of the pre-rendered flat map. The flat map and its metadata
-must be generated before calling render_scene_frame with the warp passes.
+The warp-preview path used for the interactive pygame preview replaces
+per-segment projection with a single PIL perspective warp of the
+pre-rendered flat map. It is driven directly by ``main.cmd_preview``, which
+calls ``warp_preview.render_warp_preview`` itself rather than going through
+this module's pass-list abstraction — the preview loop needs to build one
+ground raycast per camera move and share it between the warp render and the
+heat-haze depth map, which a fixed (scene, camera, backend) pass signature
+can't express.
 """
 
 import typing as t
 from pathlib import Path
 
-from PIL import Image
-
 from ..camera.camera import Camera
 from ..config.schema import QualityPreset
 from .backend import RenderBackend
-from .flat_map import FlatMapMeta
 from .raycast import build_ground_gbuffer
 
 if t.TYPE_CHECKING:
@@ -53,33 +54,6 @@ def get_preview_passes(no_lights: bool = False) -> t.List[RenderPass]:
     return passes
 
 
-def get_preview_passes_warp(
-    flat_map: Image.Image,
-    flat_meta: FlatMapMeta,
-) -> t.List[RenderPass]:
-    """Return the warp-based preview pass list.
-
-    Returns a single pass that perspective-warps the flat road map to screen
-    each frame. Much faster than the segment-projection preview path.
-    The flat_map and flat_meta are captured in the closure.
-
-    Args:
-        flat_map (Image.Image): Pre-rendered top-down road map.
-        flat_meta (FlatMapMeta): World bounds and resolution metadata.
-
-    Returns:
-        list[RenderPass]: Single-element list containing the warp render pass.
-    """
-    from .warp_preview import render_warp_preview
-
-    def _warp_pass(
-        scene: "Scene", camera: Camera, backend: RenderBackend
-    ) -> None:
-        render_warp_preview(scene, camera, backend, flat_map, flat_meta)
-
-    return [_warp_pass]
-
-
 def get_export_passes(
     cache_dir: Path = Path("cache"),
     no_lights: bool = False,
@@ -96,12 +70,14 @@ def get_export_passes(
     Pass order:
         1. Ground (tiled export) — sky, horizon, and textured ground.
         2. Roads — per-segment 3D projection with night-palette colors.
-        3. Illumination — world-space Gaussian map, raycast-sampled, additive.
+        3. Buildings — extruded wall and roof polygons (opaque, no lights).
+           (omitted when config.buildings is missing or disabled)
+        4. Illumination — world-space Gaussian map, raycast-sampled, additive.
            (omitted when no_lights=True)
-        4. Lights — bright cores and gaussian glow halos, additive.
+        5. Lights — bright cores and gaussian glow halos, additive.
            (omitted when no_lights=True)
-        5. Atmosphere — horizon glow gradient and optional distance haze.
-        6. Compositor — vignette darkening, optional stars, color grade stub.
+        6. Atmosphere — horizon glow gradient and optional distance haze.
+        7. Compositor — vignette darkening, optional stars, color grade stub.
 
     Args:
         cache_dir (Path): Directory for tile and OSM cache files.
@@ -141,6 +117,16 @@ def get_export_passes(
         )
 
     passes: t.List[RenderPass] = [_ground_export_pass, render_roads_export]
+
+    from .building_pass import render_buildings
+
+    def _buildings_pass(
+        scene: "Scene", camera: Camera, backend: RenderBackend
+    ) -> t.Dict[str, t.Any]:
+        return render_buildings(scene, camera, backend, gbuffer=_shared_gbuffer(camera, backend))
+
+    passes.append(_buildings_pass)
+
     if not no_lights:
         from .illumination_pass import render_illumination
         from .light_pass import render_lights_export
@@ -184,7 +170,7 @@ def get_export_pass_names(no_lights: bool = False) -> t.List[str]:
     Returns:
         list[str]: Ordered pass name strings.
     """
-    names = ["ground", "roads"]
+    names = ["ground", "roads", "buildings"]
     if not no_lights:
         names.extend(["illumination", "lights"])
     names.extend(["atmosphere", "compositor"])

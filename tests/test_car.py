@@ -165,8 +165,9 @@ def test_light_separation_within_range(car_config):
 
 
 def test_resolve_facing_toward_camera_sets_bright_glow(car_pair):
-    # Arrange — car travels East, camera also looks East → dot > 0 → headlights
-    camera_forward = np.array([1.0, 0.0, 0.0])
+    # Arrange — car travels East (bearing=0.0), camera looks West → travel
+    # opposes camera forward → dot < 0 → car approaches viewer → headlights
+    camera_forward = np.array([-1.0, 0.0, 0.0])
 
     # Act
     car_pair.resolve_facing(camera_forward)
@@ -177,8 +178,8 @@ def test_resolve_facing_toward_camera_sets_bright_glow(car_pair):
 
 
 def test_resolve_facing_toward_camera_sets_brightness_range(car_pair, car_config):
-    # Arrange
-    camera_forward = np.array([1.0, 0.0, 0.0])
+    # Arrange — car approaches viewer, camera looks West
+    camera_forward = np.array([-1.0, 0.0, 0.0])
 
     # Act
     car_pair.resolve_facing(camera_forward)
@@ -197,8 +198,9 @@ def test_resolve_facing_toward_camera_sets_brightness_range(car_pair, car_config
 
 
 def test_resolve_facing_away_from_camera_sets_dim_glow(car_pair):
-    # Arrange — car travels East, camera looks West → dot < 0 → taillights
-    camera_forward = np.array([-1.0, 0.0, 0.0])
+    # Arrange — car travels East (bearing=0.0), camera also looks East →
+    # travel aligns with camera forward → dot > 0 → car moves away → taillights
+    camera_forward = np.array([1.0, 0.0, 0.0])
 
     # Act
     car_pair.resolve_facing(camera_forward)
@@ -209,8 +211,8 @@ def test_resolve_facing_away_from_camera_sets_dim_glow(car_pair):
 
 
 def test_resolve_facing_away_from_camera_sets_brightness_range(car_pair, car_config):
-    # Arrange
-    camera_forward = np.array([-1.0, 0.0, 0.0])
+    # Arrange — car moves away, camera looks East
+    camera_forward = np.array([1.0, 0.0, 0.0])
 
     # Act
     car_pair.resolve_facing(camera_forward)
@@ -229,8 +231,8 @@ def test_resolve_facing_away_from_camera_sets_brightness_range(car_pair, car_con
 
 
 def test_resolve_facing_headlights_both_same_color(car_pair):
-    # Arrange
-    camera_forward = np.array([1.0, 0.0, 0.0])
+    # Arrange — car approaches viewer → headlights
+    camera_forward = np.array([-1.0, 0.0, 0.0])
 
     # Act
     car_pair.resolve_facing(camera_forward)
@@ -241,8 +243,8 @@ def test_resolve_facing_headlights_both_same_color(car_pair):
 
 
 def test_resolve_facing_taillights_both_same_color(car_pair):
-    # Arrange
-    camera_forward = np.array([-1.0, 0.0, 0.0])
+    # Arrange — car moves away from viewer → taillights
+    camera_forward = np.array([1.0, 0.0, 0.0])
 
     # Act
     car_pair.resolve_facing(camera_forward)
@@ -320,7 +322,7 @@ def test_headlight_color_comes_from_config():
         config=single_color_config,
         rng=rng,
     )
-    camera_forward = np.array([1.0, 0.0, 0.0])
+    camera_forward = np.array([-1.0, 0.0, 0.0])
 
     # Act
     pair.resolve_facing(camera_forward)
@@ -374,7 +376,7 @@ def test_taillight_color_comes_from_config():
         config=single_color_config,
         rng=rng,
     )
-    camera_forward = np.array([-1.0, 0.0, 0.0])
+    camera_forward = np.array([1.0, 0.0, 0.0])
 
     # Act
     pair.resolve_facing(camera_forward)
@@ -501,7 +503,7 @@ def test_headlight_glow_radius_comes_from_config():
         config=config,
         rng=random.Random(0),
     )
-    camera_forward = np.array([1.0, 0.0, 0.0])
+    camera_forward = np.array([-1.0, 0.0, 0.0])
 
     # Act
     pair.resolve_facing(camera_forward)
@@ -520,14 +522,14 @@ def test_headlight_illumination_radius_comes_from_config():
         config=config,
         rng=random.Random(0),
     )
-    camera_forward = np.array([1.0, 0.0, 0.0])
+    camera_forward = np.array([-1.0, 0.0, 0.0])
 
     # Act
     pair.resolve_facing(camera_forward)
     lights = pair.get_lights()
 
     # Assert
-    assert all(light.illumination_radius == 40.0 for light in lights)
+    assert all(light.illumination.radius == 40.0 for light in lights)
 
 
 def test_headlight_illumination_intensity_comes_from_config():
@@ -539,7 +541,7 @@ def test_headlight_illumination_intensity_comes_from_config():
         config=config,
         rng=random.Random(0),
     )
-    camera_forward = np.array([1.0, 0.0, 0.0])
+    camera_forward = np.array([-1.0, 0.0, 0.0])
 
     # Act
     pair.resolve_facing(camera_forward)
@@ -558,7 +560,7 @@ def test_taillight_glow_radius_comes_from_config():
         config=config,
         rng=random.Random(0),
     )
-    camera_forward = np.array([-1.0, 0.0, 0.0])
+    camera_forward = np.array([1.0, 0.0, 0.0])
 
     # Act
     pair.resolve_facing(camera_forward)
@@ -577,14 +579,14 @@ def test_taillight_illumination_radius_comes_from_config():
         config=config,
         rng=random.Random(0),
     )
-    camera_forward = np.array([-1.0, 0.0, 0.0])
+    camera_forward = np.array([1.0, 0.0, 0.0])
 
     # Act
     pair.resolve_facing(camera_forward)
     lights = pair.get_lights()
 
     # Assert
-    assert all(light.illumination_radius == 7.0 for light in lights)
+    assert all(light.illumination.radius == 7.0 for light in lights)
 
 
 def test_taillight_illumination_intensity_comes_from_config():
@@ -596,7 +598,7 @@ def test_taillight_illumination_intensity_comes_from_config():
         config=config,
         rng=random.Random(0),
     )
-    camera_forward = np.array([-1.0, 0.0, 0.0])
+    camera_forward = np.array([1.0, 0.0, 0.0])
 
     # Act
     pair.resolve_facing(camera_forward)
@@ -623,7 +625,7 @@ def test_headlight_brightness_comes_from_config():
         config=config,
         rng=random.Random(0),
     )
-    camera_forward = np.array([1.0, 0.0, 0.0])
+    camera_forward = np.array([-1.0, 0.0, 0.0])
 
     # Act
     pair.resolve_facing(camera_forward)
@@ -645,7 +647,7 @@ def test_taillight_brightness_comes_from_config():
         config=config,
         rng=random.Random(0),
     )
-    camera_forward = np.array([-1.0, 0.0, 0.0])
+    camera_forward = np.array([1.0, 0.0, 0.0])
 
     # Act
     pair.resolve_facing(camera_forward)

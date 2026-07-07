@@ -4,7 +4,7 @@
 import numpy as np
 import pytest
 
-from streets_at_night.camera.camera import create_camera, get_view_matrix, get_projection_matrix
+from streets_at_night.camera.camera import create_camera
 from streets_at_night.camera.projection import (
     _camera_z,
     clip_line_to_near_plane,
@@ -32,13 +32,13 @@ def camera():
 @pytest.fixture
 def view_matrix(camera):
     """View matrix for the standard test camera."""
-    return get_view_matrix(camera)
+    return camera.get_view_matrix()
 
 
 @pytest.fixture
 def proj_matrix(camera):
     """Projection matrix for the standard test camera."""
-    return get_projection_matrix(camera)
+    return camera.get_projection_matrix()
 
 
 @pytest.fixture

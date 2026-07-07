@@ -17,6 +17,7 @@ from streets_at_night.rendering.flat_map import (
     _compute_cache_key,
     _auto_scale_resolution,
 )
+from streets_at_night.rendering.raycast import build_ground_gbuffer
 from streets_at_night.rendering.warp_preview import (
     _build_ray_directions,
     _raycast_to_flat_map,
@@ -225,22 +226,55 @@ def test_get_flat_map_returns_meta_with_correct_resolution(minimal_scene):
 # ---------------------------------------------------------------------------
 
 
-def test_compute_cache_key_returns_12_char_hex(flat_meta):
+def test_compute_cache_key_returns_12_char_hex(flat_meta, minimal_scene):
     # Act
-    key = _compute_cache_key(flat_meta, 100)
+    key = _compute_cache_key(flat_meta, minimal_scene.road_segments)
 
     # Assert
     assert len(key) == 12
     assert all(c in "0123456789abcdef" for c in key)
 
 
-def test_compute_cache_key_differs_for_different_segment_counts(flat_meta):
+def test_compute_cache_key_differs_for_different_segment_counts(flat_meta, minimal_scene):
+    # Arrange
+    fewer_segments = minimal_scene.road_segments[:1]
+
     # Act
-    key1 = _compute_cache_key(flat_meta, 100)
-    key2 = _compute_cache_key(flat_meta, 200)
+    key1 = _compute_cache_key(flat_meta, minimal_scene.road_segments)
+    key2 = _compute_cache_key(flat_meta, fewer_segments)
 
     # Assert
     assert key1 != key2
+
+
+def test_compute_cache_key_differs_for_different_road_type_on_one_segment(
+    flat_meta, minimal_scene
+):
+    # Arrange — two scenes identical except one segment's road_type
+    changed_segments = [
+        RoadSegment(
+            geometry=minimal_scene.road_segments[0].geometry,
+            road_type=RoadType.HIGHWAY,
+            width=minimal_scene.road_segments[0].width,
+        ),
+        minimal_scene.road_segments[1],
+    ]
+
+    # Act
+    key1 = _compute_cache_key(flat_meta, minimal_scene.road_segments)
+    key2 = _compute_cache_key(flat_meta, changed_segments)
+
+    # Assert
+    assert key1 != key2
+
+
+def test_compute_cache_key_same_scene_twice_returns_same_key(flat_meta, minimal_scene):
+    # Act
+    key1 = _compute_cache_key(flat_meta, minimal_scene.road_segments)
+    key2 = _compute_cache_key(flat_meta, minimal_scene.road_segments)
+
+    # Assert
+    assert key1 == key2
 
 
 # ---------------------------------------------------------------------------
@@ -308,14 +342,12 @@ def test_raycast_to_flat_map_downward_camera_all_ground(flat_meta):
         far=20000.0,
     )
     width, height = 64, 36
-    inv_proj = np.linalg.inv(camera.get_projection_matrix())
-    inv_view = np.linalg.inv(camera.get_view_matrix())
-    rays = _build_ray_directions(width, height, inv_proj, inv_view)
+    gbuffer = build_ground_gbuffer(camera, width, height)
     flat_map = Image.new("RGB", (1000, 1000), (100, 100, 100))
 
     # Act
     flat_px, flat_py, ground_mask = _raycast_to_flat_map(
-        camera.position, rays, width, height, flat_meta, flat_map
+        gbuffer, flat_meta, flat_map.width, flat_map.height
     )
 
     # Assert — all pixels should hit ground (camera looking straight down)
@@ -333,14 +365,12 @@ def test_raycast_to_flat_map_sky_pixels_are_false(flat_meta):
         far=20000.0,
     )
     width, height = 64, 36
-    inv_proj = np.linalg.inv(camera.get_projection_matrix())
-    inv_view = np.linalg.inv(camera.get_view_matrix())
-    rays = _build_ray_directions(width, height, inv_proj, inv_view)
+    gbuffer = build_ground_gbuffer(camera, width, height)
     flat_map = Image.new("RGB", (1000, 1000), (100, 100, 100))
 
     # Act
     flat_px, flat_py, ground_mask = _raycast_to_flat_map(
-        camera.position, rays, width, height, flat_meta, flat_map
+        gbuffer, flat_meta, flat_map.width, flat_map.height
     )
 
     # Assert — at least some pixels should be sky (top rows)
@@ -357,13 +387,13 @@ def test_raycast_to_flat_map_sky_pixels_are_false(flat_meta):
 def test_sample_flat_map_sky_pixels_get_sky_color():
     # Arrange
     width, height = 4, 4
-    flat_map = Image.new("RGB", (100, 100), (200, 200, 200))
+    flat_map_array = np.asarray(Image.new("RGB", (100, 100), (200, 200, 200)))
     flat_px = np.zeros((height, width), dtype=np.int32)
     flat_py = np.zeros((height, width), dtype=np.int32)
     ground_mask = np.zeros((height, width), dtype=bool)
 
     # Act
-    output = _sample_flat_map(flat_map, flat_px, flat_py, ground_mask, width, height)
+    output = _sample_flat_map(flat_map_array, flat_px, flat_py, ground_mask, width, height)
 
     # Assert — all pixels should be sky color (5, 5, 15)
     arr = np.asarray(output)
@@ -373,13 +403,13 @@ def test_sample_flat_map_sky_pixels_get_sky_color():
 def test_sample_flat_map_ground_pixels_get_map_color():
     # Arrange
     width, height = 4, 4
-    flat_map = Image.new("RGB", (100, 100), (200, 150, 100))
+    flat_map_array = np.asarray(Image.new("RGB", (100, 100), (200, 150, 100)))
     flat_px = np.full((height, width), 50, dtype=np.int32)
     flat_py = np.full((height, width), 50, dtype=np.int32)
     ground_mask = np.ones((height, width), dtype=bool)
 
     # Act
-    output = _sample_flat_map(flat_map, flat_px, flat_py, ground_mask, width, height)
+    output = _sample_flat_map(flat_map_array, flat_px, flat_py, ground_mask, width, height)
 
     # Assert — all pixels should be the flat map color
     arr = np.asarray(output)
@@ -405,3 +435,28 @@ def test_render_warp_preview_calls_blit(simple_camera, minimal_scene, flat_meta)
     blitted_img = mock_backend.blit_pil_image.call_args[0][0]
     assert isinstance(blitted_img, Image.Image)
     assert blitted_img.size == (320, 180)
+
+
+def test_render_warp_preview_uses_supplied_gbuffer_without_rebuilding(
+    simple_camera, minimal_scene, flat_meta,
+):
+    # Arrange — a caller (e.g. the preview loop) already built the gbuffer for
+    # this camera and frame size; render_warp_preview must reuse it rather
+    # than raycasting again.
+    flat_map = Image.new("RGB", (1000, 1000), (100, 100, 100))
+    mock_backend = mock.MagicMock()
+    mock_backend.get_surface_size.return_value = (320, 180)
+    supplied_gbuffer = build_ground_gbuffer(simple_camera, 320, 180)
+
+    # Act
+    with mock.patch(
+        "streets_at_night.rendering.warp_preview.build_ground_gbuffer"
+    ) as mock_build:
+        render_warp_preview(
+            minimal_scene, simple_camera, mock_backend, flat_map, flat_meta,
+            gbuffer=supplied_gbuffer,
+        )
+
+    # Assert
+    mock_build.assert_not_called()
+    mock_backend.blit_pil_image.assert_called_once()

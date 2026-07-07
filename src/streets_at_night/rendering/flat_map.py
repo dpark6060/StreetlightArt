@@ -8,6 +8,7 @@ skip generation entirely.
 import hashlib
 import json
 import typing as t
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,6 +38,11 @@ _FLAT_MAP_ROAD_STYLE: t.Dict[RoadType, t.Tuple[t.Tuple[int, int, int], float]] =
 # Maximum pixel dimension for either axis of the flat map
 _MAX_FLAT_MAP_DIM: int = 8000
 
+# Cache schema version — bump to invalidate cached flat maps when the drawing
+# logic changes but the style table/census/resolution/bounds inputs to the
+# cache key do not.
+_FLAT_MAP_CACHE_VERSION: int = 1
+
 
 @dataclass
 class FlatMapMeta:
@@ -56,15 +62,23 @@ class FlatMapMeta:
     max_y: float
     resolution: float
 
-    def world_to_pixel(self, x: float, y: float) -> t.Tuple[float, float]:
+    def world_to_pixel(
+        self,
+        x: t.Union[float, np.ndarray],
+        y: t.Union[float, np.ndarray],
+    ) -> t.Tuple[t.Union[float, np.ndarray], t.Union[float, np.ndarray]]:
         """Convert ENU world coordinates to flat map pixel coordinates.
 
+        Pure elementwise arithmetic, so ``x``/``y`` may be scalars or numpy
+        arrays of any shape (the raycast paths pass full (H, W) arrays here to
+        vectorize world-to-pixel conversion across an entire screen).
+
         Args:
-            x (float): ENU east coordinate in meters.
-            y (float): ENU north coordinate in meters.
+            x (float | np.ndarray): ENU east coordinate(s) in meters.
+            y (float | np.ndarray): ENU north coordinate(s) in meters.
 
         Returns:
-            tuple[float, float]: (px, py) pixel coordinates.
+            tuple[float | np.ndarray, float | np.ndarray]: (px, py) pixel coordinate(s).
         """
         px = (x - self.min_x) / self.resolution
         py = (self.max_y - y) / self.resolution
@@ -108,7 +122,7 @@ def get_flat_map(
     flat_map_dir = cache_dir / "flat_map"
     flat_map_dir.mkdir(parents=True, exist_ok=True)
     meta = _compute_meta(scene, resolution)
-    cache_key = _compute_cache_key(meta, len(scene.road_segments))
+    cache_key = _compute_cache_key(meta, scene.road_segments)
     img_path = flat_map_dir / f"flat_map_{cache_key}.png"
     json_path = flat_map_dir / f"flat_map_{cache_key}.json"
 
@@ -262,24 +276,42 @@ def _draw_segment_on_flat_map(
         draw.line([pixel_coords[i], pixel_coords[i + 1]], fill=color, width=px_width)
 
 
-def _compute_cache_key(meta: FlatMapMeta, num_segments: int) -> str:
+def _compute_cache_key(meta: FlatMapMeta, road_segments: t.Sequence[t.Any]) -> str:
     """Compute a short hex hash to identify a cached flat map.
 
-    Hash inputs: resolution, number of segments, and world bounds (rounded
-    to 1 meter to absorb floating-point noise between runs).
+    Hash inputs: resolution, world bounds (rounded to 1 meter to absorb
+    floating-point noise between runs), the road style table (colors and
+    widths), the background color, a census of road types present in
+    the scene, and a cache schema version. This ensures a style or
+    classification change invalidates the cache even when segment count and
+    bounds are unchanged, and lets the version be bumped to invalidate the
+    cache on drawing-logic changes alone.
 
     Args:
         meta (FlatMapMeta): Flat map metadata.
-        num_segments (int): Number of road segments in the scene.
+        road_segments (Sequence): Road segments in the scene.
 
     Returns:
         str: 12-character hex string.
     """
+    style_repr = repr(
+        sorted(
+            (road_type.value, color, width)
+            for road_type, (color, width) in _FLAT_MAP_ROAD_STYLE.items()
+        )
+    )
+    road_type_census = sorted(
+        Counter(segment.road_type.value for segment in road_segments).items()
+    )
     key_data = (
         f"{meta.resolution:.4f}"
-        f"_{num_segments}"
+        f"_{len(road_segments)}"
         f"_{round(meta.min_x)}_{round(meta.min_y)}"
         f"_{round(meta.max_x)}_{round(meta.max_y)}"
+        f"_{style_repr}"
+        f"_{_BACKGROUND_COLOR}"
+        f"_{road_type_census}"
+        f"_{_FLAT_MAP_CACHE_VERSION}"
     )
     return hashlib.md5(key_data.encode()).hexdigest()[:12]
 

@@ -8,6 +8,7 @@ import numpy as np
 
 from ..config.schema import CarConfig, LightConfig
 from ..models.car import CarLightPair
+from ..models.color_pool import ColorPool
 from ..models.light_source import LightSource
 from ..models.road_segment import RoadSegment
 from ..models.road_types import RoadType
@@ -53,11 +54,16 @@ def place_cars(
             - Flat list of all car LightSources.
             - All CarLightPair objects for resolve_facing at render time.
     """
+    headlight_pool = ColorPool(config.cars.headlight_colors.colors, rng)
+    taillight_pool = ColorPool(config.cars.taillight_colors.colors, rng)
+
     all_lights: t.List[LightSource] = []
     all_pairs: t.List[CarLightPair] = []
 
     for segment in road_segments:
-        pairs = _place_cars_on_segment(segment, config.cars, rng)
+        pairs = _place_cars_on_segment(
+            segment, config.cars, rng, headlight_pool, taillight_pool
+        )
         for pair in pairs:
             all_lights.extend(pair.get_lights())
         all_pairs.extend(pairs)
@@ -74,6 +80,8 @@ def _place_cars_on_segment(
     segment: RoadSegment,
     car_config: CarConfig,
     rng: random.Random,
+    headlight_pool: ColorPool,
+    taillight_pool: ColorPool,
 ) -> t.List[CarLightPair]:
     """Place cars along a single road segment.
 
@@ -81,6 +89,8 @@ def _place_cars_on_segment(
         segment (RoadSegment): The road segment to populate.
         car_config (CarConfig): Car density and light configuration.
         rng (random.Random): Seeded RNG for spacing and direction decisions.
+        headlight_pool (ColorPool): Shared headlight color pool for this run.
+        taillight_pool (ColorPool): Shared taillight color pool for this run.
 
     Returns:
         List[CarLightPair]: All car pairs placed on this segment.
@@ -93,7 +103,7 @@ def _place_cars_on_segment(
     pairs = []
     for point, tangent in zip(sample_points, sample_tangents):
         pair = _create_car_at_point(
-            point, tangent, segment.road_type, car_config, rng
+            point, tangent, segment.road_type, car_config, rng, headlight_pool, taillight_pool
         )
         pairs.append(pair)
     return pairs
@@ -122,6 +132,8 @@ def _create_car_at_point(
     road_type: RoadType,
     car_config: CarConfig,
     rng: random.Random,
+    headlight_pool: t.Optional[ColorPool] = None,
+    taillight_pool: t.Optional[ColorPool] = None,
 ) -> CarLightPair:
     """Create a single CarLightPair at a sampled road point.
 
@@ -135,6 +147,10 @@ def _create_car_at_point(
         road_type (RoadType): Used to determine highway vs bidirectional logic.
         car_config (CarConfig): Passed through to CarLightPair.
         rng (random.Random): RNG for direction and offset decisions.
+        headlight_pool (ColorPool, optional): Shared headlight color pool. If
+            None, CarLightPair builds one from car_config.headlight_colors.
+        taillight_pool (ColorPool, optional): Shared taillight color pool. If
+            None, CarLightPair builds one from car_config.taillight_colors.
 
     Returns:
         CarLightPair: Newly created car light pair.
@@ -149,13 +165,16 @@ def _create_car_at_point(
         travel_bearing=travel_bearing,
         config=car_config,
         rng=rng,
+        headlight_pool=headlight_pool,
+        taillight_pool=taillight_pool,
     )
 
 
 def _bearing_from_tangent(tangent: np.ndarray) -> float:
     """Compute the road bearing from a tangent vector.
 
-    Uses atan2(x, y) convention: 0 = North, pi/2 = East.
+    Uses atan2(y, x) convention: 0 = East, pi/2 = North (math convention,
+    matches CarLightPair).
 
     Args:
         tangent (np.ndarray): 3-element tangent vector.
@@ -163,7 +182,7 @@ def _bearing_from_tangent(tangent: np.ndarray) -> float:
     Returns:
         float: Road bearing in radians.
     """
-    return math.atan2(tangent[0], tangent[1])
+    return math.atan2(tangent[1], tangent[0])
 
 
 def _assign_lane_and_bearing(

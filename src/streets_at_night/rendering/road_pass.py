@@ -5,12 +5,13 @@ import typing as t
 import numpy as np
 
 from ..camera.camera import Camera
-from ..camera.projection import frustum_cull_segments, project_points
+from ..camera.projection import frustum_cull_segments, project_points_full
 from ..config.schema import RoadStyleConfig
 from ..models.road_segment import RoadSegment
 from ..models.road_types import RoadType
 from ..utils.colors import hex_to_rgb
 from .backend import RenderBackend
+from .raycast import visible_ground_aabb
 
 if t.TYPE_CHECKING:
     from ..scene.scene import Scene
@@ -178,8 +179,9 @@ def _get_segment_depth(segment: RoadSegment, view_matrix: np.ndarray) -> float:
 def _query_camera_frustum(scene: "Scene", camera: Camera) -> t.List[t.Any]:
     """Query the scene for road segments within the camera's view range.
 
-    Uses a conservative square AABB around the camera position up to the
-    far plane distance.
+    Uses the camera's actual visible ground footprint (the frustum's
+    intersection with z=0), not just a far-plane bounding square, so the
+    spatial index only returns segments that could plausibly be on screen.
 
     Args:
         scene (Scene): The world scene.
@@ -188,12 +190,8 @@ def _query_camera_frustum(scene: "Scene", camera: Camera) -> t.List[t.Any]:
     Returns:
         list[RoadSegment]: Candidate segments in the camera's view area.
     """
-    cam_x = camera.position[0]
-    cam_y = camera.position[1]
-    far = camera.far
-    return scene.get_roads_in_rect(
-        cam_x - far, cam_y - far, cam_x + far, cam_y + far
-    )
+    min_x, min_y, max_x, max_y = visible_ground_aabb(camera)
+    return scene.get_roads_in_rect(min_x, min_y, max_x, max_y)
 
 
 def _draw_segment(
@@ -241,52 +239,128 @@ def _draw_segment(
     if not visible:
         return False
 
-    for p1, p2 in visible:
-        _project_and_draw_edge(
-            p1, p2, color, base_width,
-            view_matrix, proj_matrix, backend, width, height,
-        )
-    return True
+    screen_coords, in_front_mask = _project_segment_pairs(
+        visible, view_matrix, proj_matrix, (width, height)
+    )
+    return _draw_visible_edges(
+        visible, screen_coords, in_front_mask, color, base_width,
+        view_matrix, width, height, backend,
+    )
 
 
-def _project_and_draw_edge(
-    p1: np.ndarray,
-    p2: np.ndarray,
+def _project_segment_pairs(
+    pairs: t.List[t.Tuple[np.ndarray, np.ndarray]],
+    view_matrix: np.ndarray,
+    proj_matrix: np.ndarray,
+    screen_size: t.Tuple[int, int],
+) -> t.Tuple[np.ndarray, np.ndarray]:
+    """Project all endpoints of a list of edge pairs in a single batch call.
+
+    Stacks every pair's two endpoints into one (2K, 3) array so the
+    perspective transform runs once for the whole segment instead of once
+    per edge.
+
+    Args:
+        pairs (list[tuple[np.ndarray, np.ndarray]]): Near-clipped world-space
+            edge endpoint pairs.
+        view_matrix (np.ndarray): (4, 4) view matrix.
+        proj_matrix (np.ndarray): (4, 4) projection matrix.
+        screen_size (tuple[int, int]): (width, height) in pixels.
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]:
+            - screen_coords: (2K, 2) pixel coordinates, endpoints interleaved
+              as [p1_0, p2_0, p1_1, p2_1, ...].
+            - in_front_mask: (2K,) bool — True where the point is in front of
+              the camera (on-screen bounds are not required for lines).
+    """
+    points = np.array([point for pair in pairs for point in pair])
+    screen_coords, in_front_mask, _ = project_points_full(
+        points, view_matrix, proj_matrix, screen_size
+    )
+    return screen_coords, in_front_mask
+
+
+def _draw_visible_edges(
+    pairs: t.List[t.Tuple[np.ndarray, np.ndarray]],
+    screen_coords: np.ndarray,
+    in_front_mask: np.ndarray,
     color: t.Tuple[int, int, int],
     base_width: int,
     view_matrix: np.ndarray,
-    proj_matrix: np.ndarray,
-    backend: RenderBackend,
     width: int,
     height: int,
-) -> None:
-    """Project two 3D endpoints and draw a line between them.
+    backend: RenderBackend,
+) -> bool:
+    """Draw each edge whose endpoints are both in front of the camera.
 
-    Skips drawing if either projected point falls outside the valid screen area.
-    Scales line width by distance for a perspective effect.
+    Off-screen endpoints are still drawn — both PIL and pygame clip line
+    primitives to the surface, so passing off-screen pixel coordinates is
+    safe. A cheap same-side-of-screen reject skips edges that plainly cannot
+    intersect the visible area, avoiding pathological huge-coordinate draws.
 
     Args:
-        p1 (np.ndarray): (3,) first endpoint in world ENU.
-        p2 (np.ndarray): (3,) second endpoint in world ENU.
+        pairs (list[tuple[np.ndarray, np.ndarray]]): World-space edge pairs,
+            in the same order used to build screen_coords.
+        screen_coords (np.ndarray): (2K, 2) projected pixel coordinates.
+        in_front_mask (np.ndarray): (2K,) bool, True if in front of camera.
         color (tuple[int, int, int]): RGB line color.
         base_width (int): Base line width at the reference distance.
         view_matrix (np.ndarray): (4, 4) view matrix.
-        proj_matrix (np.ndarray): (4, 4) projection matrix.
-        backend (RenderBackend): Target render surface.
         width (int): Image width in pixels.
         height (int): Image height in pixels.
-    """
-    pair = np.array([p1, p2])
-    screen_coords, valid_mask = project_points(
-        pair, view_matrix, proj_matrix, (width, height)
-    )
-    if not (valid_mask[0] and valid_mask[1]):
-        return
+        backend (RenderBackend): Target render surface.
 
-    line_width = _compute_line_width(p1, p2, view_matrix, base_width)
-    sx1, sy1 = int(screen_coords[0, 0]), int(screen_coords[0, 1])
-    sx2, sy2 = int(screen_coords[1, 0]), int(screen_coords[1, 1])
-    backend.draw_line((sx1, sy1), (sx2, sy2), color, line_width)
+    Returns:
+        bool: True if at least one edge was drawn.
+    """
+    drawn = False
+    for i, (p1, p2) in enumerate(pairs):
+        idx1, idx2 = 2 * i, 2 * i + 1
+        if not (in_front_mask[idx1] and in_front_mask[idx2]):
+            continue
+
+        sx1, sy1 = screen_coords[idx1]
+        sx2, sy2 = screen_coords[idx2]
+        if _is_off_same_side(sx1, sy1, sx2, sy2, width, height):
+            continue
+
+        line_width = _compute_line_width(p1, p2, view_matrix, base_width)
+        backend.draw_line(
+            (int(sx1), int(sy1)), (int(sx2), int(sy2)), color, line_width
+        )
+        drawn = True
+    return drawn
+
+
+def _is_off_same_side(
+    sx1: float, sy1: float, sx2: float, sy2: float, width: int, height: int
+) -> bool:
+    """Check whether both edge endpoints lie off-screen on the same side.
+
+    A cheap 4-comparison reject: if both endpoints are left of, right of,
+    above, or below the screen rect, the edge cannot cross the visible area.
+
+    Args:
+        sx1 (float): First endpoint screen x.
+        sy1 (float): First endpoint screen y.
+        sx2 (float): Second endpoint screen x.
+        sy2 (float): Second endpoint screen y.
+        width (int): Screen width in pixels.
+        height (int): Screen height in pixels.
+
+    Returns:
+        bool: True if the edge is entirely off-screen on one side.
+    """
+    if sx1 < 0 and sx2 < 0:
+        return True
+    if sx1 > width and sx2 > width:
+        return True
+    if sy1 < 0 and sy2 < 0:
+        return True
+    if sy1 > height and sy2 > height:
+        return True
+    return False
 
 
 def _build_segment_pairs(

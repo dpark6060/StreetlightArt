@@ -8,8 +8,8 @@ import pytest
 from shapely.geometry import box
 
 from streets_at_night.config.defaults import DEFAULTS
-from streets_at_night.config.loader import _build_light_config
 from streets_at_night.config.schema import ColorPoolConfig, HouseConfig, LightConfig
+from streets_at_night.config.serde import dataclass_from_dict
 from streets_at_night.models.house import House
 from streets_at_night.models.light_source import LightSource
 from streets_at_night.models.zones import ResidentialZone
@@ -33,7 +33,7 @@ def rng() -> random.Random:
 @pytest.fixture
 def light_config() -> LightConfig:
     """Return a default LightConfig built from project defaults."""
-    return _build_light_config(DEFAULTS["lights"])
+    return dataclass_from_dict(LightConfig, DEFAULTS["lights"])
 
 
 @pytest.fixture
@@ -175,7 +175,7 @@ def test_collect_zone_lights_calls_get_lights_on_each_house(rng, light_config):
     _collect_zone_lights(zone, rng, light_config.house_lights)
 
     # Assert
-    mock_house.get_lights.assert_called_once_with(rng, light_config.house_lights)
+    mock_house.get_lights.assert_called_once_with(rng, light_config.house_lights, None)
 
 
 def test_collect_zone_lights_accumulates_from_multiple_houses(

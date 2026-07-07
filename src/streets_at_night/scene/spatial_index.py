@@ -5,7 +5,6 @@ giving O(1) insert and lookup for road segment culling.
 """
 
 import typing as t
-import math
 
 
 class SpatialIndex:

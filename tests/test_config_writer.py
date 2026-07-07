@@ -1,13 +1,14 @@
 # Radical
 """Tests for streets_at_night.devmode.config_writer round-trip serialization."""
 
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 
 from streets_at_night.config.loader import load_config
 from streets_at_night.config.schema import SceneConfig
-from streets_at_night.devmode.config_writer import write_config
+from streets_at_night.devmode.config_writer import config_to_dict, write_config
 
 
 @pytest.fixture
@@ -89,3 +90,45 @@ def test_write_config_omits_removed_max_distance(base_config, tmp_path):
 
     # Assert — the retired knob is not written
     assert "max_distance =" not in text
+
+
+def test_config_writer_roundtrip_preserves_everything(tmp_path):
+    """write(load(defaults)) is self-consistent under config_to_dict.
+
+    This only verifies that the writer's own dict view of a config survives a
+    round trip — it compares ``config_to_dict(cfg)`` on both sides, so a field
+    the serializer omits entirely is absent from both sides and cannot show up
+    as a diff. It does NOT catch a dropped field on its own; that guardrail is
+    ``test_config_writer_roundtrip_preserves_mutated_fields``, which compares
+    ``dataclasses.asdict()`` instead and would have caught the car brightness
+    and grade/stars/heat_haze/region_name omissions.
+    """
+    cfg = load_config(Path("nonexistent.toml"))  # pure defaults
+    write_config(cfg, tmp_path / "rt.toml")
+    cfg2 = load_config(tmp_path / "rt.toml")
+    assert config_to_dict(cfg) == config_to_dict(cfg2)
+
+
+def test_config_writer_roundtrip_preserves_mutated_fields(base_config, tmp_path):
+    """Mutating one field per section still round-trips exactly.
+
+    Compares full dataclass state via ``asdict`` rather than ``config_to_dict``
+    output — a field silently missing from the writer's own dict would never
+    show up as a diff if both sides are filtered through the same buggy
+    serializer (neither side has the key). ``asdict`` reads the dataclasses
+    directly so a value lost in the TOML round trip (and quietly replaced by
+    the loader's default) is caught.
+    """
+    base_config.lights.cars.headlight_brightness_min = 0.42
+    base_config.lights.cars.taillight_brightness_max = 0.61
+    base_config.grade.exposure = 1.25
+    base_config.grade.tonemap = "linear"
+    base_config.stars.stars_enabled = True
+    base_config.stars.count = 500
+    base_config.heat_haze.enabled = False
+    base_config.heat_haze.layers[0].weight = 0.99
+    base_config.region_name = "san_bernardino"
+
+    result = _round_trip(base_config, tmp_path)
+
+    assert asdict(result) == asdict(base_config)

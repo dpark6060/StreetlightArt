@@ -6,6 +6,7 @@ from unittest import mock
 import numpy as np
 import pytest
 
+from streets_at_night.camera.camera import create_camera
 from streets_at_night.config.schema import (
     RoadStyleConfig,
     RoadStyleEntry,
@@ -14,6 +15,7 @@ from streets_at_night.config.schema import (
 from streets_at_night.models.road_types import RoadType
 from streets_at_night.rendering.road_pass import (
     _build_style_table,
+    _draw_segment,
     _FALLBACK_EXPORT_STYLE,
     _FALLBACK_PREVIEW_STYLE,
     render_roads_export,
@@ -196,3 +198,46 @@ def test_fallback_preview_style_has_bright_colors():
     # Assert — preview colors should be visible (max channel > 80)
     for road_type, (color, _width) in _FALLBACK_PREVIEW_STYLE.items():
         assert max(color) > 80, f"{road_type} preview color too dark: {color}"
+
+
+# ---------------------------------------------------------------------------
+# _draw_segment — screen-edge crossing edges are still drawn
+# ---------------------------------------------------------------------------
+
+def test_draw_segment_edge_crossing_screen_border_is_drawn():
+    # Arrange — camera at (0, 0, 100) looking down +X. The segment runs from
+    # (500, -50, 0), which projects near screen center, to (500, 5000, 0),
+    # which is far off to one side. Both endpoints are in front of the
+    # camera, so the edge must still be drawn even though one endpoint
+    # projects well outside the screen bounds — backends clip lines
+    # themselves.
+    camera = create_camera(
+        position=np.array([0.0, 0.0, 100.0]),
+        target=np.array([1000.0, 0.0, 0.0]),
+        fov_deg=60.0,
+        aspect_ratio=16.0 / 9.0,
+        near=10.0,
+        far=20000.0,
+    )
+    view_matrix = camera.get_view_matrix()
+    proj_matrix = camera.get_projection_matrix()
+    segment_geom = np.array([[500.0, -50.0, 0.0], [500.0, 5000.0, 0.0]])
+    style_table = {RoadType.HIGHWAY: ((255, 215, 0), 4)}
+    backend = mock.MagicMock()
+
+    # Act
+    was_drawn = _draw_segment(
+        segment_geom,
+        RoadType.HIGHWAY,
+        style_table,
+        view_matrix,
+        proj_matrix,
+        camera.near,
+        camera.far,
+        (1920, 1080),
+        backend,
+    )
+
+    # Assert
+    assert was_drawn is True
+    backend.draw_line.assert_called_once()

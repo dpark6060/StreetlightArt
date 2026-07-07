@@ -98,6 +98,7 @@ def test_apply_sliders_writes_to_primary_path() -> None:
         max_val=100.0,
     )
     registry.register_slider(mock_slider, descriptor)
+    registry.mark_dirty(descriptor.label)
 
     _apply_sliders(registry, root)
 
@@ -126,6 +127,7 @@ def test_apply_sliders_writes_to_all_extra_paths() -> None:
         extra_config_paths=[("extra_a",), ("extra_b",)],
     )
     registry.register_slider(mock_slider, descriptor)
+    registry.mark_dirty(descriptor.label)
 
     _apply_sliders(registry, root)
 
@@ -154,6 +156,7 @@ def test_apply_sliders_does_not_write_extra_when_list_is_empty() -> None:
         extra_config_paths=[],
     )
     registry.register_slider(mock_slider, descriptor)
+    registry.mark_dirty(descriptor.label)
 
     _apply_sliders(registry, root)
 
@@ -180,6 +183,7 @@ def test_apply_sliders_casts_int_descriptor_to_int() -> None:
         is_int=True,
     )
     registry.register_slider(mock_slider, descriptor)
+    registry.mark_dirty(descriptor.label)
 
     _apply_sliders(registry, root)
 
@@ -207,6 +211,7 @@ def test_apply_sliders_updates_value_entry_text() -> None:
         max_val=100.0,
     )
     registry.register_slider(mock_slider, descriptor, value_entry=mock_entry)
+    registry.mark_dirty(descriptor.label)
 
     _apply_sliders(registry, root)
 
@@ -216,6 +221,43 @@ def test_apply_sliders_updates_value_entry_text() -> None:
 # ---------------------------------------------------------------------------
 # _format_value
 # ---------------------------------------------------------------------------
+
+
+def test_apply_sliders_skips_slider_not_marked_dirty() -> None:
+    """_apply_sliders leaves config untouched for a slider the user never moved.
+
+    Regression test for the streetlight pool-mix flattening bug: a slider's
+    displayed value is read from only the first profiled pool entry, but its
+    extra_config_paths span every entry. Without the dirty gate, visiting a
+    section and clicking Re-render (without touching anything) would
+    broadcast that first entry's value over every other entry, destroying an
+    authored fixture mix (e.g. sodium + LED).
+    """
+
+    class Root:
+        pass
+
+    root = Root()
+    root.primary = 111.0
+    root.extra_a = 222.0
+
+    registry = SliderRegistry()
+    mock_slider = mock.MagicMock()
+    mock_slider.get_current_value.return_value = 111.0
+    descriptor = SliderDescriptor(
+        label="untouched",
+        config_path=("primary",),
+        min_val=0.0,
+        max_val=500.0,
+        extra_config_paths=[("extra_a",)],
+    )
+    registry.register_slider(mock_slider, descriptor)
+    # Note: registry.dirty is never marked for this slider.
+
+    _apply_sliders(registry, root)
+
+    assert root.primary == 111.0
+    assert root.extra_a == 222.0
 
 
 def test_format_value_formats_float_to_three_decimals() -> None:

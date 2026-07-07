@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from streets_at_night.config.defaults import DEFAULTS
-from streets_at_night.config.loader import _build_light_config
+from streets_at_night.config.serde import dataclass_from_dict
 from streets_at_night.config.schema import (
     AtmosphereConfig,
     BoundsConfig,
@@ -24,6 +24,7 @@ from streets_at_night.config.schema import (
     ZoneColorsConfig,
     ZoneConfig,
 )
+from streets_at_night.models.illumination import ConeIllumination
 from streets_at_night.models.light_source import LightSource
 from streets_at_night.models.road_segment import RoadSegment
 from streets_at_night.models.road_types import RoadType
@@ -38,7 +39,7 @@ from streets_at_night.placement.scene_builder import populate_lights
 @pytest.fixture
 def light_config() -> LightConfig:
     """Return a default LightConfig from project defaults."""
-    return _build_light_config(DEFAULTS["lights"])
+    return dataclass_from_dict(LightConfig, DEFAULTS["lights"])
 
 
 @pytest.fixture
@@ -233,10 +234,8 @@ def test_populate_lights_adds_all_lights_to_scene(
         brightness=0.9,
         size=0.3,
         glow_radius=25.0,
-        illumination_radius=40.0,
         illumination_intensity=0.85,
-        illumination_falloff=2.0,
-        illumination_inner_fraction=0.0,
+        illumination=ConeIllumination(40.0, 2.0, 0.0),
     )
     car_light = LightSource(
         position=np.array([10.0, 0.0, 0.5]),
@@ -244,10 +243,8 @@ def test_populate_lights_adds_all_lights_to_scene(
         brightness=0.8,
         size=0.15,
         glow_radius=8.0,
-        illumination_radius=15.0,
         illumination_intensity=0.6,
-        illumination_falloff=2.0,
-        illumination_inner_fraction=0.0,
+        illumination=ConeIllumination(15.0, 2.0, 0.0),
     )
     mock_streetlights.return_value = [street_light]
     mock_cars.return_value = ([car_light], [])

@@ -349,9 +349,47 @@ def test_load_config_heat_haze_layers_override(heat_haze_layers_override_toml: P
     # Assert — single user-defined layer replaces the multi-layer default list
     assert len(result.heat_haze.layers) == 1
     layer = result.heat_haze.layers[0]
-    assert layer.r0 == 0.2
+    # The legacy 'r0' key in the TOML is silently ignored — the field was
+    # removed (it was a mathematical no-op under screen renormalization).
+    assert not hasattr(layer, "r0")
     assert layer.L0 == 1.0
     assert layer.pixel_scale_m == 0.1
     assert layer.weight == 0.5
     assert layer.wind_x_pxs == 50.0
     assert layer.wind_y_pxs == 5.0
+
+
+# ---------------------------------------------------------------------------
+# Pre-migration streetlight profiles (missing color_temp_k / beam_angle_deg)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def pre_migration_streetlight_toml(tmp_path: Path) -> Path:
+    """TOML with a highway streetlight profile predating the Kelvin/beam-angle
+    migration — no color_temp_k or beam_angle_deg field."""
+    toml_file = tmp_path / "pre_migration.toml"
+    toml_file.write_text(
+        "[[lights.streetlights.highway]]\n"
+        "weight = 1.0\n"
+        "[lights.streetlights.highway.profile]\n"
+        "saturation = 1.0\n"
+        "height_min = 8.0\n"
+        "height_max = 10.0\n"
+        "brightness_min = 0.5\n"
+        "brightness_max = 0.8\n"
+        "glow_radius = 20.0\n"
+        "illumination_intensity = 1.0\n"
+        "spacing_min = 30.0\n"
+        "spacing_max = 40.0\n"
+        "side = \"both\"\n"
+    )
+    return toml_file
+
+
+def test_load_config_pre_migration_streetlight_profile_raises_value_error(
+    pre_migration_streetlight_toml: Path,
+):
+    # Act & Assert — a bare KeyError would give the user no idea what to do
+    with pytest.raises(ValueError, match="color_temp_k.*beam_angle_deg"):
+        load_config(pre_migration_streetlight_toml)

@@ -1,7 +1,6 @@
 # Radical
 """Tests for streets_at_night.models.streetlight module."""
 
-import math
 import random
 import typing as t
 
@@ -9,15 +8,16 @@ import numpy as np
 import pytest
 
 from streets_at_night.config.defaults import DEFAULTS
-from streets_at_night.config.loader import _build_streetlight_config
-from streets_at_night.config.schema import FixtureProfileConfig
+from streets_at_night.config.serde import dataclass_from_dict
+from streets_at_night.config.schema import FixtureProfileConfig, StreetLightConfig
+from streets_at_night.models.illumination import BeamIllumination
 from streets_at_night.models.light_source import LightSource
 from streets_at_night.models.road_types import RoadType
 from streets_at_night.models.streetlight import (
     FixturePool,
     FixtureProfile,
     StreetLight,
-    _config_to_fixture_profile,
+    config_to_fixture_profile,
     create_fixture_pool,
 )
 
@@ -36,7 +36,7 @@ def rng() -> random.Random:
 @pytest.fixture
 def streetlight_config():
     """Return a StreetLightConfig built from project defaults."""
-    return _build_streetlight_config(DEFAULTS["lights"]["streetlights"])
+    return dataclass_from_dict(StreetLightConfig, DEFAULTS["lights"]["streetlights"])
 
 
 @pytest.fixture
@@ -50,6 +50,29 @@ def sample_profile() -> FixtureProfile:
         beam_angle_deg=147.0,
         illumination_intensity=0.75,
         spacing=45.0,
+        side="both",
+    )
+
+
+@pytest.fixture
+def sample_profile_config() -> FixtureProfileConfig:
+    """Return a FixtureProfileConfig with fixed (min == max) ranges.
+
+    Mirrors sample_profile's values so a pick() from a pool built with
+    this config produces a profile equal to sample_profile.
+    """
+    return FixtureProfileConfig(
+        color_temp_k=2200.0,
+        saturation=1.0,
+        height_min=10.0,
+        height_max=10.0,
+        brightness_min=0.8,
+        brightness_max=0.8,
+        glow_radius=18.0,
+        beam_angle_deg=147.0,
+        illumination_intensity=0.75,
+        spacing_min=45.0,
+        spacing_max=45.0,
         side="both",
     )
 
@@ -82,20 +105,24 @@ def test_fixture_profile_stores_all_fields(sample_profile):
 # ---------------------------------------------------------------------------
 
 
-def test_fixture_pool_pick_returns_profile(sample_profile, rng):
+def test_fixture_pool_pick_returns_profile_matching_config(sample_profile_config, rng):
     # Arrange
-    pool = FixturePool([(sample_profile, 1.0)], rng)
+    pool = FixturePool([(sample_profile_config, 1.0)], rng, color_temp_shift_k=0.0)
 
     # Act
     result = pool.pick()
 
     # Assert
-    assert result is sample_profile
+    assert isinstance(result, FixtureProfile)
+    assert result.height == sample_profile_config.height_min
+    assert result.brightness == sample_profile_config.brightness_min
+    assert result.spacing == sample_profile_config.spacing_min
+    assert result.side == sample_profile_config.side
 
 
 def test_fixture_pool_pick_can_return_none(rng):
     # Arrange — 100% chance of None
-    pool = FixturePool([(None, 1.0)], rng)
+    pool = FixturePool([(None, 1.0)], rng, color_temp_shift_k=0.0)
 
     # Act
     result = pool.pick()
@@ -104,24 +131,30 @@ def test_fixture_pool_pick_can_return_none(rng):
     assert result is None
 
 
-def test_fixture_pool_pick_respects_weights(sample_profile):
-    # Arrange — profile weight=0, None weight=1 → always None
+def test_fixture_pool_pick_respects_weights(sample_profile_config):
+    # Arrange — config weight=0, None weight=1 → always None
     rng = random.Random(1)
-    pool = FixturePool([(sample_profile, 0.0), (None, 1.0)], rng)
+    pool = FixturePool(
+        [(sample_profile_config, 0.0), (None, 1.0)], rng, color_temp_shift_k=0.0
+    )
 
     # Act
     results = [pool.pick() for _ in range(20)]
 
-    # Assert — all None since weight is 0 for profile
+    # Assert — all None since weight is 0 for the config entry
     assert all(r is None for r in results)
 
 
-def test_fixture_pool_pick_is_reproducible(sample_profile):
+def test_fixture_pool_pick_is_reproducible(sample_profile_config):
     # Arrange
     rng_a = random.Random(7)
     rng_b = random.Random(7)
-    pool_a = FixturePool([(sample_profile, 0.7), (None, 0.3)], rng_a)
-    pool_b = FixturePool([(sample_profile, 0.7), (None, 0.3)], rng_b)
+    pool_a = FixturePool(
+        [(sample_profile_config, 0.7), (None, 0.3)], rng_a, color_temp_shift_k=0.0
+    )
+    pool_b = FixturePool(
+        [(sample_profile_config, 0.7), (None, 0.3)], rng_b, color_temp_shift_k=0.0
+    )
 
     # Act
     results_a = [pool_a.pick() for _ in range(10)]
@@ -129,6 +162,63 @@ def test_fixture_pool_pick_is_reproducible(sample_profile):
 
     # Assert
     assert results_a == results_b
+
+
+def test_fixture_pool_pick_samples_fresh_profile_per_call():
+    # Arrange — one entry with a wide height range, no other variation
+    rng = random.Random(3)
+    cfg = FixtureProfileConfig(
+        color_temp_k=2200.0,
+        saturation=1.0,
+        height_min=5.0,
+        height_max=15.0,
+        brightness_min=0.8,
+        brightness_max=0.8,
+        glow_radius=18.0,
+        beam_angle_deg=147.0,
+        illumination_intensity=0.75,
+        spacing_min=45.0,
+        spacing_max=45.0,
+        side="both",
+    )
+    pool = FixturePool([(cfg, 1.0)], rng, color_temp_shift_k=0.0)
+
+    # Act
+    picks = [pool.pick() for _ in range(20)]
+
+    # Assert — per-segment variety: not every pick collapses to the same height
+    heights = {p.height for p in picks}
+    assert len(heights) > 1
+    assert all(5.0 <= h <= 15.0 for h in heights)
+
+
+def test_fixture_pool_pick_sequence_matches_across_same_seed():
+    # Arrange — two pools built from independently seeded RNGs with the same seed
+    cfg = FixtureProfileConfig(
+        color_temp_k=2200.0,
+        saturation=1.0,
+        height_min=5.0,
+        height_max=15.0,
+        brightness_min=0.5,
+        brightness_max=1.0,
+        glow_radius=18.0,
+        beam_angle_deg=147.0,
+        illumination_intensity=0.75,
+        spacing_min=30.0,
+        spacing_max=60.0,
+        side="both",
+    )
+    pool_a = FixturePool([(cfg, 1.0)], random.Random(42), color_temp_shift_k=0.0)
+    pool_b = FixturePool([(cfg, 1.0)], random.Random(42), color_temp_shift_k=0.0)
+
+    # Act
+    picks_a = [pool_a.pick() for _ in range(10)]
+    picks_b = [pool_b.pick() for _ in range(10)]
+
+    # Assert — same seed produces identical sampled sequences
+    assert [p.height for p in picks_a] == [p.height for p in picks_b]
+    assert [p.brightness for p in picks_a] == [p.brightness for p in picks_b]
+    assert [p.spacing for p in picks_a] == [p.spacing for p in picks_b]
 
 
 # ---------------------------------------------------------------------------
@@ -186,31 +276,19 @@ def test_create_from_profile_stores_position(sample_profile, sample_position):
     np.testing.assert_array_equal(light.position, sample_position)
 
 
-def test_create_from_profile_passes_beam_angle(sample_profile, sample_position):
+def test_create_from_profile_uses_beam_illumination_model(sample_profile, sample_position):
     # Act
     light = StreetLight.create_from_profile(
         sample_profile, sample_position, RoadType.MAJOR_ROAD
     )
 
-    # Assert — beam angle flows through so the illumination pass uses the physical model
-    assert light.beam_angle_deg == sample_profile.beam_angle_deg
-
-
-def test_create_from_profile_derives_illumination_radius_from_height_and_beam(
-    sample_profile, sample_position
-):
-    # Act
-    light = StreetLight.create_from_profile(
-        sample_profile, sample_position, RoadType.MAJOR_ROAD
-    )
-
-    # Assert — radius = height * tan(beam / 2)
-    expected = sample_profile.height * math.tan(math.radians(sample_profile.beam_angle_deg / 2.0))
-    assert light.illumination_radius == pytest.approx(expected)
+    # Assert — a physical beam model carrying the profile's beam angle; the
+    # illumination pass derives the actual pool radius from pole height + angle.
+    assert light.illumination == BeamIllumination(sample_profile.beam_angle_deg)
 
 
 # ---------------------------------------------------------------------------
-# _config_to_fixture_profile — color temperature + master shift
+# config_to_fixture_profile — color temperature + master shift
 # ---------------------------------------------------------------------------
 
 
@@ -237,8 +315,8 @@ def test_config_to_fixture_profile_positive_shift_makes_color_cooler(rng):
     cfg = _make_profile_config(2700.0)
 
     # Act
-    base = _config_to_fixture_profile(cfg, rng, 0.0)
-    shifted = _config_to_fixture_profile(cfg, rng, 2000.0)
+    base = config_to_fixture_profile(cfg, rng, 0.0)
+    shifted = config_to_fixture_profile(cfg, rng, 2000.0)
 
     # Assert — a higher color temperature carries more blue
     assert shifted.fixture_color[2] > base.fixture_color[2]

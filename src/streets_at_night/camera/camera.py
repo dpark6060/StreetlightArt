@@ -1,4 +1,4 @@
-"""3D pinhole camera with perspective projection matrices and frustum planes.
+"""3D pinhole camera with perspective projection matrices.
 
 The camera uses a standard look-at model:
     - Forward: normalize(target - position)
@@ -22,7 +22,7 @@ class Camera:
     """3D pinhole camera with perspective projection.
 
     All positions are in local ENU meters. Provides view matrix, projection
-    matrix, frustum planes, and mutation helpers for interactive preview.
+    matrix, and mutation helpers for interactive preview.
 
     Attributes:
         position: (3,) camera position in ENU meters.
@@ -119,20 +119,6 @@ class Camera:
         fy = f * self.aspect_ratio
         return _build_projection_matrix(f, fy, self.near, self.far)
 
-    def get_frustum_planes(self) -> np.ndarray:
-        """Compute the 6 frustum plane equations in world space.
-
-        Each plane is represented as (nx, ny, nz, d) where the plane equation
-        is: dot(normal, point) + d >= 0 means the point is inside the frustum.
-
-        Plane order: near, far, left, right, bottom, top.
-
-        Returns:
-            np.ndarray: (6, 4) array of plane equations [nx, ny, nz, d].
-        """
-        view_proj = self.get_projection_matrix() @ self.get_view_matrix()
-        return _extract_frustum_planes(view_proj)
-
     # ------------------------------------------------------------------
     # Mutation helpers for interactive preview
     # ------------------------------------------------------------------
@@ -205,83 +191,6 @@ def create_camera(
         near=near,
         far=far,
     )
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatible free-function wrappers
-# ---------------------------------------------------------------------------
-
-
-def get_forward(camera: Camera) -> np.ndarray:
-    """Compute the normalized forward vector of the camera.
-
-    Args:
-        camera (Camera): The camera.
-
-    Returns:
-        np.ndarray: (3,) normalized forward direction.
-    """
-    return camera.get_forward()
-
-
-def get_right(camera: Camera) -> np.ndarray:
-    """Compute the normalized right vector of the camera.
-
-    Args:
-        camera (Camera): The camera.
-
-    Returns:
-        np.ndarray: (3,) normalized right direction.
-    """
-    return camera.get_right()
-
-
-def get_up(camera: Camera) -> np.ndarray:
-    """Compute the camera-local up vector (not world up).
-
-    Args:
-        camera (Camera): The camera.
-
-    Returns:
-        np.ndarray: (3,) normalized camera-up direction.
-    """
-    return camera.get_up()
-
-
-def get_view_matrix(camera: Camera) -> np.ndarray:
-    """Compute the 4×4 view matrix (world space to camera space).
-
-    Args:
-        camera (Camera): The camera.
-
-    Returns:
-        np.ndarray: (4, 4) view matrix.
-    """
-    return camera.get_view_matrix()
-
-
-def get_projection_matrix(camera: Camera) -> np.ndarray:
-    """Compute the 4×4 perspective projection matrix.
-
-    Args:
-        camera (Camera): The camera.
-
-    Returns:
-        np.ndarray: (4, 4) projection matrix.
-    """
-    return camera.get_projection_matrix()
-
-
-def get_frustum_planes(camera: Camera) -> np.ndarray:
-    """Compute the 6 frustum plane equations in world space.
-
-    Args:
-        camera (Camera): The camera.
-
-    Returns:
-        np.ndarray: (6, 4) array of plane equations [nx, ny, nz, d].
-    """
-    return camera.get_frustum_planes()
 
 
 # ---------------------------------------------------------------------------
@@ -396,28 +305,3 @@ def _build_projection_matrix(f: float, fy: float, near: float, far: float) -> np
     proj[2, 3] = -(2.0 * far * near) / (far - near)
     proj[3, 2] = -1.0
     return proj
-
-
-def _extract_frustum_planes(view_proj: np.ndarray) -> np.ndarray:
-    """Extract the 6 frustum planes from a combined view-projection matrix.
-
-    Uses the Gribb-Hartmann method to extract planes from the combined
-    view-projection matrix. Each plane is normalized.
-
-    Args:
-        view_proj (np.ndarray): (4, 4) combined view-projection matrix.
-
-    Returns:
-        np.ndarray: (6, 4) array of normalized plane equations [nx, ny, nz, d].
-    """
-    m = view_proj
-    planes = np.array([
-        m[3] + m[2],   # near
-        m[3] - m[2],   # far
-        m[3] + m[0],   # left
-        m[3] - m[0],   # right
-        m[3] + m[1],   # bottom
-        m[3] - m[1],   # top
-    ])
-    norms = np.linalg.norm(planes[:, :3], axis=1, keepdims=True)
-    return planes / norms

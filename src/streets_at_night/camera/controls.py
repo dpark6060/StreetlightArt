@@ -74,8 +74,8 @@ def handle_input(
 ) -> InputResult:
     """Process pygame events and held keys, applying camera mutations.
 
-    Handles quit, discrete key presses (R, P, ESC, +/-), scroll-wheel
-    altitude, held movement keys (W/S/A/D/Q/E/arrows), and right-mouse-drag
+    Handles quit, discrete key presses (R, P, ESC), scroll-wheel altitude,
+    held movement keys (W/S/A/D/Q/E/arrows/+/-), and right-mouse-drag
     rotation. Drag state is carried in the provided MouseDragState instance
     so callers can manage lifetime and reset it independently.
 
@@ -96,7 +96,7 @@ def handle_input(
 
     speed_mult = SPRINT_MULTIPLIER if held_keys[pygame.K_LSHIFT] else 1.0
     _process_discrete_events(events, camera, result, drag_state, speed_mult)
-    _process_held_keys(held_keys, camera, dt)
+    _process_held_keys(held_keys, camera, dt, speed_mult)
 
     return result
 
@@ -182,10 +182,6 @@ def _handle_keydown(
         result.screenshot = True
     elif key == pygame.K_c:
         result.save_camera = True
-    elif key in (pygame.K_PLUS, pygame.K_EQUALS, pygame.K_KP_PLUS):
-        camera.fov_deg = min(FOV_MAX, camera.fov_deg + FOV_SPEED)
-    elif key in (pygame.K_MINUS, pygame.K_KP_MINUS):
-        camera.fov_deg = max(FOV_MIN, camera.fov_deg - FOV_SPEED)
 
 
 def _handle_scroll(scroll_y: int, camera: Camera, speed_mult: float = 1.0) -> None:
@@ -206,17 +202,20 @@ def _process_held_keys(
     held_keys: t.Any,
     camera: Camera,
     dt: float,
+    speed_mult: float = 1.0,
 ) -> None:
-    """Apply movement and rotation from held keys.
+    """Apply movement, rotation, and FOV zoom from held keys.
 
     Args:
         held_keys: pygame.key.get_pressed() result.
         camera (Camera): Camera to mutate.
         dt (float): Delta time in seconds.
+        speed_mult (float): Speed multiplier (e.g. sprint), computed once by
+            the caller so it is not recomputed per key group.
     """
-    speed_mult = SPRINT_MULTIPLIER if held_keys[pygame.K_LSHIFT] else 1.0
     _apply_translation(held_keys, camera, dt, speed_mult)
     _apply_rotation(held_keys, camera, dt, speed_mult)
+    _apply_fov(held_keys, camera, dt, speed_mult)
 
 
 def _apply_translation(
@@ -288,6 +287,33 @@ def _apply_rotation(
 
     if yaw != 0.0 or pitch != 0.0:
         _rotate_clamped(camera, yaw, pitch)
+
+
+def _apply_fov(
+    held_keys: t.Any,
+    camera: Camera,
+    dt: float,
+    speed_mult: float = 1.0,
+) -> None:
+    """Apply +/- key FOV zoom, scaled by dt like every other held movement key.
+
+    Clamps the result to [FOV_MIN, FOV_MAX].
+
+    Args:
+        held_keys: pygame.key.get_pressed() result.
+        camera (Camera): Camera to mutate.
+        dt (float): Delta time in seconds.
+        speed_mult (float): Speed multiplier (e.g. sprint).
+    """
+    fov_delta = 0.0
+    if held_keys[pygame.K_PLUS] or held_keys[pygame.K_EQUALS] or held_keys[pygame.K_KP_PLUS]:
+        fov_delta += FOV_SPEED * dt * speed_mult
+    if held_keys[pygame.K_MINUS] or held_keys[pygame.K_KP_MINUS]:
+        fov_delta -= FOV_SPEED * dt * speed_mult
+
+    if fov_delta == 0.0:
+        return
+    camera.fov_deg = float(np.clip(camera.fov_deg + fov_delta, FOV_MIN, FOV_MAX))
 
 
 def _rotate_clamped(camera: Camera, yaw_deg: float, pitch_deg: float) -> None:

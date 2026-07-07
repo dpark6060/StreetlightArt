@@ -2,6 +2,7 @@
 
 import typing as t
 
+import numpy as np
 import pygame
 from PIL import Image
 
@@ -12,8 +13,8 @@ class PygameBackend(RenderBackend):
     """Pygame-based render backend for interactive preview.
 
     Draws directly onto a pygame Surface using pygame.draw primitives.
-    Coordinates are clamped to surface bounds to prevent crashes from
-    out-of-range values during projection.
+    Out-of-bounds coordinates are clipped or skipped so that off-screen
+    projected values do not crash pygame or distort on-screen geometry.
     """
 
     def __init__(self, surface: pygame.Surface) -> None:
@@ -47,10 +48,12 @@ class PygameBackend(RenderBackend):
         color: t.Tuple[int, int, int],
         width: int = 1,
     ) -> None:
-        """Draw a line segment with integer-clamped coordinates.
+        """Draw a line segment, clipped to the surface bounds.
 
-        Coordinates are clamped to the surface bounds so pygame does not
-        crash on out-of-range projected values.
+        The segment is clipped to the surface rect before drawing so
+        off-screen endpoints do not distort the on-screen slope and pygame
+        does not crash on out-of-range projected values. Segments fully
+        outside the surface are skipped.
 
         Args:
             p1 (tuple[float, float]): Start point (x, y) in screen pixels.
@@ -59,8 +62,12 @@ class PygameBackend(RenderBackend):
             width (int): Line width in pixels.
         """
         w, h = self._surface.get_size()
-        ip1 = _clamp_point(p1, w, h)
-        ip2 = _clamp_point(p2, w, h)
+        clipped = pygame.Rect(0, 0, w, h).clipline(
+            (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1]))
+        )
+        if not clipped:
+            return
+        ip1, ip2 = clipped
         pygame.draw.line(self._surface, color, ip1, ip2, max(1, int(width)))
 
     def draw_polygon(
@@ -104,11 +111,18 @@ class PygameBackend(RenderBackend):
     ) -> None:
         """Draw a single pixel using surface.set_at.
 
+        Out-of-bounds coordinates are silently skipped since
+        Surface.set_at raises IndexError outside the surface.
+
         Args:
             center (tuple[float, float]): Screen coordinate (x, y).
             color (tuple[int, int, int]): RGB fill color.
         """
-        self._surface.set_at((int(center[0]), int(center[1])), color)
+        w, h = self._surface.get_size()
+        x, y = int(center[0]), int(center[1])
+        if not (0 <= x < w and 0 <= y < h):
+            return
+        self._surface.set_at((x, y), color)
 
     def get_image(self) -> Image.Image:
         """Convert the pygame surface to a PIL Image.
@@ -117,41 +131,36 @@ class PygameBackend(RenderBackend):
             PIL.Image.Image: Current surface state as an RGB PIL image.
         """
         w, h = self._surface.get_size()
-        raw = pygame.image.tostring(self._surface, "RGB")
+        raw = pygame.image.tobytes(self._surface, "RGB")
         return Image.frombytes("RGB", (w, h), raw)
 
     def blit_pil_image(self, img: Image.Image) -> None:
         """Blit a PIL Image onto the pygame surface at (0, 0).
 
         Converts the PIL image to a pygame Surface and blits it at the origin.
-        The image mode must be RGB or compatible with pygame.image.fromstring.
+        The image mode must be RGB or compatible with pygame.image.frombuffer.
 
         Args:
             img (PIL.Image.Image): Image to blit. Should match surface size.
         """
-        surf = pygame.image.fromstring(img.tobytes(), img.size, img.mode)
+        surf = pygame.image.frombytes(img.tobytes(), img.size, img.mode)
+        self._surface.blit(surf, (0, 0))
+
+    def blit_array(self, frame: np.ndarray) -> None:
+        """Blit an (H, W, 3) uint8 RGB numpy array onto the surface at (0, 0).
+
+        One copy (``frame.tobytes()``) versus the two involved in going
+        through ``blit_pil_image`` (PIL Image wrap + ``pygame.image.frombytes``
+        re-encode). Preferred over ``blit_pil_image`` for callers that already
+        hold a raw numpy frame, e.g. the preview and animate loops.
+
+        Args:
+            frame (np.ndarray): (H, W, 3) uint8 RGB array matching the surface size.
+        """
+        h, w, _ = frame.shape
+        surf = pygame.image.frombuffer(frame.tobytes(), (w, h), "RGB")
         self._surface.blit(surf, (0, 0))
 
     def present(self) -> None:
         """Flip the pygame display to show the rendered frame."""
         pygame.display.flip()
-
-
-def _clamp_point(
-    p: t.Tuple[float, float],
-    width: int,
-    height: int,
-) -> t.Tuple[int, int]:
-    """Clamp a float screen coordinate to integer surface bounds.
-
-    Args:
-        p (tuple[float, float]): Screen coordinate (x, y).
-        width (int): Surface width.
-        height (int): Surface height.
-
-    Returns:
-        tuple[int, int]: Clamped integer coordinate.
-    """
-    x = max(-width, min(width * 2, int(p[0])))
-    y = max(-height, min(height * 2, int(p[1])))
-    return x, y

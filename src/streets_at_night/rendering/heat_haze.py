@@ -36,7 +36,7 @@ import torch.nn.functional as F
 
 from ..camera.camera import Camera
 from ..config.schema import HeatHazeConfig, HeatHazeLayerConfig
-from .warp_preview import _build_ray_directions
+from .raycast import GroundHit, build_ground_gbuffer
 
 
 # ---------------------------------------------------------------------------
@@ -48,22 +48,27 @@ def kolmogorov_screen_fft(
     height: int,
     width: int,
     pixel_scale_m: float,
-    r0: float,
     L0: float,
     seed: int,
 ) -> np.ndarray:
     """Generate a Kolmogorov-spectrum phase screen via FFT-filtered noise.
 
     Implements the Von Karman PSD (Kolmogorov with finite outer scale):
-        Phi_phi(k) = 0.023 * r0^(-5/3) * (k^2 + 1/L0^2)^(-11/6)
+        Phi_phi(k) = (k^2 + 1/L0^2)^(-11/6)
     Filters complex white noise in Fourier space by sqrt(Phi_phi(k)) and
     inverse-FFTs to a real-valued phase screen.
+
+    The classic Von Karman PSD carries a leading ``0.023 * r0^(-5/3)`` factor
+    (r0 = Fried parameter), but the caller renormalizes each screen to a target
+    std, so any uniform PSD scale — including that whole factor — cancels
+    exactly. Only the PSD *shape* (set by ``L0`` relative to ``pixel_scale_m``)
+    survives, so r0 is not a parameter here. Per-layer amplitude is set by the
+    layer ``weight`` at renormalization time.
 
     Args:
         height (int): Screen height in pixels.
         width (int): Screen width in pixels.
         pixel_scale_m (float): Meters per pixel in the atmospheric phase plane.
-        r0 (float): Fried parameter (m). Smaller -> more distortion.
         L0 (float): Outer scale (m). The largest eddy size; eddy size in the
             output image is approximately L0 / pixel_scale_m pixels.
         seed (int): RNG seed for reproducibility.
@@ -75,7 +80,7 @@ def kolmogorov_screen_fft(
     fy = np.fft.fftfreq(height, d=pixel_scale_m)[:, None]
     fx = np.fft.fftfreq(width, d=pixel_scale_m)[None, :]
     k2 = (2 * np.pi * fx) ** 2 + (2 * np.pi * fy) ** 2
-    psd = 0.023 * (r0 ** (-5.0 / 3.0)) * (k2 + (1.0 / L0) ** 2) ** (-11.0 / 6.0)
+    psd = (k2 + (1.0 / L0) ** 2) ** (-11.0 / 6.0)
     psd[0, 0] = 0.0
     noise = rng.standard_normal((height, width)) + 1j * rng.standard_normal((height, width))
     field_F = noise * np.sqrt(psd) * np.sqrt(height * width) * pixel_scale_m
@@ -93,11 +98,12 @@ def compute_depth_map(
     height: int,
     max_distance_m: float,
     sky_distance_factor: float,
+    gbuffer: t.Optional[GroundHit] = None,
 ) -> np.ndarray:
     """Compute per-pixel atmospheric path length in meters.
 
     For every screen pixel, casts a ray through the camera and intersects with
-    the z=0 ground plane. The parametric distance ``t_val`` along the ray is
+    the z=0 ground plane. The ray parameter distance to that intersection is
     the atmospheric path length to the ground. Ground-hit pixels are capped
     at ``max_distance_m``; sky pixels (no ground intersection) are set to
     ``sky_distance_factor * max_distance_m`` so they shimmer less than the
@@ -113,23 +119,20 @@ def compute_depth_map(
         sky_distance_factor (float): Fraction of ``max_distance_m`` used as
             the effective distance for sky pixels. Range [0, 1]; 0 disables
             sky shimmer, 1 makes sky shimmer at the full max distance.
+        gbuffer (GroundHit | None): Pre-computed ground raycast for this
+            camera and size. When omitted, built internally. Callers that
+            also render a frame for the same camera position (e.g. the
+            preview loop) should build it once and pass it to both.
 
     Returns:
         np.ndarray: (H, W) float32 depth array in meters, already clamped.
     """
-    cam_pos = camera.position
-    inv_proj = np.linalg.inv(camera.get_projection_matrix())
-    inv_view = np.linalg.inv(camera.get_view_matrix())
-    rays = _build_ray_directions(width, height, inv_proj, inv_view)
-
-    dz = rays[:, :, 2]
-    hits = np.abs(dz) > 1e-10
-    t_val = np.where(hits, -cam_pos[2] / np.where(hits, dz, 1.0), -1.0)
-    hits = hits & (t_val > 0.0)
+    if gbuffer is None:
+        gbuffer = build_ground_gbuffer(camera, width, height)
 
     sky_distance = float(sky_distance_factor) * float(max_distance_m)
-    ground_clamped = np.minimum(t_val, max_distance_m)
-    depth = np.where(hits, ground_clamped, sky_distance).astype(np.float32)
+    ground_clamped = np.minimum(gbuffer.hit_t, max_distance_m)
+    depth = np.where(gbuffer.ground_mask, ground_clamped, sky_distance).astype(np.float32)
     return depth
 
 
@@ -256,9 +259,30 @@ class HazeField:
             np.ndarray: (H_screen, W_screen) float32 weighted phase screen.
         """
         scr = kolmogorov_screen_fft(
-            self._h_screen, self._w_screen, lc.pixel_scale_m, lc.r0, lc.L0, seed,
+            self._h_screen, self._w_screen, lc.pixel_scale_m, lc.L0, seed,
         )
         return (scr / (scr.std() + 1e-9) * lc.weight).astype(np.float32)
+
+    def loop_period_s(self) -> float:
+        """Compute the cyclic loop period, in seconds, from the built screens.
+
+        Each layer's window wraps around the phase screen, so its period along
+        an axis is ``screen_dim / |wind|``. The slowest layer/axis sets the
+        loop length. Uses the *clamped* screen dimensions actually built (after
+        the ``max(screen, out)`` guard), so the value reflects what the warp
+        really does — this is what makes ``--seamless`` land on the boundary.
+
+        Returns:
+            float: The slowest layer/axis period in seconds, or 0.0 if there
+            are no layers with motion.
+        """
+        longest = 0.0
+        for lay in self._layers:
+            if abs(lay["wind_y"]) > 1e-9:
+                longest = max(longest, self._h_screen / abs(lay["wind_y"]))
+            if abs(lay["wind_x"]) > 1e-9:
+                longest = max(longest, self._w_screen / abs(lay["wind_x"]))
+        return longest
 
     def sample(self, t: float) -> t.Tuple[np.ndarray, np.ndarray]:
         """Compute the (dx, dy) displacement field at time t (seconds).
@@ -277,29 +301,36 @@ class HazeField:
         dx_total = np.zeros((self._h_out, self._w_out), dtype=np.float32)
         dy_total = np.zeros((self._h_out, self._w_out), dtype=np.float32)
         for lay in self._layers:
-            dx_total += self._slide(lay["dx"], lay["wind_x"] * t, lay["wind_y"] * t)
-            dy_total += self._slide(lay["dy"], lay["wind_x"] * t, lay["wind_y"] * t)
+            # dx and dy screens share a shape and are advected by the same
+            # (wind_x * t, wind_y * t) offset this frame, so the cyclic
+            # row/col indices and bilinear fractions are identical for both —
+            # compute them once and reuse for both slides.
+            h_scr, w_scr = lay["dx"].shape
+            indices = self._slide_indices(lay["wind_x"] * t, lay["wind_y"] * t, h_scr, w_scr)
+            dx_total += self._slide(lay["dx"], indices)
+            dy_total += self._slide(lay["dy"], indices)
         dx_total *= self.amplitude_px
         dy_total *= self.amplitude_px
         return dx_total, dy_total
 
-    def _slide(self, screen: np.ndarray, x_off: float, y_off: float) -> np.ndarray:
-        """Sample a window from ``screen`` at sub-pixel ``(x_off, y_off)``.
+    def _slide_indices(
+        self, x_off: float, y_off: float, h_scr: int, w_scr: int,
+    ) -> t.Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]:
+        """Compute cyclic row/col indices and bilinear fractions for ``_slide``.
 
-        Both offsets wrap around the screen bounds (cyclic boundary). The
-        returned window is bilinearly interpolated between adjacent rows and
-        columns.
+        Both offsets wrap around the screen bounds (cyclic boundary).
 
         Args:
-            screen (np.ndarray): (H_screen, W_screen) source phase screen.
-            x_off (float): Horizontal offset in pixels (cyclic on W_screen).
-            y_off (float): Vertical offset in pixels (cyclic on H_screen).
+            x_off (float): Horizontal offset in pixels (cyclic on w_scr).
+            y_off (float): Vertical offset in pixels (cyclic on h_scr).
+            h_scr (int): Source screen height.
+            w_scr (int): Source screen width.
 
         Returns:
-            np.ndarray: (H_out, W_out) bilinearly-sampled window.
+            tuple: ``(rows, rows_p1, cols, cols_p1, fx, fy)`` — row/col index
+                arrays into the source screen and the bilinear sub-pixel
+                fractions along each axis.
         """
-        h_scr, w_scr = screen.shape
-
         x_off = x_off % w_scr
         i0 = int(np.floor(x_off))
         fx = x_off - i0
@@ -312,10 +343,35 @@ class HazeField:
         rows = (np.arange(self._h_out) + j0) % h_scr
         rows_p1 = (rows + 1) % h_scr
 
-        a = screen[rows][:, cols]
-        b = screen[rows][:, cols_p1]
-        c = screen[rows_p1][:, cols]
-        d = screen[rows_p1][:, cols_p1]
+        return rows, rows_p1, cols, cols_p1, fx, fy
+
+    def _slide(
+        self,
+        screen: np.ndarray,
+        indices: t.Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float],
+    ) -> np.ndarray:
+        """Sample a window from ``screen`` at precomputed cyclic indices.
+
+        Gathers each of the two needed rows once, then takes both column
+        gathers from that row rather than re-gathering the full row per
+        corner (the naive ``screen[rows][:, cols]`` form materializes an
+        intermediate 4x per slide call).
+
+        Args:
+            screen (np.ndarray): (H_screen, W_screen) source phase screen.
+            indices: ``(rows, rows_p1, cols, cols_p1, fx, fy)`` as returned by
+                ``_slide_indices``.
+
+        Returns:
+            np.ndarray: (H_out, W_out) bilinearly-sampled window.
+        """
+        rows, rows_p1, cols, cols_p1, fx, fy = indices
+        s0 = screen[rows]
+        s1 = screen[rows_p1]
+        a = s0[:, cols]
+        b = s0[:, cols_p1]
+        c = s1[:, cols]
+        d = s1[:, cols_p1]
         return (
             (1 - fx) * (1 - fy) * a
             + fx * (1 - fy) * b
@@ -483,7 +539,6 @@ class HeatHaze:
         res_scale = self._width / _REFERENCE_WIDTH_PX
         scaled_layers = [
             HeatHazeLayerConfig(
-                r0=lc.r0,
                 L0=lc.L0,
                 pixel_scale_m=lc.pixel_scale_m / res_scale,
                 weight=lc.weight,
@@ -492,17 +547,35 @@ class HeatHaze:
             )
             for lc in config.layers
         ]
+        # Scale the phase-screen dimensions by the same res_scale as the winds.
+        # If only the winds scaled (as they historically did), the cyclic loop
+        # period screen/(wind*res_scale) would drift with resolution and break
+        # --seamless recordings at any width != 1920. Scaling both keeps the
+        # period resolution-invariant (see loop_period_s).
         self._field = HazeField(
             out_height=self._height,
             out_width=self._width,
-            screen_height=int(config.screen_height_px),
-            screen_width=int(config.screen_width_px),
+            screen_height=int(config.screen_height_px * res_scale),
+            screen_width=int(config.screen_width_px * res_scale),
             amplitude_px=config.amplitude_px * res_scale,
             layers=scaled_layers,
             seed=int(config.seed),
         )
         self._warper = TorchWarper(device=device or select_torch_device())
         self._distance_scale: t.Optional[np.ndarray] = None
+
+    def loop_period_s(self) -> float:
+        """Return the animation's cyclic loop period in seconds.
+
+        Computed from the effective (post-resolution-scale, post-clamp) phase
+        screens and winds, so the value is resolution-invariant: recording
+        exactly ``loop_period_s() * fps`` frames yields a seamless loop at any
+        output width.
+
+        Returns:
+            float: Loop period in seconds (0.0 if no layer has motion).
+        """
+        return self._field.loop_period_s()
 
     def set_base_frame(self, frame: np.ndarray) -> None:
         """Upload a new base frame to the GPU.

@@ -8,8 +8,8 @@ import pytest
 from PIL import Image
 
 from streets_at_night.config.defaults import DEFAULTS
-from streets_at_night.config.loader import _build_atmosphere_config, _build_stars_config
 from streets_at_night.config.schema import AtmosphereConfig, GradeConfig, StarsConfig
+from streets_at_night.config.serde import dataclass_from_dict
 from streets_at_night.rendering.backend import RenderBackend
 from streets_at_night.rendering.compositor import (
     _add_stars,
@@ -28,13 +28,13 @@ from streets_at_night.rendering.compositor import (
 @pytest.fixture
 def default_atmosphere() -> AtmosphereConfig:
     """Return a default AtmosphereConfig built from DEFAULTS."""
-    return _build_atmosphere_config(DEFAULTS["atmosphere"])
+    return dataclass_from_dict(AtmosphereConfig, DEFAULTS["atmosphere"])
 
 
 @pytest.fixture
 def default_stars() -> StarsConfig:
     """Return a default StarsConfig with stars disabled."""
-    return _build_stars_config(DEFAULTS["stars"])
+    return dataclass_from_dict(StarsConfig, DEFAULTS["stars"])
 
 
 @pytest.fixture

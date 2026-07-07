@@ -1,6 +1,7 @@
 """Creates and lays out the full devmode control panel."""
 
 import typing as t
+from dataclasses import dataclass
 
 import pygame
 import pygame_gui
@@ -50,18 +51,32 @@ _SELECTION_HEIGHT = 120
 _BUTTON_AREA_HEIGHT = 80
 
 
+@dataclass
+class ControlPanel:
+    """Widgets making up the full devmode control panel.
+
+    Attributes:
+        registry: Registry for the initially-displayed section.
+        scroll: The scroll area for sliders.
+        rerender_btn: The "Re-render" button.
+        save_btn: The "Save Config" button.
+        load_btn: The "Load Config" button.
+        section_list: The section navigation list.
+    """
+
+    registry: SliderRegistry
+    scroll: pygame_gui.elements.UIScrollingContainer
+    rerender_btn: pygame_gui.elements.UIButton
+    save_btn: pygame_gui.elements.UIButton
+    load_btn: pygame_gui.elements.UIButton
+    section_list: pygame_gui.elements.UISelectionList
+
+
 def build_control_panel(
     manager: pygame_gui.UIManager,
     panel_rect: pygame.Rect,
     config: SceneConfig,
-) -> t.Tuple[
-    SliderRegistry,
-    pygame_gui.elements.UIScrollingContainer,
-    pygame_gui.elements.UIButton,
-    pygame_gui.elements.UIButton,
-    pygame_gui.elements.UIButton,
-    pygame_gui.elements.UISelectionList,
-]:
+) -> ControlPanel:
     """Create and lay out the full devmode control panel.
 
     Layout (top to bottom within panel_rect):
@@ -75,13 +90,7 @@ def build_control_panel(
         config (SceneConfig): Current scene configuration.
 
     Returns:
-        tuple containing:
-            - SliderRegistry: Registry for the initially-displayed section.
-            - UIScrollingContainer: The scroll area for sliders.
-            - UIButton: The "Re-render" button.
-            - UIButton: The "Save Config" button.
-            - UIButton: The "Load Config" button.
-            - UISelectionList: The section navigation list.
+        ControlPanel: The registry and widgets making up the panel.
     """
     section_list = _build_section_list(manager, panel_rect)
     scroll = _build_scroll_container(manager, panel_rect)
@@ -90,7 +99,14 @@ def build_control_panel(
     registry = SliderRegistry()
     _build_section_widgets(manager, scroll, registry, config, _SECTION_NAMES[0])
 
-    return registry, scroll, rerender_btn, save_btn, load_btn, section_list
+    return ControlPanel(
+        registry=registry,
+        scroll=scroll,
+        rerender_btn=rerender_btn,
+        save_btn=save_btn,
+        load_btn=load_btn,
+        section_list=section_list,
+    )
 
 
 def rebuild_section(
@@ -284,7 +300,7 @@ def _kill_registry_widgets(registry: SliderRegistry) -> None:
 
 
 def _clear_registry(registry: SliderRegistry) -> None:
-    """Empty all mapping dicts on the registry.
+    """Empty all mapping dicts, and the dirty set, on the registry.
 
     Args:
         registry (SliderRegistry): Registry to clear.
@@ -295,3 +311,4 @@ def _clear_registry(registry: SliderRegistry) -> None:
     registry.bool_buttons.clear()
     registry.text_entries.clear()
     registry.extra_widgets.clear()
+    registry.dirty.clear()

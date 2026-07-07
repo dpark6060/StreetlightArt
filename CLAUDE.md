@@ -2,13 +2,15 @@
 
 ## Product
 
-Renders an aerial night view of San Bernardino, CA using OpenStreetMap road data, a 3D perspective camera, and a flat-map warp preview. Personal art project targeting large-format print.
+Renders an aerial night view of San Bernardino, CA using OpenStreetMap road data, a 3D perspective camera, a linear-HDR light/atmosphere pipeline, and a flat-map warp preview. Personal art project targeting large-format print.
 
 **What it does:**
 
 1. **`verify`** — Downloads road, land use, and building data from OSM via `osmnx` for a bounding box (default: San Bernardino area, `scene_config.toml [bounds]`). Caches raw data as `.gpkg` files in `cache/`. Classifies roads by OSM `highway` tag into 6 `RoadType` categories. Saves a matplotlib verification plot to `output/verify.png`.
-2. **`preview`** — Builds a `Scene` (roads converted to ENU meters via UTM Zone 11N, spatial index built at 500m cell size). Generates a flat top-down road map (`PIL.Image`, cached as `cache/flat_map_*.png`). Runs a pygame event loop at 1280x720 where each frame raycasts every screen pixel through the camera to the z=0 ground plane and samples the flat map. WASD/QE/arrows/mouse-drag for camera control. P for screenshot, R for reset, ESC to quit.
-3. **`render`** — Builds the same Scene, but renders via `PillowBackend` at a configurable quality preset (low=1920x1080, medium=3840x2160, high=7680x4320). Uses per-segment 3D projection with frustum culling and near-plane clipping. Saves PNG to `output/render.png`.
+2. **`preview`** — Builds a fully populated `Scene` (roads, zones, streetlights, cars, commercial and house lights; ENU meters via UTM Zone 11N; spatial index at 500m cell size). Generates a flat top-down road map (`PIL.Image`, cached as `cache/flat_map_*.png`). Runs a pygame event loop at 1280x720 where each frame raycasts every screen pixel through the camera to the z=0 ground plane and samples the flat map, then optionally applies heat-haze distortion. WASD/QE/arrows/mouse-drag for camera control. P for screenshot, R for reset, C to save the current camera position back to the TOML config, ESC to quit. `--no-lights` skips light rendering for a faster preview.
+3. **`render`** — Builds the same fully populated Scene, but renders via `PillowBackend` at a configurable quality preset (low=1920x1080, medium=3840x2160, high=7680x4320, overridable with `--width`/`--height`). Runs the full linear-HDR pass pipeline (ground, roads, illumination, lights, atmosphere, compositor) with progress reporting per pass. Saves PNG or TIFF to `output/render.png` (`--format`, `--no-lights` to skip illumination/light passes).
+4. **`animate`** — Animates Kolmogorov heat-haze distortion over a previously rendered still image (`output/render.png` by default). Two modes: an interactive pygame window (default, press P to save a frame, ESC to quit), or `--record FILE` which renders frames offline through `imageio`/ffmpeg to an MP4 at a chosen quality/resolution, optionally with `--seamless` looping via a crossfade tail. Requires `[heat_haze] enabled = true` in the config; the depth map used for haze distortion is rebuilt from the config camera at the target resolution.
+5. **`devmode`** — Interactive pygame + pygame-gui tool for authoring config values. Renders either a synthetic 10-row test scene (default) or a real clipped strip of OSM roads (`--real-tiles`) next to a slider panel covering config categories (atmosphere, lights, zones, roads, etc.). Sliders write live into an in-memory `SceneConfig`; a Rerender button re-runs the export pipeline; Save/Load buttons read and write TOML files via `config_writer`/`config_bridge`.
 
 **Key constraints:**
 
@@ -17,94 +19,143 @@ Renders an aerial night view of San Bernardino, CA using OpenStreetMap road data
 - UTM zone is hardcoded to 11N (EPSG:32611) — only correct for Southern California
 - Road classification drops footways, cycleways, paths, pedestrian, tracks, steps, bridleway
 - Flat map capped at 8000px in either dimension; resolution auto-scales coarser if exceeded
-- Stages 4-7 (zones, lights, atmosphere, Blender export) are planned but not yet implemented; `zone_builder.py` and `RoadSegment.fixture_profile` are stubs
+- Zones, streetlights, cars, commercial and house lights, atmosphere, and heat haze are all implemented (not stubs); `zone_builder.py` builds residential/commercial/dark zones from OSM land use + building footprints, `RoadSegment.fixture_profile` drives per-segment streetlight sampling
+- Export lighting is a linear-HDR pipeline: light contributions accumulate unclamped in a float32 linear buffer (`PillowBackend._light`), and a single compositor pass at the end applies exposure, ACES tone mapping, and sRGB encoding — intermediate passes never clamp
+- Atmosphere includes airlight/extinction: the same `falloff_distance` extinction coefficient that dims lights with range also drives a depth-based airlight veil in `atmosphere_pass.py`
+- Streetlight ground pools can be "physical" (derived from pole height + `beam_angle_deg`, when both are set) or a legacy authored two-zone cone (inner flat zone + falloff curve), selected per-fixture in `illumination_pass.py`
+- Heat haze (`rendering/heat_haze.py`) is MPS-accelerated via `torch.nn.functional.grid_sample`; it falls back to whatever `torch` device is available if MPS isn't present (see `select_torch_device`)
+- Devmode config edits only persist when explicitly saved via its Save button; the CLI's other commands always read `scene_config.toml` (or `--config`) directly
 
 ## Structure
 
 ```
-scene_config.toml          # Camera, bounds, quality presets
+scene_config.toml          # Camera, bounds, quality presets, lights, zones, atmosphere, heat_haze, devmode
 pyproject.toml             # uv/hatchling build config
-cache/                     # OSM .gpkg caches + flat map PNG/JSON cache
-output/                    # Rendered images, screenshots
+cache/                     # OSM .gpkg caches, flat map PNG/JSON cache, ground tile cache
+output/                    # Rendered images, screenshots, recorded animations
 src/streets_at_night/
   __main__.py              # python -m entry, calls main()
-  main.py                  # CLI: verify/preview/render subcommands, scene loading
+  main.py                  # CLI: verify/preview/render/animate/devmode subcommands, scene loading
   config/
-    schema.py              # Dataclasses: SceneConfig, CameraConfig, QualityPreset, BoundsConfig
+    schema.py              # Dataclasses: SceneConfig and all nested config sections
     defaults.py            # DEFAULTS dict — base config values
     loader.py              # load_config() — TOML → SceneConfig with deep merge
   models/
     road_types.py          # RoadType enum (HIGHWAY..MINOR)
-    road_segment.py        # RoadSegment dataclass, default widths
+    road_segment.py        # RoadSegment dataclass — geometry, type, width, fixture_profile
+    light_source.py        # LightSource dataclass — universal light model consumed by renderer
+    streetlight.py         # FixtureProfile, FixturePool, StreetLight factory
+    car.py                 # CarLightPair — paired headlight/taillight set for one car
+    house.py                # House data model — footprint, colors, light positions
+    house_light.py          # Factory function for house window/porch lights
+    commercial.py            # Factory functions for commercial zone light sources
+    zones.py                # ResidentialZone, CommercialZone, DarkZone data containers
+    color_pool.py            # Weighted random color selection from a named palette
+    range_param.py           # Numeric parameter with configurable min/max + distribution
   data/
-    osm_loader.py          # load_roads/land_use/buildings — osmnx download + .gpkg cache
-    road_classifier.py     # classify_roads — OSM highway tag → RoadType
-    verify_plot.py         # save_verification_plot — matplotlib dark-theme figure
-    zone_builder.py        # Stub — returns empty lists (Stage 4)
+    osm_loader.py           # load_roads/land_use/buildings — osmnx download + .gpkg cache
+    road_classifier.py      # classify_roads — OSM highway tag → RoadType
+    verify_plot.py          # save_verification_plot — matplotlib dark-theme figure
+    zone_builder.py         # build_zones — OSM land use/buildings → residential/commercial/dark zones
   camera/
-    camera.py              # Camera class — position/target/FOV, view+projection matrices
-    coordinates.py         # CoordinateTransformer — WGS84↔ENU via pyproj UTM 11N
-    projection.py          # project_points (vectorized), frustum_cull_segments, near-plane clip
-    controls.py            # handle_input — pygame WASD/mouse/scroll → camera mutations, HUD
+    camera.py               # Camera class — position/target/FOV, view+projection matrices
+    coordinates.py          # CoordinateTransformer — WGS84↔ENU via pyproj UTM 11N
+    projection.py           # project_points (vectorized), frustum_cull_segments, near-plane clip
+    controls.py             # handle_input — pygame WASD/mouse/scroll → camera mutations, HUD
   scene/
-    scene.py               # Scene facade — road_segments + camera + config + spatial index
-    spatial_index.py       # SpatialIndex — uniform grid, 500m cells, O(1) insert/query
+    scene.py                # Scene facade — road_segments + zones + lights + camera + spatial index
+    spatial_index.py        # SpatialIndex — uniform grid, 500m cells, O(1) insert/query
+    ground_tiles.py         # Tile-based ground color cache for the export ground pass
   placement/
-    scene_builder.py       # build_scene — roads GDF → RoadSegments → Scene with spatial index
+    scene_builder.py        # build_scene / populate_lights — orchestrates all placers into a Scene
+    streetlight_placer.py   # Place streetlights along road segments using fixture profiles
+    car_placer.py            # Place CarLightPair instances along road segments
+    commercial_placer.py     # Signs, storefronts, and parking lot lights in commercial zones
+    house_light_placer.py    # Activate lights on each House in residential zones
+    geometry_utils.py        # Shared 2D geometry helpers (perpendicular_2d, etc.) for placers
   rendering/
-    backend.py             # RenderBackend ABC — draw_line, draw_polygon, get_image, etc.
-    pillow_backend.py      # PillowBackend — PIL/ImageDraw for static export
-    pygame_backend.py      # PygameBackend — pygame.Surface for interactive preview
-    render_pipeline.py     # render_scene_frame, get_preview_passes_warp, get_export_passes
-    flat_map.py            # FlatMapMeta, generate_flat_map, get_flat_map (with disk cache)
-    warp_preview.py        # Per-pixel raycast preview — _build_ray_directions, _raycast_to_flat_map
-    road_pass.py           # render_roads_from_scene — per-segment 3D projection + drawing
-    ground_pass.py         # render_ground — sky/ground fill + horizon glow band
+    backend.py               # RenderBackend ABC — draw_line/draw_polygon/get_image/add_linear/etc.
+    pillow_backend.py        # PillowBackend — sRGB substrate + float32 linear light buffer for export
+    pygame_backend.py        # PygameBackend — pygame.Surface for interactive preview
+    render_pipeline.py       # render_scene_frame(_with_progress), get_preview_passes(_warp), get_export_passes
+    color_space.py            # sRGB<->linear conversions, ACES tone mapping
+    raycast.py                # build_ground_gbuffer — shared per-pixel ground raycast (G-buffer)
+    render_utils.py           # Shared helpers: brightness falloff, camera distance, horizon calc
+    flat_map.py               # FlatMapMeta, generate_flat_map, get_flat_map (with disk cache)
+    warp_preview.py           # Per-pixel raycast preview — _build_ray_directions, _raycast_to_flat_map
+    road_pass.py              # render_roads_from_scene / render_roads_export — road projection + drawing
+    ground_pass.py            # render_ground / render_ground_export — sky/ground fill, tiled zone colors
+    illumination_pass.py      # render_illumination — world-space ground light pools, raycast-sampled
+    light_pass.py             # render_lights_preview / render_lights_export — cores + glow halos
+    atmosphere_pass.py        # render_atmosphere — horizon glow + depth-based airlight veil
+    compositor.py             # render_composite — stars, vignette, exposure, tone-map, sRGB encode
+    heat_haze.py               # HeatHaze — multi-layer Kolmogorov phase-screen distortion (torch/MPS)
+  devmode/
+    cmd_devmode.py            # Main event loop for the devmode parameter tuning tool
+    synthetic_scene.py        # Builds the 10-row synthetic ENU test scene
+    real_scene.py              # Loads a clipped strip of real OSM road data for devmode
+    devmode_camera.py          # Builds an ENU-space Camera from DevmodeCameraConfig
+    control_panel.py           # Creates and lays out the full devmode control panel
+    panel_sections.py          # Builds pygame-gui widget sections for each config category
+    slider_registry.py         # Maps pygame-gui slider widgets to SceneConfig field paths
+    config_bridge.py           # Two-way sync between SceneConfig and slider widget values
+    config_writer.py           # Serializes SceneConfig back to a TOML-compatible dict and writes it
+    label_pass.py              # Render pass that draws row identification labels onto the scene
+  utils/
+    colors.py                  # Shared color utilities (hex_to_rgb, kelvin_to_rgb, etc.)
 tests/
-  conftest.py
-  test_camera.py
-  test_config_loader.py
-  test_coordinates.py
-  test_projection.py
-  test_road_classifier.py
-  test_scene.py
-  test_warp_preview.py     # Tests for warp_preview + flat_map modules
+  conftest.py                  # Shared fixtures
+  test_*.py                    # One test file per source module (see tests/ directory listing)
 ```
 
-**Data flow:**
+**Data flow (render):**
 
 ```
 main.py:main()
   -> load_config(toml_path)                      # TOML → SceneConfig
-  -> cmd_preview(args, config)                    # or cmd_verify / cmd_render
+  -> cmd_render(config, quality, ...)
        -> _load_scene(config, quality, cache_dir)
-            |-- load_roads(bbox, cache_dir)       # osmnx download or .gpkg cache
+            |-- load_roads/land_use/buildings(bbox, cache_dir)  # osmnx download or .gpkg cache
             |-- classify_roads(roads_raw)          # highway tag → RoadType column
             |-- create_transformer(origin_lat/lon) # pyproj UTM 11N transformer
             |-- create_camera(pos, target, ...)    # Camera with view/proj matrices
-            `-- build_scene(roads, transformer, camera, config)
+            `-- build_scene(roads, transformer, camera, config, land_use, buildings)
                  |-- convert_road_geometry()       # WGS84 LineStrings → ENU (N,3) arrays
-                 |-- _build_road_segments()        # geometry + type → RoadSegment list
-                 `-- scene.build_spatial_index()   # uniform grid, 500m cells
-       -> get_flat_map(scene, cache_dir)           # generate or load cached flat map
-       -> get_preview_passes_warp(flat_map, meta)  # closure capturing flat_map
-       -> pygame event loop
-            |-- handle_input(events, camera, ...)  # WASD/mouse → camera.move()/rotate()
-            `-- render_scene_frame(scene, backend, passes=[_warp_pass])
-                 -> render_warp_preview(scene, camera, backend, flat_map, flat_meta)
-                      |-- _build_ray_directions()  # meshgrid → per-pixel world rays
-                      |-- _raycast_to_flat_map()   # ray-ground intersect → flat map px
-                      `-- _sample_flat_map()        # numpy fancy index → PIL output
+                 |-- build_zones()                 # land use + buildings → residential/commercial/dark zones
+                 |-- scene.build_spatial_index()   # uniform grid, 500m cells
+                 `-- populate_lights()             # streetlight/car/commercial/house placers → scene lights
+       -> get_export_passes(cache_dir, no_lights, quality_preset)
+       -> render_scene_frame_with_progress(scene, PillowBackend, passes)
+            |-- render_ground_export      # sky/ground fill, tiled per-zone colors
+            |-- render_roads_export       # per-segment 3D projection + frustum culling
+            |-- render_illumination       # world-space light-pool map, raycast-sampled, additive linear
+            |-- render_lights_export      # bright cores + gaussian glow halos, additive linear
+            |-- render_atmosphere         # horizon glow + airlight veil, additive linear
+            `-- render_composite          # resolve_linear() -> exposure -> ACES tonemap -> sRGB -> paste
+       -> image.save(output_path)
+```
+
+**Data flow (animate --record):**
+
+```
+cmd_animate_record(args, config, heat_haze_cfg)
+  |-- _load_animate_base_frame(image_path, w, h)   # load + resize a pre-rendered PNG/TIFF
+  |-- _build_animate_haze(config, ...)             # build Camera, compute_depth_map, construct HeatHaze
+  `-- _record_haze[_seamless](haze, fps, n_frames, out_path)
+       -> haze.apply(t) per frame                  # phase-screen advection -> torch grid_sample warp
+       -> imageio writer.append_data(frame)         # streamed to ffmpeg/libx264 MP4
 ```
 
 **Conventions:**
 
 - All config dataclasses in `config/schema.py`; defaults in `config/defaults.py`
 - `RoadType` enum centralizes road categories; `_HIGHWAY_TO_ROAD_TYPE` dict in `road_classifier.py` maps OSM tags
-- Style tables (`_ROAD_STYLE`, `_PREVIEW_ROAD_STYLE`, `_FLAT_MAP_ROAD_STYLE`) map `RoadType` → color/width
-- Render passes are `Callable[[Scene, Camera, RenderBackend], Any]` — pluggable via lists
-- `RenderBackend` ABC with two implementations; preview uses `blit_pil_image`, export uses `draw_line`
+- Render passes are `Callable[[Scene, Camera, RenderBackend], Any]` — pluggable via lists in `render_pipeline.py`
+- `RenderBackend` ABC has two implementations; preview uses `blit_pil_image`, export uses `draw_line`/`add_linear`/`resolve_linear`
+- Export passes share a single per-frame ground raycast G-buffer (`raycast.build_ground_gbuffer`) rather than recomputing it per pass
+- All light-emitting passes (illumination, lights, atmosphere) write into the backend's linear buffer via `add_linear` — never draw light directly into the sRGB substrate; only the compositor tone-maps and encodes
 - Coordinate conversion always flows WGS84 → UTM 11N → ENU offset; `CoordinateTransformer` encapsulates origin
+- Devmode config edits go through `config_bridge`/`slider_registry`, which map slider widgets to dataclass field paths on `SceneConfig` by tuple path (string = attribute, int = list index)
 
 ## Tech
 
@@ -125,9 +176,12 @@ main.py:main()
 | numpy       | >=1.26     | Array math, vectorized raycast             |
 | matplotlib  | >=3.8      | Verification plot rendering                |
 | pyproj      | >=3.6      | WGS84 ↔ UTM coordinate transformation     |
-| tomli-w     | >=1.0      | TOML writing (config round-trip)           |
-| pygame      | >=2.5      | Interactive preview window + input         |
+| tomli-w     | >=1.0      | TOML writing (config round-trip, devmode save) |
+| pygame      | >=2.5      | Interactive preview/devmode window + input |
+| pygame-gui  | >=0.6      | Devmode control panel widgets              |
 | Pillow      | >=10.0     | Flat map generation, warp output, export   |
+| torch       | >=2.1      | MPS/CPU-accelerated heat-haze frame warping (`grid_sample`) |
+| imageio[ffmpeg] | >=2.34 | MP4 encoding for `animate --record`        |
 
 **Dev dependencies:**
 

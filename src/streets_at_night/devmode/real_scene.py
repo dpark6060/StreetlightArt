@@ -1,5 +1,6 @@
 """Loads a clipped strip of real OSM road data for devmode parameter tuning."""
 
+import hashlib
 import typing as t
 from pathlib import Path
 
@@ -8,13 +9,17 @@ from shapely.geometry import box
 
 from ..camera.coordinates import create_transformer
 from ..config.defaults import DEFAULTS
-from ..config.loader import _build_devmode_camera_config
+from ..config.loader import build_devmode_camera_config
+from ..config.paths import compute_origin
 from ..config.schema import SceneConfig
 from ..data.osm_loader import load_roads
 from ..data.road_classifier import classify_roads
 from ..placement.scene_builder import build_scene
 from ..scene.scene import Scene
 from .devmode_camera import build_devmode_camera
+
+if t.TYPE_CHECKING:
+    from ..camera.camera import Camera
 
 _DEFAULT_STRIP_HALF_WIDTH_DEG: float = 0.025  # ≈2.5 km per side
 
@@ -48,7 +53,7 @@ def build_real_scene_strip(
     roads = classify_roads(roads_gdf)
     print(f"  Classified {len(roads)} road segments in strip.")
 
-    origin_lat, origin_lon = _compute_origin(config)
+    origin_lat, origin_lon = compute_origin(config)
     transformer = create_transformer(origin_lat, origin_lon)
     camera = _build_devmode_camera(config)
 
@@ -74,7 +79,7 @@ def _load_strip_roads(
     Returns:
         GeoDataFrame: Clipped road features in WGS84.
     """
-    strip_path = _strip_cache_path(cache_dir, strip_half_width_deg)
+    strip_path = _strip_cache_path(cache_dir, config, strip_half_width_deg)
     if strip_path.exists():
         print(f"Loading debug strip from {strip_path.name} ...")
         return gpd.read_file(strip_path)
@@ -113,11 +118,21 @@ def _clip_to_strip(
     return roads[roads.geometry.intersects(clip_box)].copy()
 
 
-def _strip_cache_path(cache_dir: Path, strip_half_width_deg: float) -> Path:
+def _strip_cache_path(
+    cache_dir: Path,
+    config: SceneConfig,
+    strip_half_width_deg: float,
+) -> Path:
     """Return the cache path for the debug strip file.
+
+    The filename encodes the strip half-width, the camera target longitude
+    (the strip is centered on it), and a hash of the clip bounds — so moving
+    the camera target or changing the bounds produces a different cache file
+    instead of silently reusing a stale strip.
 
     Args:
         cache_dir (Path): Cache directory.
+        config (SceneConfig): Scene configuration providing target_lon and bounds.
         strip_half_width_deg (float): Half-width encoded in the filename.
 
     Returns:
@@ -125,22 +140,26 @@ def _strip_cache_path(cache_dir: Path, strip_half_width_deg: float) -> Path:
     """
     osm_dir = cache_dir / "osm"
     osm_dir.mkdir(parents=True, exist_ok=True)
-    width_tag = f"{strip_half_width_deg:.4f}".replace(".", "p")
-    return osm_dir / f"debug_strip_{width_tag}.gpkg"
+    filename = _build_strip_cache_filename(config, strip_half_width_deg)
+    return osm_dir / filename
 
 
-def _compute_origin(config: SceneConfig) -> t.Tuple[float, float]:
-    """Compute coordinate origin as the midpoint between camera and target.
+def _build_strip_cache_filename(config: SceneConfig, strip_half_width_deg: float) -> str:
+    """Build the debug strip cache filename from strip width, target, and bounds.
 
     Args:
-        config (SceneConfig): Scene configuration.
+        config (SceneConfig): Scene configuration providing target_lon and bounds.
+        strip_half_width_deg (float): Half-width of the longitude strip.
 
     Returns:
-        tuple[float, float]: (origin_lat, origin_lon) in WGS84 degrees.
+        str: Filename (with .gpkg extension) uniquely identifying this strip.
     """
-    origin_lat = (config.camera.lat + config.camera.target_lat) / 2.0
-    origin_lon = (config.camera.lon + config.camera.target_lon) / 2.0
-    return origin_lat, origin_lon
+    width_tag = f"{strip_half_width_deg:.4f}".replace(".", "p")
+    target_lon_tag = f"{round(config.camera.target_lon, 4)}".replace(".", "p").replace("-", "m")
+    bounds = config.bounds
+    bounds_tuple = (bounds.north, bounds.south, bounds.east, bounds.west)
+    bounds_hash = hashlib.md5(str(bounds_tuple).encode()).hexdigest()[:8]
+    return f"debug_strip_{width_tag}_{target_lon_tag}_{bounds_hash}.gpkg"
 
 
 def _build_devmode_camera(config: SceneConfig) -> "Camera":
@@ -152,14 +171,12 @@ def _build_devmode_camera(config: SceneConfig) -> "Camera":
     Returns:
         Camera: Configured ENU-space devmode camera.
     """
-    from ..camera.camera import Camera  # noqa: F401 — satisfies TYPE_CHECKING guard
-
     if config.devmode is not None:
         camera_cfg = config.devmode.camera
         width = config.devmode.render_width
         height = config.devmode.render_height
     else:
-        camera_cfg = _build_devmode_camera_config(DEFAULTS["devmode"]["camera"])
+        camera_cfg = build_devmode_camera_config(DEFAULTS["devmode"]["camera"])
         width = DEFAULTS["devmode"]["render_width"]
         height = DEFAULTS["devmode"]["render_height"]
 
