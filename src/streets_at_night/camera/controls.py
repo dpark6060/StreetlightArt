@@ -286,7 +286,7 @@ def _apply_rotation(
         pitch -= PITCH_SPEED * dt * speed_mult
 
     if yaw != 0.0 or pitch != 0.0:
-        _rotate_clamped(camera, yaw, pitch)
+        rotate_clamped(camera, yaw, pitch)
 
 
 def _apply_fov(
@@ -316,8 +316,11 @@ def _apply_fov(
     camera.fov_deg = float(np.clip(camera.fov_deg + fov_delta, FOV_MIN, FOV_MAX))
 
 
-def _rotate_clamped(camera: Camera, yaw_deg: float, pitch_deg: float) -> None:
-    """Apply yaw/pitch rotation while clamping pitch to ±85°.
+def rotate_clamped(camera: Camera, yaw_deg: float, pitch_deg: float) -> None:
+    """Apply yaw/pitch rotation while clamping the resulting pitch to ±85°.
+
+    Public so callers outside this module (e.g. the Preview tab's Pitch+/Pitch-
+    buttons) reuse the exact clamp instead of duplicating the math.
 
     Args:
         camera (Camera): Camera to mutate.
@@ -358,7 +361,7 @@ def _apply_mouse_rotation(
 
     yaw = -dx * MOUSE_SENSITIVITY
     pitch = -dy * MOUSE_SENSITIVITY
-    _rotate_clamped(camera, yaw, pitch)
+    rotate_clamped(camera, yaw, pitch)
 
 
 # ---------------------------------------------------------------------------

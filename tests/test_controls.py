@@ -6,7 +6,32 @@ import pygame
 import pytest
 
 from streets_at_night.camera.camera import create_camera
-from streets_at_night.camera.controls import FOV_MAX, FOV_MIN, FOV_SPEED, _apply_fov
+from streets_at_night.camera.controls import (
+    FOV_MAX,
+    FOV_MIN,
+    FOV_SPEED,
+    PITCH_CLAMP,
+    _apply_fov,
+    rotate_clamped,
+)
+
+
+def _forward_pitch_deg(cam) -> float:
+    """Return the camera's current pitch in degrees from its forward vector."""
+    return float(np.degrees(np.arcsin(np.clip(cam.get_forward()[2], -1.0, 1.0))))
+
+
+@pytest.fixture
+def level_camera():
+    """Return a camera looking horizontally north (pitch 0)."""
+    return create_camera(
+        position=np.array([0.0, -1000.0, 500.0]),
+        target=np.array([0.0, 0.0, 500.0]),
+        fov_deg=60.0,
+        aspect_ratio=16.0 / 9.0,
+        near=10.0,
+        far=20000.0,
+    )
 
 
 class _FakeHeldKeys(dict):
@@ -95,3 +120,27 @@ def test_apply_fov_no_keys_held_leaves_fov_unchanged(camera):
 
     # Assert
     assert camera.fov_deg == 60.0
+
+
+def test_rotate_clamped_within_range_applies_full_pitch(level_camera):
+    # Act
+    rotate_clamped(level_camera, 0.0, 30.0)
+
+    # Assert
+    assert _forward_pitch_deg(level_camera) == pytest.approx(30.0, abs=1e-6)
+
+
+def test_rotate_clamped_clamps_pitch_up_at_85(level_camera):
+    # Act
+    rotate_clamped(level_camera, 0.0, 200.0)
+
+    # Assert
+    assert _forward_pitch_deg(level_camera) == pytest.approx(PITCH_CLAMP, abs=1e-6)
+
+
+def test_rotate_clamped_clamps_pitch_down_at_minus_85(level_camera):
+    # Act
+    rotate_clamped(level_camera, 0.0, -200.0)
+
+    # Assert
+    assert _forward_pitch_deg(level_camera) == pytest.approx(-PITCH_CLAMP, abs=1e-6)
