@@ -74,6 +74,7 @@ class UIApp:
         self._active_tab.build(self._manager, self._content_rect)
         self._mark_active_button()
 
+        self._displayed_config_path = self.state.config_path
         self._running = False
 
     def run(self) -> None:
@@ -83,6 +84,7 @@ class UIApp:
             dt = self._clock.tick(60) / 1000.0
             self._process_frame_events()
             self._pump_jobs()
+            self._sync_config_bar()
             self._active_tab.update(dt)
             self._manager.update(dt)
             self._draw(dt)
@@ -246,6 +248,14 @@ class UIApp:
         """Forward each polled job event to the active tab."""
         for job_event in self.jobs.poll():
             self._active_tab.handle_job_event(job_event)
+
+    def _sync_config_bar(self) -> None:
+        """Refresh the config-bar entry when a tab changed state.config_path."""
+        if self.state.config_path == self._displayed_config_path:
+            return
+        self._displayed_config_path = self.state.config_path
+        if self.state.config_path is not None:
+            self._config_picker.set_path(self.state.config_path)
 
     def _draw(self, dt: float) -> None:
         """Clear the window, draw the active tab, then the UI, and flip.
