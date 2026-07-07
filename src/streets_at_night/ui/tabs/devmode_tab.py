@@ -43,6 +43,7 @@ from ...devmode.render_helpers import (
     should_render_full,
     sync_camera_from_config,
 )
+from ...devmode.minimap import Minimap, MinimapLayout
 from ...devmode.slider_registry import SliderRegistry
 from ...devmode.synthetic_scene import build_synthetic_scene
 from ...devmode.widget_sync import (
@@ -52,13 +53,21 @@ from ...devmode.widget_sync import (
 )
 from ..imaging import fit_image_to_viewport, pil_to_pygame_surface
 from ..jobs import JobEvent, ProgressFn
+from ..widgets.labeled_entry import build_labeled_entry, parse_float_entry
 from .base import Tab
 
 _PANEL_WIDTH = 384
+_HEIGHT_AREA_HEIGHT = 68
 _SECTION_LIST_HEIGHT = 140
 _BUTTON_AREA_HEIGHT = 44
 _BUTTON_HEIGHT = 35
 _STATIC_SECTIONS: t.Tuple[str, ...] = ("Atmosphere", "Devmode Camera")
+
+# Minimap overlay: bottom-left of the view area, fixed size + margin.
+_MINIMAP_WIDTH = 220
+_MINIMAP_HEIGHT = 180
+_MINIMAP_MARGIN = 12
+_EMPTY_EXTENT = ((-500.0, -500.0), (500.0, 500.0))
 
 
 class DevmodeTab(Tab):
@@ -80,6 +89,16 @@ class DevmodeTab(Tab):
         self._save_btn: t.Optional[pygame_gui.elements.UIButton] = None
         self._realtiles_btn: t.Optional[pygame_gui.elements.UIButton] = None
         self._save_dialog: t.Optional[pygame_gui.windows.UIFileDialog] = None
+
+        # Height entries (camera / focal Z) above the section list.
+        self._cam_height_label: t.Optional[pygame_gui.elements.UILabel] = None
+        self._cam_height_entry: t.Optional[pygame_gui.elements.UITextEntryLine] = None
+        self._focal_height_label: t.Optional[pygame_gui.elements.UILabel] = None
+        self._focal_height_entry: t.Optional[pygame_gui.elements.UITextEntryLine] = None
+
+        # Minimap overlay + active drag target ("camera" | "target" | None).
+        self._minimap: t.Optional[Minimap] = None
+        self._drag_dot: t.Optional[str] = None
 
         # Section state.
         self._static_registry = SliderRegistry()
@@ -129,21 +148,27 @@ class DevmodeTab(Tab):
 
         self._scene = build_synthetic_scene(self.state.config)
         self._snapshot_camera()
+        self._rebuild_minimap()
         self._render_full()
         self._build_section(self._active_section)
 
     def _build_panel(self, manager: pygame_gui.UIManager) -> None:
-        """Create the section list, scroll container, and the three buttons."""
+        """Create the height entries, section list, scroll container, and buttons."""
+        self._build_height_entries(manager)
+        list_y = self._panel_rect.y + _HEIGHT_AREA_HEIGHT
         self._section_list = pygame_gui.elements.UISelectionList(
             relative_rect=pygame.Rect(
-                self._panel_rect.x, self._panel_rect.y,
+                self._panel_rect.x, list_y,
                 self._panel_rect.width, _SECTION_LIST_HEIGHT,
             ),
             item_list=self._section_names(),
             manager=manager,
         )
-        scroll_y = self._panel_rect.y + _SECTION_LIST_HEIGHT
-        scroll_h = self._panel_rect.height - _SECTION_LIST_HEIGHT - _BUTTON_AREA_HEIGHT
+        scroll_y = list_y + _SECTION_LIST_HEIGHT
+        scroll_h = (
+            self._panel_rect.height
+            - _HEIGHT_AREA_HEIGHT - _SECTION_LIST_HEIGHT - _BUTTON_AREA_HEIGHT
+        )
         self._scroll = pygame_gui.elements.UIScrollingContainer(
             relative_rect=pygame.Rect(
                 self._panel_rect.x, scroll_y, self._panel_rect.width, scroll_h,
@@ -151,6 +176,25 @@ class DevmodeTab(Tab):
             manager=manager,
         )
         self._build_buttons(manager)
+
+    def _build_height_entries(self, manager: pygame_gui.UIManager) -> None:
+        """Create the Cam height / Focal height labeled entries at the panel top."""
+        x = self._panel_rect.x
+        self._cam_height_label, self._cam_height_entry = build_labeled_entry(
+            manager, None, x, self._panel_rect.y, "Cam height", label_width=110,
+        )
+        self._focal_height_label, self._focal_height_entry = build_labeled_entry(
+            manager, None, x, self._panel_rect.y + 32, "Focal height", label_width=110,
+        )
+        self._sync_height_entries_from_config()
+
+    def _sync_height_entries_from_config(self) -> None:
+        """Set the height entry text from config.devmode.camera pos_z / target_z."""
+        if self._cam_height_entry is None or self.state.config.devmode is None:
+            return
+        cam = self.state.config.devmode.camera
+        self._cam_height_entry.set_text(f"{cam.pos_z:.1f}")
+        self._focal_height_entry.set_text(f"{cam.target_z:.1f}")
 
     def _build_buttons(self, manager: pygame_gui.UIManager) -> None:
         """Create the Rerender, Save, and Real-Tiles buttons in the bottom row."""
@@ -177,6 +221,8 @@ class DevmodeTab(Tab):
             self._section_list, self._scroll,
             self._rerender_btn, self._save_btn, self._realtiles_btn,
             self._save_dialog,
+            self._cam_height_label, self._cam_height_entry,
+            self._focal_height_label, self._focal_height_entry,
         ]
         for widget in widgets:
             if widget is not None:
@@ -187,6 +233,12 @@ class DevmodeTab(Tab):
         self._save_btn = None
         self._realtiles_btn = None
         self._save_dialog = None
+        self._cam_height_label = None
+        self._cam_height_entry = None
+        self._focal_height_label = None
+        self._focal_height_entry = None
+        self._minimap = None
+        self._drag_dot = None
         self._manager = None
         self._scene = None
         self._frame_surface = None
@@ -316,7 +368,10 @@ class DevmodeTab(Tab):
         self._apply_active_section()
 
     def _handle_entry_finished(self, entry: t.Any) -> None:
-        """Apply a finished text entry (value entry or string field) immediately."""
+        """Apply a finished text entry (height, value entry, or string field)."""
+        if entry is self._cam_height_entry or entry is self._focal_height_entry:
+            self._apply_height_entries()
+            return
         registry = self._active_registry()
         if entry in registry.entry_to_slider:
             apply_entry_to_slider(entry, registry)
@@ -341,6 +396,7 @@ class DevmodeTab(Tab):
             apply_widgets_to_config(self._light_registry, self._active_kind.target)
         self._rebuild_scene_in_place()
         self._snapshot_camera()
+        self._rebuild_minimap()
         self._render_full()
 
     def _rebuild_scene_in_place(self) -> None:
@@ -404,6 +460,7 @@ class DevmodeTab(Tab):
         else:
             self._scene = build_synthetic_scene(self.state.config)
             self._snapshot_camera()
+            self._rebuild_minimap()
             self._render_full()
 
     # ------------------------------------------------------------------
@@ -419,6 +476,7 @@ class DevmodeTab(Tab):
         if event.kind == "done" and self._use_real_tiles:
             self._scene = event.result
             self._snapshot_camera()
+            self._rebuild_minimap()
             self._render_full()
 
     # ------------------------------------------------------------------
@@ -437,7 +495,8 @@ class DevmodeTab(Tab):
         self._sync_buttons_enabled()
         if not self._scene_ready():
             return
-        moved = self._apply_camera_input(events, dt)
+        events, minimap_moved = self._process_minimap_events(events)
+        moved = self._apply_camera_input(events, dt) or minimap_moved
         if moved:
             self._last_move_time = self._elapsed
             self._render_cheap()
@@ -484,6 +543,134 @@ class DevmodeTab(Tab):
             or camera.fov_deg != fov_before
         )
 
+    # ------------------------------------------------------------------
+    # Minimap
+    # ------------------------------------------------------------------
+
+    def _process_minimap_events(
+        self, events: t.List[pygame.event.Event]
+    ) -> t.Tuple[t.List[pygame.event.Event], bool]:
+        """Consume minimap drag events; return the rest and whether a drag moved.
+
+        Runs before the camera passthrough and swallows any event the minimap
+        consumes so a click/drag on the map never also moves the scene camera.
+
+        Args:
+            events (list): This frame's collected pygame events.
+
+        Returns:
+            tuple[list, bool]: (events not consumed, True if a drag moved the camera).
+        """
+        if self._minimap is None:
+            return events, False
+        remaining: t.List[pygame.event.Event] = []
+        moved = False
+        for event in events:
+            consumed, did_move = self._handle_minimap_event(event)
+            moved = moved or did_move
+            if not consumed:
+                remaining.append(event)
+        return remaining, moved
+
+    def _handle_minimap_event(self, event: pygame.event.Event) -> t.Tuple[bool, bool]:
+        """Handle one event against the minimap.
+
+        Args:
+            event (pygame.event.Event): The event to consider.
+
+        Returns:
+            tuple[bool, bool]: (consumed by the minimap, moved the camera).
+        """
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if not self._minimap.layout.rect.collidepoint(event.pos):
+                return False, False
+            cam_xy, tgt_xy = self._dot_world_xy()
+            self._drag_dot = self._minimap.hit_test(event.pos, cam_xy, tgt_xy)
+            return True, False
+        if event.type == pygame.MOUSEMOTION and self._drag_dot is not None:
+            self._apply_minimap_drag(event.pos)
+            return True, True
+        if (
+            event.type == pygame.MOUSEBUTTONUP
+            and event.button == 1
+            and self._drag_dot is not None
+        ):
+            self._drag_dot = None
+            return True, False
+        return False, False
+
+    def _apply_minimap_drag(self, pos: t.Tuple[int, int]) -> None:
+        """Write the dragged dot's new X/Y into the config and sync the camera.
+
+        Args:
+            pos (tuple[int, int]): Screen pixel the mouse is at.
+        """
+        world_x, world_y = self._minimap.screen_to_world(*pos)
+        cam = self.state.config.devmode.camera
+        if self._drag_dot == "camera":
+            cam.pos_x = world_x
+            cam.pos_y = world_y
+        else:
+            cam.target_x = world_x
+            cam.target_y = world_y
+        sync_camera_from_config(self._scene, self.state.config)
+
+    def _dot_world_xy(self) -> t.Tuple[t.Tuple[float, float], t.Tuple[float, float]]:
+        """Return the live camera and target (x, y) shown as minimap dots."""
+        camera = self._scene.camera
+        cam_xy = (float(camera.position[0]), float(camera.position[1]))
+        tgt_xy = (float(camera.target[0]), float(camera.target[1]))
+        return cam_xy, tgt_xy
+
+    def _rebuild_minimap(self) -> None:
+        """Recompute the world extent from the current scene and rebuild the minimap."""
+        if self._scene is None:
+            return
+        world_min, world_max = self._compute_world_extent(self._scene)
+        rect = pygame.Rect(
+            self._view_rect.x + _MINIMAP_MARGIN,
+            self._view_rect.y + self._view_rect.height - _MINIMAP_MARGIN - _MINIMAP_HEIGHT,
+            _MINIMAP_WIDTH, _MINIMAP_HEIGHT,
+        )
+        self._minimap = Minimap(MinimapLayout(rect, world_min, world_max))
+
+    @staticmethod
+    def _compute_world_extent(
+        scene: t.Any,
+    ) -> t.Tuple[t.Tuple[float, float], t.Tuple[float, float]]:
+        """Return the road bounding box padded 10%, or a fallback for empty scenes.
+
+        Args:
+            scene: The scene whose road_segments define the extent.
+
+        Returns:
+            tuple: ((x_min, y_min), (x_max, y_max)) ENU, padded 10% each side.
+        """
+        arrays = [
+            seg.geometry[:, :2]
+            for seg in scene.road_segments
+            if seg.geometry is not None and len(seg.geometry) > 0
+        ]
+        if not arrays:
+            return _EMPTY_EXTENT
+        points = np.concatenate(arrays, axis=0)
+        x_min, y_min = float(points[:, 0].min()), float(points[:, 1].min())
+        x_max, y_max = float(points[:, 0].max()), float(points[:, 1].max())
+        pad_x = (x_max - x_min) * 0.1
+        pad_y = (y_max - y_min) * 0.1
+        return (x_min - pad_x, y_min - pad_y), (x_max + pad_x, y_max + pad_y)
+
+    def _apply_height_entries(self) -> None:
+        """Parse the height entries into pos_z/target_z, sync, and debounce a render."""
+        if self.state.config.devmode is None or self._scene is None:
+            return
+        cam = self.state.config.devmode.camera
+        cam.pos_z = parse_float_entry(self._cam_height_entry, cam.pos_z)
+        cam.target_z = parse_float_entry(self._focal_height_entry, cam.target_z)
+        sync_camera_from_config(self._scene, self.state.config)
+        self._last_move_time = self._elapsed
+        self._render_cheap()
+
     def _snapshot_camera(self) -> None:
         """Record the current camera pose as the reset target."""
         camera = self._scene.camera
@@ -516,6 +703,9 @@ class DevmodeTab(Tab):
         """
         if self._frame_surface is not None:
             window.blit(self._frame_surface, (self._view_rect.x, self._view_rect.y))
+        if self._minimap is not None and self._scene is not None:
+            cam_xy, tgt_xy = self._dot_world_xy()
+            self._minimap.draw(window, cam_xy, tgt_xy, self._scene.road_segments)
 
     def refresh_from_state(self) -> None:
         """Rebuild the catalog, section list, and scene after the config changed."""
@@ -529,6 +719,8 @@ class DevmodeTab(Tab):
             self._active_section = "Atmosphere"
         self._rebuild_scene_in_place_or_synthetic()
         self._snapshot_camera()
+        self._rebuild_minimap()
+        self._sync_height_entries_from_config()
         self._render_full()
         self._build_section(self._active_section)
 

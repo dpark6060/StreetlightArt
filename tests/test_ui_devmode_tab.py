@@ -3,8 +3,10 @@
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
+import numpy as np
 import pytest
 
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
@@ -161,6 +163,86 @@ def test_save_opens_dialog_when_no_path(config, headless_manager, content_rect, 
     # Assert — no write yet; a save dialog is open instead.
     mock_write.assert_not_called()
     assert tab._save_dialog is not None
+
+
+def test_compute_world_extent_pads_bbox_by_ten_percent():
+    # Arrange — a single segment spanning x 0..100, y 0..200.
+    seg = SimpleNamespace(geometry=np.array([[0.0, 0.0, 0.0], [100.0, 200.0, 5.0]]))
+    scene = SimpleNamespace(road_segments=[seg])
+
+    # Act
+    (x_min, y_min), (x_max, y_max) = DevmodeTab._compute_world_extent(scene)
+
+    # Assert — 10% pad each side.
+    assert x_min == pytest.approx(-10.0)
+    assert x_max == pytest.approx(110.0)
+    assert y_min == pytest.approx(-20.0)
+    assert y_max == pytest.approx(220.0)
+
+
+def test_compute_world_extent_empty_scene_uses_fallback():
+    scene = SimpleNamespace(road_segments=[])
+
+    extent = DevmodeTab._compute_world_extent(scene)
+
+    assert extent == ((-500.0, -500.0), (500.0, 500.0))
+
+
+def test_minimap_drag_camera_writes_config_syncs_and_swallows(config, headless_manager, content_rect, tmp_path):
+    # Arrange — build the tab (real synthetic scene + minimap, cheap render stubbed).
+    tab, state, _ = _make_tab(config, tmp_path)
+    with mock.patch.object(devmode_tab_module, "render_devmode_scene"), mock.patch.object(
+        devmode_tab_module, "fit_image_to_viewport"
+    ), mock.patch.object(devmode_tab_module, "pil_to_pygame_surface"):
+        tab.build(headless_manager, content_rect)
+
+    cam_xy, _ = tab._dot_world_xy()
+    cam_screen = tab._minimap.world_to_screen(*cam_xy)
+    move_pos = (tab._minimap.layout.rect.centerx, tab._minimap.layout.rect.centery)
+    down = pygame.event.Event(pygame.MOUSEBUTTONDOWN, button=1, pos=cam_screen)
+    motion = pygame.event.Event(pygame.MOUSEMOTION, pos=move_pos, rel=(1, 1), buttons=(1, 0, 0))
+    tab.handle_event(down)
+    tab.handle_event(motion)
+
+    # Act — capture what the camera passthrough is fed; stub the cheap render.
+    with mock.patch.object(devmode_tab_module, "sync_camera_from_config") as mock_sync, mock.patch.object(
+        tab, "_render_cheap"
+    ), mock.patch.object(tab, "_apply_camera_input", return_value=False) as mock_camera:
+        tab.update(0.016)
+
+    # Assert — config X/Y written to the drag world point, camera synced.
+    expected_x, expected_y = tab._minimap.screen_to_world(*move_pos)
+    assert state.config.devmode.camera.pos_x == pytest.approx(expected_x)
+    assert state.config.devmode.camera.pos_y == pytest.approx(expected_y)
+    mock_sync.assert_called_with(tab._scene, state.config)
+
+    # The minimap events were swallowed, not forwarded to the scene camera.
+    forwarded = mock_camera.call_args.args[0]
+    assert down not in forwarded
+    assert motion not in forwarded
+
+
+def test_height_entry_finish_updates_pos_z_and_target_z(config, headless_manager, content_rect, tmp_path):
+    # Arrange
+    tab, state, _ = _make_tab(config, tmp_path)
+    with mock.patch.object(devmode_tab_module, "render_devmode_scene"), mock.patch.object(
+        devmode_tab_module, "fit_image_to_viewport"
+    ), mock.patch.object(devmode_tab_module, "pil_to_pygame_surface"):
+        tab.build(headless_manager, content_rect)
+
+    tab._cam_height_entry.set_text("123.5")
+    tab._focal_height_entry.set_text("45.0")
+
+    # Act
+    with mock.patch.object(devmode_tab_module, "sync_camera_from_config") as mock_sync, mock.patch.object(
+        tab, "_render_cheap"
+    ):
+        tab._handle_entry_finished(tab._cam_height_entry)
+
+    # Assert
+    assert state.config.devmode.camera.pos_z == pytest.approx(123.5)
+    assert state.config.devmode.camera.target_z == pytest.approx(45.0)
+    mock_sync.assert_called_once_with(tab._scene, state.config)
 
 
 def test_toggle_real_tiles_submits_background_job(config, headless_manager, content_rect, tmp_path):
