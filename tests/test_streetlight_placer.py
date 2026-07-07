@@ -8,7 +8,8 @@ import numpy as np
 import pytest
 
 from streets_at_night.config.defaults import DEFAULTS
-from streets_at_night.config.loader import _build_streetlight_config
+from streets_at_night.config.schema import StreetLightConfig
+from streets_at_night.config.serde import dataclass_from_dict
 from streets_at_night.models.light_source import LightSource
 from streets_at_night.models.road_segment import RoadSegment
 from streets_at_night.models.road_types import RoadType
@@ -242,7 +243,7 @@ def test_place_streetlights_residential_pool_can_produce_none_profile():
     from streets_at_night.models.streetlight import create_fixture_pool
 
     rng = random.Random(0)
-    streetlight_config = _build_streetlight_config(DEFAULTS["lights"]["streetlights"])
+    streetlight_config = dataclass_from_dict(StreetLightConfig, DEFAULTS["lights"]["streetlights"])
     pool = create_fixture_pool(RoadType.RESIDENTIAL, streetlight_config, rng)
 
     # Act — draw many picks and collect results
@@ -257,7 +258,7 @@ def test_place_streetlights_highway_pool_never_produces_none_profile():
     from streets_at_night.models.streetlight import create_fixture_pool
 
     rng = random.Random(99)
-    streetlight_config = _build_streetlight_config(DEFAULTS["lights"]["streetlights"])
+    streetlight_config = dataclass_from_dict(StreetLightConfig, DEFAULTS["lights"]["streetlights"])
     pool = create_fixture_pool(RoadType.HIGHWAY, streetlight_config, rng)
 
     # Act — draw many picks

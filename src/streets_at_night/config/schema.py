@@ -113,7 +113,7 @@ class FixturePoolEntry:
     """A weighted entry in a fixture pool."""
 
     weight: float
-    profile: t.Optional[FixtureProfileConfig]
+    profile: t.Optional[FixtureProfileConfig] = None
 
 
 @dataclass
@@ -258,7 +258,7 @@ class AtmosphereConfig:
     """Atmospheric perspective parameters for distance-based light rendering."""
 
     falloff_distance: float
-    haze_color: t.Tuple[int, int, int]
+    haze_color: t.Tuple[int, int, int] = field(metadata={"serde": "hex_color"})
     scatter_distance: float
     glow_expansion_enabled: bool = False
     glow_max_alpha: int = 80
@@ -406,7 +406,7 @@ class SceneConfig:
 
     camera: CameraConfig
     bounds: BoundsConfig
-    quality_presets: t.Dict[str, QualityPreset]
+    quality_presets: t.Dict[str, QualityPreset] = field(metadata={"toml_key": "quality"})
     seed: int
     zones: ZoneConfig
     lights: LightConfig

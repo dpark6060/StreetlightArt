@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 
 from streets_at_night.config.defaults import DEFAULTS
-from streets_at_night.config.loader import _build_atmosphere_config
 from streets_at_night.config.schema import AtmosphereConfig
+from streets_at_night.config.serde import dataclass_from_dict
 from streets_at_night.models.illumination import ConeIllumination
 from streets_at_night.models.light_source import LightSource
 from streets_at_night.rendering.backend import RenderBackend
@@ -33,7 +33,7 @@ from streets_at_night.rendering.light_pass import (
 @pytest.fixture
 def default_atmosphere() -> AtmosphereConfig:
     """Return a default AtmosphereConfig built from DEFAULTS."""
-    return _build_atmosphere_config(DEFAULTS["atmosphere"])
+    return dataclass_from_dict(AtmosphereConfig, DEFAULTS["atmosphere"])
 
 
 @pytest.fixture
@@ -76,7 +76,7 @@ def _make_scene_with_lights(lights: list, atmosphere: AtmosphereConfig = None) -
     if atmosphere is not None:
         scene.config.atmosphere = atmosphere
     else:
-        scene.config.atmosphere = _build_atmosphere_config(DEFAULTS["atmosphere"])
+        scene.config.atmosphere = dataclass_from_dict(AtmosphereConfig, DEFAULTS["atmosphere"])
     return scene
 
 

@@ -9,8 +9,8 @@ import pytest
 from shapely.geometry import box
 
 from streets_at_night.config.defaults import DEFAULTS
-from streets_at_night.config.loader import _build_light_config
 from streets_at_night.config.schema import LightConfig
+from streets_at_night.config.serde import dataclass_from_dict
 from streets_at_night.models.light_source import LightSource
 from streets_at_night.models.zones import CommercialZone
 from streets_at_night.placement.commercial_placer import (
@@ -40,7 +40,7 @@ def rng() -> random.Random:
 @pytest.fixture
 def light_config() -> LightConfig:
     """Return a default LightConfig built from project defaults."""
-    return _build_light_config(DEFAULTS["lights"])
+    return dataclass_from_dict(LightConfig, DEFAULTS["lights"])
 
 
 @pytest.fixture
@@ -429,7 +429,7 @@ def test_place_commercial_lights_multiple_zones(light_config, rng):
     lights = place_commercial_lights([zone_a, zone_b], light_config, rng)
 
     # Assert — two zones with buildings/parking produce more lights than one
-    single_zone_lights = place_commercial_lights([zone_a], _build_light_config(DEFAULTS["lights"]), random.Random(99))
+    single_zone_lights = place_commercial_lights([zone_a], dataclass_from_dict(LightConfig, DEFAULTS["lights"]), random.Random(99))
     assert len(lights) > len(single_zone_lights)
 
 

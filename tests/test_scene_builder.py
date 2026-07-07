@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from streets_at_night.config.defaults import DEFAULTS
-from streets_at_night.config.loader import _build_light_config
+from streets_at_night.config.serde import dataclass_from_dict
 from streets_at_night.config.schema import (
     AtmosphereConfig,
     BoundsConfig,
@@ -39,7 +39,7 @@ from streets_at_night.placement.scene_builder import populate_lights
 @pytest.fixture
 def light_config() -> LightConfig:
     """Return a default LightConfig from project defaults."""
-    return _build_light_config(DEFAULTS["lights"])
+    return dataclass_from_dict(LightConfig, DEFAULTS["lights"])
 
 
 @pytest.fixture

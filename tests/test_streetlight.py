@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 
 from streets_at_night.config.defaults import DEFAULTS
-from streets_at_night.config.loader import _build_streetlight_config
-from streets_at_night.config.schema import FixtureProfileConfig
+from streets_at_night.config.serde import dataclass_from_dict
+from streets_at_night.config.schema import FixtureProfileConfig, StreetLightConfig
 from streets_at_night.models.illumination import BeamIllumination
 from streets_at_night.models.light_source import LightSource
 from streets_at_night.models.road_types import RoadType
@@ -36,7 +36,7 @@ def rng() -> random.Random:
 @pytest.fixture
 def streetlight_config():
     """Return a StreetLightConfig built from project defaults."""
-    return _build_streetlight_config(DEFAULTS["lights"]["streetlights"])
+    return dataclass_from_dict(StreetLightConfig, DEFAULTS["lights"]["streetlights"])
 
 
 @pytest.fixture
