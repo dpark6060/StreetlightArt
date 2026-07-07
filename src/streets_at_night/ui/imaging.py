@@ -7,6 +7,7 @@ under public names.
 
 from dataclasses import dataclass
 
+import numpy as np
 import pygame
 from PIL import Image
 
@@ -95,3 +96,19 @@ def pil_to_pygame_surface(image: Image.Image) -> pygame.Surface:
     rgb_image = image.convert("RGB")
     raw = rgb_image.tobytes()
     return pygame.image.frombytes(raw, rgb_image.size, "RGB")
+
+
+def array_to_pygame_surface(frame: np.ndarray) -> pygame.Surface:
+    """Convert an (H, W, 3) uint8 RGB numpy frame to a pygame Surface.
+
+    Used by the live heat-haze preview, which produces a warped frame per tick
+    on the main thread (exactly as the CLI pygame animate loop does).
+
+    Args:
+        frame (np.ndarray): (H, W, 3) uint8 RGB array.
+
+    Returns:
+        pygame.Surface: Equivalent pygame surface in RGB mode.
+    """
+    height, width = frame.shape[0], frame.shape[1]
+    return pygame.image.frombytes(frame.tobytes(), (width, height), "RGB")
