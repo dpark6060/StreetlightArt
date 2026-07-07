@@ -10,7 +10,6 @@ import pytest
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 import pygame  # noqa: E402
-import pygame_gui  # noqa: E402
 
 from streets_at_night.config.defaults import DEFAULTS  # noqa: E402
 from streets_at_night.config.schema import SceneConfig  # noqa: E402
@@ -18,16 +17,6 @@ from streets_at_night.config.serde import dataclass_from_dict  # noqa: E402
 from streets_at_night.ui.app_state import AppState  # noqa: E402
 from streets_at_night.ui.jobs import JobEvent, JobRunner  # noqa: E402
 from streets_at_night.ui.tabs.animate_tab import AnimateTab, _GATE_STATUS  # noqa: E402
-
-
-@pytest.fixture
-def headless_manager():
-    """Provide a headless pygame display + UIManager, torn down after the test."""
-    pygame.init()
-    pygame.display.set_mode((1440, 900))
-    manager = pygame_gui.UIManager((1440, 900))
-    yield manager
-    pygame.quit()
 
 
 @pytest.fixture

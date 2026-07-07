@@ -19,16 +19,6 @@ from streets_at_night.devmode.slider_registry import SliderRegistry  # noqa: E40
 
 
 @pytest.fixture
-def headless_manager():
-    """Provide a headless pygame display + UIManager, torn down after the test."""
-    pygame.init()
-    pygame.display.set_mode((1440, 900))
-    manager = pygame_gui.UIManager((1440, 900))
-    yield manager
-    pygame.quit()
-
-
-@pytest.fixture
 def scroll(headless_manager):
     """Provide a scrolling container to parent widgets into."""
     return pygame_gui.elements.UIScrollingContainer(
