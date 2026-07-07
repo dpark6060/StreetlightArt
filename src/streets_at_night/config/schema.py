@@ -314,7 +314,6 @@ class HeatHazeLayerConfig:
     the whole frame bulging as one big eddy.
     """
 
-    r0: float
     L0: float
     pixel_scale_m: float
     weight: float

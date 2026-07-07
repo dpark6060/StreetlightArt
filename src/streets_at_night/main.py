@@ -579,12 +579,16 @@ def cmd_animate_record(
     """
     out_path: Path = args.record
     out_w, out_h = _resolve_record_dimensions(args, config)
-    duration = args.duration if args.duration is not None else _default_video_duration(heat_haze_cfg)
     fps = max(1, int(args.fps))
-    n_frames = max(1, int(round(duration * fps)))
 
     base_frame = _load_animate_base_frame(args.image, out_w, out_h)
     haze = _build_animate_haze(config, heat_haze_cfg, base_frame, out_w, out_h)
+
+    # Duration is derived from the *built* haze so its loop period reflects the
+    # effective (resolution-scaled) screens; computing it from raw config would
+    # miss the loop point at any width != 1920 and break --seamless.
+    duration = args.duration if args.duration is not None else _default_video_duration(haze)
+    n_frames = max(1, int(round(duration * fps)))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     print(
@@ -623,28 +627,26 @@ def _resolve_record_dimensions(
     return int(width), int(height)
 
 
-def _default_video_duration(heat_haze_cfg: HeatHazeConfig) -> float:
-    """Pick a default video duration covering one cycle of the slowest layer.
+def _default_video_duration(haze: HeatHaze) -> float:
+    """Pick a default video duration covering one cyclic loop of the haze.
 
-    For each layer, the cyclic period along an axis is
-    ``screen_dim / |wind_along_axis|``. The slowest layer's period (across
-    both axes) sets the natural "loop length".
+    Uses the haze's ``loop_period_s()`` — computed from the effective
+    (resolution-scaled, clamped) phase screens and winds — so the default
+    ``--duration`` lands exactly on the cycle boundary at any output width.
+    Deriving it from raw config instead would miss the loop point by the
+    resolution scale factor and make ``--seamless`` crossfade mid-cycle.
 
     Args:
-        heat_haze_cfg: Active HeatHazeConfig.
+        haze (HeatHaze): The built haze whose loop period sets the length.
 
     Returns:
-        float: Default duration in seconds, no less than 4 s.
+        float: Default duration in seconds, no less than 4 s (10 s if the
+        haze has no moving layers).
     """
-    if not heat_haze_cfg.layers:
+    period = haze.loop_period_s()
+    if period <= 0.0:
         return 10.0
-    longest = 0.0
-    for lc in heat_haze_cfg.layers:
-        if abs(lc.wind_y_pxs) > 1e-9:
-            longest = max(longest, heat_haze_cfg.screen_height_px / abs(lc.wind_y_pxs))
-        if abs(lc.wind_x_pxs) > 1e-9:
-            longest = max(longest, heat_haze_cfg.screen_width_px / abs(lc.wind_x_pxs))
-    return max(4.0, longest)
+    return max(4.0, period)
 
 
 def _record_haze(haze: HeatHaze, fps: int, n_frames: int, out_path: Path) -> None:

@@ -48,22 +48,27 @@ def kolmogorov_screen_fft(
     height: int,
     width: int,
     pixel_scale_m: float,
-    r0: float,
     L0: float,
     seed: int,
 ) -> np.ndarray:
     """Generate a Kolmogorov-spectrum phase screen via FFT-filtered noise.
 
     Implements the Von Karman PSD (Kolmogorov with finite outer scale):
-        Phi_phi(k) = 0.023 * r0^(-5/3) * (k^2 + 1/L0^2)^(-11/6)
+        Phi_phi(k) = (k^2 + 1/L0^2)^(-11/6)
     Filters complex white noise in Fourier space by sqrt(Phi_phi(k)) and
     inverse-FFTs to a real-valued phase screen.
+
+    The classic Von Karman PSD carries a leading ``0.023 * r0^(-5/3)`` factor
+    (r0 = Fried parameter), but the caller renormalizes each screen to a target
+    std, so any uniform PSD scale — including that whole factor — cancels
+    exactly. Only the PSD *shape* (set by ``L0`` relative to ``pixel_scale_m``)
+    survives, so r0 is not a parameter here. Per-layer amplitude is set by the
+    layer ``weight`` at renormalization time.
 
     Args:
         height (int): Screen height in pixels.
         width (int): Screen width in pixels.
         pixel_scale_m (float): Meters per pixel in the atmospheric phase plane.
-        r0 (float): Fried parameter (m). Smaller -> more distortion.
         L0 (float): Outer scale (m). The largest eddy size; eddy size in the
             output image is approximately L0 / pixel_scale_m pixels.
         seed (int): RNG seed for reproducibility.
@@ -75,7 +80,7 @@ def kolmogorov_screen_fft(
     fy = np.fft.fftfreq(height, d=pixel_scale_m)[:, None]
     fx = np.fft.fftfreq(width, d=pixel_scale_m)[None, :]
     k2 = (2 * np.pi * fx) ** 2 + (2 * np.pi * fy) ** 2
-    psd = 0.023 * (r0 ** (-5.0 / 3.0)) * (k2 + (1.0 / L0) ** 2) ** (-11.0 / 6.0)
+    psd = (k2 + (1.0 / L0) ** 2) ** (-11.0 / 6.0)
     psd[0, 0] = 0.0
     noise = rng.standard_normal((height, width)) + 1j * rng.standard_normal((height, width))
     field_F = noise * np.sqrt(psd) * np.sqrt(height * width) * pixel_scale_m
@@ -254,9 +259,30 @@ class HazeField:
             np.ndarray: (H_screen, W_screen) float32 weighted phase screen.
         """
         scr = kolmogorov_screen_fft(
-            self._h_screen, self._w_screen, lc.pixel_scale_m, lc.r0, lc.L0, seed,
+            self._h_screen, self._w_screen, lc.pixel_scale_m, lc.L0, seed,
         )
         return (scr / (scr.std() + 1e-9) * lc.weight).astype(np.float32)
+
+    def loop_period_s(self) -> float:
+        """Compute the cyclic loop period, in seconds, from the built screens.
+
+        Each layer's window wraps around the phase screen, so its period along
+        an axis is ``screen_dim / |wind|``. The slowest layer/axis sets the
+        loop length. Uses the *clamped* screen dimensions actually built (after
+        the ``max(screen, out)`` guard), so the value reflects what the warp
+        really does — this is what makes ``--seamless`` land on the boundary.
+
+        Returns:
+            float: The slowest layer/axis period in seconds, or 0.0 if there
+            are no layers with motion.
+        """
+        longest = 0.0
+        for lay in self._layers:
+            if abs(lay["wind_y"]) > 1e-9:
+                longest = max(longest, self._h_screen / abs(lay["wind_y"]))
+            if abs(lay["wind_x"]) > 1e-9:
+                longest = max(longest, self._w_screen / abs(lay["wind_x"]))
+        return longest
 
     def sample(self, t: float) -> t.Tuple[np.ndarray, np.ndarray]:
         """Compute the (dx, dy) displacement field at time t (seconds).
@@ -513,7 +539,6 @@ class HeatHaze:
         res_scale = self._width / _REFERENCE_WIDTH_PX
         scaled_layers = [
             HeatHazeLayerConfig(
-                r0=lc.r0,
                 L0=lc.L0,
                 pixel_scale_m=lc.pixel_scale_m / res_scale,
                 weight=lc.weight,
@@ -522,17 +547,35 @@ class HeatHaze:
             )
             for lc in config.layers
         ]
+        # Scale the phase-screen dimensions by the same res_scale as the winds.
+        # If only the winds scaled (as they historically did), the cyclic loop
+        # period screen/(wind*res_scale) would drift with resolution and break
+        # --seamless recordings at any width != 1920. Scaling both keeps the
+        # period resolution-invariant (see loop_period_s).
         self._field = HazeField(
             out_height=self._height,
             out_width=self._width,
-            screen_height=int(config.screen_height_px),
-            screen_width=int(config.screen_width_px),
+            screen_height=int(config.screen_height_px * res_scale),
+            screen_width=int(config.screen_width_px * res_scale),
             amplitude_px=config.amplitude_px * res_scale,
             layers=scaled_layers,
             seed=int(config.seed),
         )
         self._warper = TorchWarper(device=device or select_torch_device())
         self._distance_scale: t.Optional[np.ndarray] = None
+
+    def loop_period_s(self) -> float:
+        """Return the animation's cyclic loop period in seconds.
+
+        Computed from the effective (post-resolution-scale, post-clamp) phase
+        screens and winds, so the value is resolution-invariant: recording
+        exactly ``loop_period_s() * fps`` frames yields a seamless loop at any
+        output width.
+
+        Returns:
+            float: Loop period in seconds (0.0 if no layer has motion).
+        """
+        return self._field.loop_period_s()
 
     def set_base_frame(self, frame: np.ndarray) -> None:
         """Upload a new base frame to the GPU.

@@ -530,7 +530,6 @@ DEFAULTS: dict = {
         # is what real heat shimmer looks like — hot air rising.
         "layers": [
             {
-                "r0": 0.10,
                 "L0": 2.5,
                 "pixel_scale_m": 0.5,
                 "weight": 0.6,
@@ -538,7 +537,6 @@ DEFAULTS: dict = {
                 "wind_y_pxs": 35.0,
             },
             {
-                "r0": 0.10,
                 "L0": 1.0,
                 "pixel_scale_m": 0.2,
                 "weight": 0.8,
@@ -546,7 +544,6 @@ DEFAULTS: dict = {
                 "wind_y_pxs": 70.0,
             },
             {
-                "r0": 0.10,
                 "L0": 0.3,
                 "pixel_scale_m": 0.1,
                 "weight": 1.0,

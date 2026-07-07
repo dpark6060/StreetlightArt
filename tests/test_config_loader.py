@@ -349,7 +349,9 @@ def test_load_config_heat_haze_layers_override(heat_haze_layers_override_toml: P
     # Assert — single user-defined layer replaces the multi-layer default list
     assert len(result.heat_haze.layers) == 1
     layer = result.heat_haze.layers[0]
-    assert layer.r0 == 0.2
+    # The legacy 'r0' key in the TOML is silently ignored — the field was
+    # removed (it was a mathematical no-op under screen renormalization).
+    assert not hasattr(layer, "r0")
     assert layer.L0 == 1.0
     assert layer.pixel_scale_m == 0.1
     assert layer.weight == 0.5
