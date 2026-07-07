@@ -8,8 +8,6 @@ Subcommands:
 
 import argparse
 import time
-import tomllib
-import tomli_w
 import typing as t
 from pathlib import Path
 
@@ -21,17 +19,17 @@ from dataclasses import dataclass
 from PIL import Image
 
 from .camera.camera import create_camera
-from .camera.coordinates import (
-    CoordinateTransformer,
-    create_transformer,
-    enu_to_wgs84,
-    feet_to_meters,
-    meters_to_feet,
-    wgs84_to_enu,
-)
+from .camera.coordinates import create_transformer
+from .config.camera_io import save_camera_position
 from .config.loader import load_config
 from .config.paths import compute_origin, resolve_cache_dir
-from .config.schema import BoundsConfig, HeatHazeConfig, QualityPreset, SceneConfig
+from .config.schema import HeatHazeConfig, QualityPreset, SceneConfig
+from .scene_loader import (
+    bounds_to_bbox,
+    camera_position_enu,
+    load_scene,
+    target_position_enu,
+)
 from .rendering.heat_haze import HeatHaze, compute_depth_map
 from .data.osm_loader import load_buildings, load_land_use, load_roads
 from .data.road_classifier import classify_roads
@@ -43,7 +41,6 @@ from .rendering.render_pipeline import (
     render_scene_frame,
     render_scene_frame_with_progress,
 )
-from .placement.scene_builder import build_scene
 from .scene.scene import Scene
 
 if t.TYPE_CHECKING:
@@ -277,7 +274,7 @@ def cmd_verify(config: SceneConfig, output_path: Path, cache_dir: Path) -> None:
     cache_dir.mkdir(parents=True, exist_ok=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    bbox = _bounds_to_bbox(config.bounds)
+    bbox = bounds_to_bbox(config.bounds)
 
     print("Loading road network...")
     roads_raw = load_roads(bbox, cache_dir)
@@ -318,7 +315,7 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
     cache_dir = resolve_cache_dir(getattr(args, "cache_dir", Path("cache")), config)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    scene = _load_scene(config, args.quality, cache_dir)
+    scene = load_scene(config, args.quality, cache_dir)
 
     print("Generating flat map for preview...")
     flat_map, flat_meta = get_flat_map(scene, cache_dir)
@@ -385,7 +382,7 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
         if result.screenshot:
             _save_screenshot(scene, args.quality, config)
         if result.save_camera:
-            _save_camera_position(scene, args.config)
+            save_camera_position(scene, args.config)
 
         camera_moved = (
             not np.array_equal(scene.camera.position, prev_pos)
@@ -541,8 +538,8 @@ def _build_animate_haze(
     """
     transformer = create_transformer(*compute_origin(config))
     camera = create_camera(
-        position=_camera_position_enu(config, transformer),
-        target=_target_position_enu(config, transformer),
+        position=camera_position_enu(config, transformer),
+        target=target_position_enu(config, transformer),
         fov_deg=config.camera.fov,
         aspect_ratio=display_width / display_height,
         near=config.camera.near,
@@ -782,7 +779,7 @@ def cmd_render(
     preset = config.quality_presets[quality]
     preset = _apply_resolution_overrides(preset, width_override, height_override)
 
-    scene = _load_scene(config, quality, cache_dir)
+    scene = load_scene(config, quality, cache_dir)
 
     print(f"Rendering at {preset.width}×{preset.height}...")
     backend = PillowBackend(preset.width, preset.height)
@@ -894,69 +891,6 @@ def _resolve_output_format(output_path: Path, format_override: t.Optional[str]) 
     return "PNG"
 
 
-def _load_scene(
-    config: SceneConfig,
-    quality: str,
-    cache_dir: Path,
-) -> Scene:
-    """Load OSM data and build a fully populated Scene.
-
-    Downloads (or loads cached) road, land use, and building data, classifies
-    roads, creates the coordinate transformer and camera, then delegates to
-    build_scene which populates road segments, zone lists, and all lights.
-
-    Args:
-        config (SceneConfig): Loaded scene configuration.
-        quality (str): Quality preset name for aspect ratio.
-        cache_dir (Path): Directory for OSM data cache files.
-
-    Returns:
-        Scene: Fully constructed scene with camera, spatial index, zones,
-            and all light sources placed.
-    """
-    preset = config.quality_presets[quality]
-    bbox = _bounds_to_bbox(config.bounds)
-
-    print("Loading road network...")
-    roads_raw = load_roads(bbox, cache_dir)
-    roads = classify_roads(roads_raw)
-    print(f"  {len(roads)} road segments loaded.")
-
-    origin_lat, origin_lon = compute_origin(config)
-    print(f"Coordinate origin: {origin_lat:.4f}N, {origin_lon:.4f}W")
-    transformer = create_transformer(origin_lat, origin_lon)
-
-    cam_pos = _camera_position_enu(config, transformer)
-    target_pos = _target_position_enu(config, transformer)
-    aspect_ratio = preset.width / preset.height
-
-    camera = create_camera(
-        position=cam_pos,
-        target=target_pos,
-        fov_deg=config.camera.fov,
-        aspect_ratio=aspect_ratio,
-        near=config.camera.near,
-        far=config.camera.far,
-    )
-    print(
-        f"Camera at ENU {cam_pos}, looking at {target_pos}, "
-        f"FOV {config.camera.fov}deg"
-    )
-
-    print("Loading land use data...")
-    land_use = load_land_use(bbox, cache_dir)
-    print(f"  {len(land_use)} land use features loaded.")
-
-    print("Loading building footprints...")
-    buildings = load_buildings(bbox, cache_dir)
-    print(f"  {len(buildings)} building footprints loaded.")
-
-    print("Building scene and spatial index...")
-    scene = build_scene(roads, transformer, camera, config, land_use, buildings)
-    print(f"  {len(scene.road_segments)} segments indexed.")
-    return scene
-
-
 def _save_screenshot(scene: Scene, quality: str, config: SceneConfig) -> None:
     """Render a high-res screenshot via the Pillow backend and save it.
 
@@ -973,127 +907,6 @@ def _save_screenshot(scene: Scene, quality: str, config: SceneConfig) -> None:
     screenshot_path.parent.mkdir(parents=True, exist_ok=True)
     img.save(str(screenshot_path))
     print(f"Screenshot saved: {screenshot_path}")
-
-
-def _save_camera_position(scene: Scene, toml_path: Path) -> None:
-    """Save current camera position and target to the TOML config file.
-
-    Converts camera ENU position and target back to WGS84 lat/lon and altitude
-    in feet, then updates the [camera] section in the TOML file. All other
-    sections are preserved.
-
-    Prints an error if the scene has no transformer (camera cannot be converted).
-
-    Args:
-        scene (Scene): The current world scene (must have transformer set).
-        toml_path (Path): Path to the TOML config file to update.
-    """
-    if scene.transformer is None:
-        print("Cannot save camera: scene has no coordinate transformer.")
-        return
-
-    camera_data = _build_camera_toml_dict(scene)
-    _write_camera_to_toml(toml_path, camera_data)
-    print(f"Camera position saved to {toml_path}")
-
-
-def _build_camera_toml_dict(scene: Scene) -> t.Dict[str, float]:
-    """Convert the current camera ENU state to a TOML-ready dict.
-
-    Args:
-        scene (Scene): The current world scene with transformer set.
-
-    Returns:
-        dict[str, float]: Camera fields ready to write into the TOML [camera] section.
-    """
-    camera = scene.camera
-    transformer = scene.transformer
-
-    pos = camera.position
-    lat, lon, alt_m = enu_to_wgs84(transformer, pos[0], pos[1], pos[2])
-    alt_ft = meters_to_feet(alt_m)
-
-    tgt = camera.target
-    target_lat, target_lon, target_alt_m = enu_to_wgs84(
-        transformer, tgt[0], tgt[1], tgt[2]
-    )
-    target_alt_ft = meters_to_feet(target_alt_m)
-
-    return {
-        "lat": lat,
-        "lon": lon,
-        "altitude_ft": alt_ft,
-        "target_lat": target_lat,
-        "target_lon": target_lon,
-        "target_altitude_ft": target_alt_ft,
-        "fov": camera.fov_deg,
-    }
-
-
-def _write_camera_to_toml(toml_path: Path, camera_data: t.Dict[str, float]) -> None:
-    """Read the existing TOML file, replace [camera] values, and write it back.
-
-    Args:
-        toml_path (Path): Path to the TOML config file.
-        camera_data (dict[str, float]): Updated camera field values.
-    """
-    with open(toml_path, "rb") as f:
-        data = tomllib.load(f)
-
-    data["camera"].update(camera_data)
-
-    with open(toml_path, "wb") as f:
-        tomli_w.dump(data, f)
-
-
-def _bounds_to_bbox(bounds: BoundsConfig) -> tuple:
-    """Convert a BoundsConfig to a (north, south, east, west) tuple.
-
-    Args:
-        bounds (BoundsConfig): Geographic bounds from config.
-
-    Returns:
-        tuple: (north, south, east, west) floats.
-    """
-    return (bounds.north, bounds.south, bounds.east, bounds.west)
-
-
-def _camera_position_enu(
-    config: SceneConfig,
-    transformer: CoordinateTransformer,
-) -> np.ndarray:
-    """Convert the camera position from WGS84+ft to ENU meters.
-
-    Args:
-        config (SceneConfig): Scene configuration with camera section.
-        transformer (CoordinateTransformer): Configured coordinate transformer.
-
-    Returns:
-        np.ndarray: (3,) ENU position in meters.
-    """
-    alt_m = feet_to_meters(config.camera.altitude_ft)
-    e, n, u = wgs84_to_enu(transformer, config.camera.lat, config.camera.lon, alt_m)
-    return np.array([e, n, u])
-
-
-def _target_position_enu(
-    config: SceneConfig,
-    transformer: CoordinateTransformer,
-) -> np.ndarray:
-    """Convert the camera target from WGS84+ft to ENU meters.
-
-    Args:
-        config (SceneConfig): Scene configuration with camera section.
-        transformer (CoordinateTransformer): Configured coordinate transformer.
-
-    Returns:
-        np.ndarray: (3,) ENU position in meters.
-    """
-    alt_m = feet_to_meters(config.camera.target_altitude_ft)
-    e, n, u = wgs84_to_enu(
-        transformer, config.camera.target_lat, config.camera.target_lon, alt_m
-    )
-    return np.array([e, n, u])
 
 
 if __name__ == "__main__":

@@ -182,17 +182,23 @@ def render_scene_frame_with_progress(
     backend: RenderBackend,
     passes: t.List[RenderPass],
     pass_names: t.List[str],
+    progress: t.Optional[t.Callable[[str, float], None]] = None,
 ) -> t.Dict[str, t.Any]:
-    """Run all render passes in order, printing progress before each pass.
+    """Run all render passes in order, reporting progress before each pass.
 
-    Prints "Rendering pass N/total: name..." to stdout before each pass.
-    Return value format matches render_scene_frame.
+    When ``progress`` is None (the CLI default) this prints
+    "Rendering pass N/total: name..." to stdout before each pass. When a
+    callback is supplied it receives ``(message, fraction)`` before each pass
+    (fraction = i / total) plus a final ``("Render complete", 1.0)`` call, and
+    nothing is printed. Return value format matches render_scene_frame.
 
     Args:
         scene (Scene): The world scene with camera and road segments.
         backend (RenderBackend): Target render surface.
         passes (list[RenderPass]): Ordered passes to run.
         pass_names (list[str]): Human-readable names matching pass order.
+        progress (Callable[[str, float], None] | None): Optional progress sink
+            receiving (message, fraction) per pass and a final completion call.
 
     Returns:
         dict[str, Any]: Accumulated stats from all passes.
@@ -201,12 +207,18 @@ def render_scene_frame_with_progress(
     stats: t.Dict[str, t.Any] = {}
 
     for i, (render_pass, name) in enumerate(zip(passes, pass_names)):
-        print(f"Rendering pass {i + 1}/{total}: {name}...")
+        if progress is None:
+            print(f"Rendering pass {i + 1}/{total}: {name}...")
+        else:
+            progress(f"Rendering pass {i + 1}/{total}: {name}", i / total)
         result = render_pass(scene, scene.camera, backend)
         if isinstance(result, dict):
             stats.update(result)
         elif isinstance(result, int):
             stats["segments_drawn"] = result
+
+    if progress is not None:
+        progress("Render complete", 1.0)
 
     return stats
 

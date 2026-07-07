@@ -216,3 +216,50 @@ def test_render_scene_frame_with_progress_prints_correct_total(capsys):
     assert "1/3" in captured.out
     assert "2/3" in captured.out
     assert "3/3" in captured.out
+
+
+def test_render_scene_frame_with_progress_callback_fractions_and_completion(capsys):
+    # Arrange
+    from unittest import mock
+
+    mock_scene = mock.MagicMock()
+    mock_scene.camera = mock.MagicMock()
+    mock_backend = mock.MagicMock()
+
+    passes = [mock.MagicMock(return_value=None) for _ in range(2)]
+    pass_names = ["ground", "roads"]
+    calls = []
+
+    # Act
+    render_scene_frame_with_progress(
+        mock_scene, mock_backend, passes, pass_names,
+        progress=lambda msg, frac: calls.append((msg, frac)),
+    )
+
+    # Assert — one call per pass with ascending fractions, plus final completion
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    fractions = [frac for _, frac in calls]
+    assert fractions == [0.0, 0.5, 1.0]
+    assert calls[-1] == ("Render complete", 1.0)
+
+
+def test_render_scene_frame_with_progress_callback_suppresses_print(capsys):
+    # Arrange
+    from unittest import mock
+
+    mock_scene = mock.MagicMock()
+    mock_scene.camera = mock.MagicMock()
+    mock_backend = mock.MagicMock()
+
+    mock_pass = mock.MagicMock(return_value=None)
+
+    # Act
+    render_scene_frame_with_progress(
+        mock_scene, mock_backend, [mock_pass], ["ground"],
+        progress=mock.MagicMock(),
+    )
+
+    # Assert — nothing printed when a callback is supplied
+    captured = capsys.readouterr()
+    assert captured.out == ""
