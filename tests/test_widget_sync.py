@@ -1,5 +1,5 @@
 # Radical
-"""Tests for devmode.widget_sync: dirty marking, value formatting, clamping."""
+"""Tests for devmode.widget_sync: dirty marking, value formatting, range expansion."""
 
 from unittest import mock
 
@@ -58,7 +58,7 @@ def test_update_value_entry_formats_int():
     entry.set_text.assert_called_once_with("5")
 
 
-def test_apply_entry_to_slider_clamps_and_sets_slider():
+def test_apply_entry_to_slider_above_max_expands_range_not_clamps():
     # Arrange
     registry = SliderRegistry()
     slider = mock.MagicMock()
@@ -70,8 +70,48 @@ def test_apply_entry_to_slider_clamps_and_sets_slider():
     # Act
     apply_entry_to_slider(entry, registry)
 
-    # Assert — clamped to max, slider updated, dirty marked.
-    slider.set_current_value.assert_called_once_with(10.0)
+    # Assert — range widened to fit 99, true value set (not clamped to 10).
+    assert descriptor.max_val == 99.0
+    assert slider.value_range == (0.0, 99.0)
+    slider.set_current_value.assert_called_once_with(99.0, warn=False)
+    entry.set_text.assert_called_once_with("99.000")
+    assert "A:val" in registry.dirty
+
+
+def test_apply_entry_to_slider_below_min_expands_min():
+    # Arrange
+    registry = SliderRegistry()
+    slider = mock.MagicMock()
+    entry = mock.MagicMock()
+    entry.get_text.return_value = "-4.0"
+    descriptor = SliderDescriptor("A:val", ("val",), 0.0, 10.0)
+    registry.register_slider(slider, descriptor, entry)
+
+    # Act
+    apply_entry_to_slider(entry, registry)
+
+    # Assert — min widened to fit -4, value set unclamped.
+    assert descriptor.min_val == -4.0
+    assert slider.value_range == (-4.0, 10.0)
+    slider.set_current_value.assert_called_once_with(-4.0, warn=False)
+
+
+def test_apply_entry_to_slider_within_range_leaves_range_unchanged():
+    # Arrange
+    registry = SliderRegistry()
+    slider = mock.MagicMock()
+    entry = mock.MagicMock()
+    entry.get_text.return_value = "5.0"
+    descriptor = SliderDescriptor("A:val", ("val",), 0.0, 10.0)
+    registry.register_slider(slider, descriptor, entry)
+
+    # Act
+    apply_entry_to_slider(entry, registry)
+
+    # Assert — range untouched, value set.
+    assert descriptor.min_val == 0.0
+    assert descriptor.max_val == 10.0
+    slider.set_current_value.assert_called_once_with(5.0, warn=False)
     assert "A:val" in registry.dirty
 
 

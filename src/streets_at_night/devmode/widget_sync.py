@@ -49,11 +49,14 @@ def apply_entry_to_slider(entry: t.Any, registry: SliderRegistry) -> None:
     """Parse a finished value text entry and update its linked slider.
 
     If the entry belongs to a slider's value entry, parse the text as a float
-    (or int when the descriptor is flagged integer), clamp to the slider's
-    range, and call set_current_value on the slider. Marks the slider dirty so
-    apply_widgets_to_config knows the user changed it. Entries that are not a
-    slider's value entry (e.g. plain string fields) are ignored here — they are
-    written by apply_widgets_to_config directly.
+    (or int when the descriptor is flagged integer). A typed value outside the
+    slider's current range EXPANDS the range to fit it rather than clamping —
+    the UI must never silently cap a value the user explicitly entered. The
+    descriptor and the live slider's ``value_range`` are widened together, then
+    the value is set. Marks the slider dirty so apply_widgets_to_config knows
+    the user changed it. Entries that are not a slider's value entry (e.g. plain
+    string fields) are ignored here — they are written by apply_widgets_to_config
+    directly.
 
     Args:
         entry: The UITextEntryLine that fired the finished event.
@@ -74,15 +77,33 @@ def apply_entry_to_slider(entry: t.Any, registry: SliderRegistry) -> None:
 
     registry.mark_dirty(descriptor.label)
 
-    if descriptor.is_int:
-        value = float(int(round(raw)))
-    else:
-        value = raw
-
-    clamped = max(descriptor.min_val, min(descriptor.max_val, value))
-    slider.set_current_value(clamped)
+    value = float(int(round(raw))) if descriptor.is_int else raw
+    _fit_range_to_value(slider, descriptor, value)
+    slider.set_current_value(value, warn=False)
 
     if descriptor.is_int:
-        entry.set_text(str(int(round(clamped))))
+        entry.set_text(str(int(round(value))))
     else:
-        entry.set_text(f"{clamped:.3f}")
+        entry.set_text(f"{value:.3f}")
+
+
+def _fit_range_to_value(slider: t.Any, descriptor: t.Any, value: float) -> None:
+    """Widen the slider and descriptor range so value is representable.
+
+    Only expands — a value inside the current range leaves it untouched. Keeps
+    the descriptor (read by apply_widgets_to_config) and the live slider's
+    ``value_range`` (read by set_current_value) in sync so the true typed value
+    reaches config instead of a clamped one.
+
+    Args:
+        slider: The UIHorizontalSlider whose value_range to widen.
+        descriptor: The SliderDescriptor whose min_val/max_val to widen.
+        value (float): The value that must fit within the range.
+    """
+    min_val = min(descriptor.min_val, value)
+    max_val = max(descriptor.max_val, value)
+    if min_val == descriptor.min_val and max_val == descriptor.max_val:
+        return
+    descriptor.min_val = min_val
+    descriptor.max_val = max_val
+    slider.value_range = (min_val, max_val)
