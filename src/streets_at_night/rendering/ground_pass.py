@@ -249,8 +249,20 @@ def _composite_tile_pixels(
 
     tile_id = tile_y * grid.num_tiles_x + tile_x
     unique_ids, inverse = np.unique(tile_id, return_inverse=True)
+    inverse = inverse.reshape(-1)  # numpy>=2 can return a non-1D inverse
+
+    # Group the ground pixels by tile with a single sort so each tile's pixels
+    # form a contiguous slice of `order`. This replaces an
+    # O(unique_tiles x ground_pixels) scan (a full `inverse == k` per tile)
+    # with one O(N log N) pass. Assignment order within a group is irrelevant
+    # since every ground pixel maps to a distinct output index, so the result
+    # is identical to the per-tile boolean-mask version.
+    order = np.argsort(inverse)
+    group_ends = np.cumsum(np.bincount(inverse, minlength=len(unique_ids)))
+    starts = np.concatenate(([0], group_ends))
 
     for k, tile_id_value in enumerate(unique_ids):
+        seg = order[starts[k]:starts[k + 1]]
         tx = int(tile_id_value % grid.num_tiles_x)
         ty = int(tile_id_value // grid.num_tiles_x)
         tile_key = (tx, ty)
@@ -258,8 +270,7 @@ def _composite_tile_pixels(
             tile_cache[tile_key] = np.asarray(get_tile(tx, ty, grid, scene, tile_cache_dir))
         tile_arr = tile_cache[tile_key]
 
-        sel = inverse == k
-        output[flat_idx[sel]] = tile_arr[tile_py[sel], tile_px[sel]]
+        output[flat_idx[seg]] = tile_arr[tile_py[seg], tile_px[seg]]
 
 
 def _camera_ground_rect(camera: Camera) -> t.Tuple[float, float, float, float]:

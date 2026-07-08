@@ -1,5 +1,5 @@
-region_name = "san_bernardino"
 seed = 42
+region_name = "san_bernardino"
 
 [camera]
 lat = 34.23488095949135
@@ -98,7 +98,6 @@ weight = 0.9
 
 [lights.streetlights.highway.profile]
 color_temp_k = 5018.518518518518
-saturation = 1.0
 height_min = 12.0
 height_max = 15.0
 brightness_min = 0.4074074074074074
@@ -109,13 +108,13 @@ illumination_intensity = 1.4814814814814814
 spacing_min = 40.0
 spacing_max = 60.0
 side = "both"
+saturation = 1.0
 
 [[lights.streetlights.highway]]
 weight = 0.1
 
 [lights.streetlights.highway.profile]
 color_temp_k = 5018.518518518518
-saturation = 1.0
 height_min = 12.0
 height_max = 15.0
 brightness_min = 0.4074074074074074
@@ -126,13 +125,13 @@ illumination_intensity = 1.4814814814814814
 spacing_min = 40.0
 spacing_max = 60.0
 side = "both"
+saturation = 1.0
 
 [[lights.streetlights.major_road]]
 weight = 0.55
 
 [lights.streetlights.major_road.profile]
 color_temp_k = 4500.0
-saturation = 1.6666666666666667
 height_min = 8.0
 height_max = 10.0
 brightness_min = 0.75
@@ -143,13 +142,13 @@ illumination_intensity = 0.75
 spacing_min = 35.0
 spacing_max = 50.0
 side = "both"
+saturation = 1.6666666666666667
 
 [[lights.streetlights.major_road]]
 weight = 0.35
 
 [lights.streetlights.major_road.profile]
 color_temp_k = 4500.0
-saturation = 1.6666666666666667
 height_min = 8.0
 height_max = 10.0
 brightness_min = 0.75
@@ -160,13 +159,13 @@ illumination_intensity = 0.75
 spacing_min = 35.0
 spacing_max = 50.0
 side = "both"
+saturation = 1.6666666666666667
 
 [[lights.streetlights.major_road]]
 weight = 0.1
 
 [lights.streetlights.major_road.profile]
 color_temp_k = 4500.0
-saturation = 1.6666666666666667
 height_min = 8.0
 height_max = 10.0
 brightness_min = 0.75
@@ -177,13 +176,13 @@ illumination_intensity = 0.75
 spacing_min = 35.0
 spacing_max = 50.0
 side = "both"
+saturation = 1.6666666666666667
 
 [[lights.streetlights.collector]]
 weight = 0.4
 
 [lights.streetlights.collector.profile]
 color_temp_k = 3203.703703703704
-saturation = 1.3
 height_min = 7.0
 height_max = 9.0
 brightness_min = 0.65
@@ -194,13 +193,13 @@ illumination_intensity = 2.1296296296296298
 spacing_min = 45.0
 spacing_max = 101.48148148148148
 side = "alternating"
+saturation = 1.3
 
 [[lights.streetlights.collector]]
 weight = 0.4
 
 [lights.streetlights.collector.profile]
 color_temp_k = 3203.703703703704
-saturation = 1.3
 height_min = 7.0
 height_max = 9.0
 brightness_min = 0.65
@@ -211,13 +210,13 @@ illumination_intensity = 2.1296296296296298
 spacing_min = 45.0
 spacing_max = 101.48148148148148
 side = "alternating"
+saturation = 1.3
 
 [[lights.streetlights.collector]]
 weight = 0.2
 
 [lights.streetlights.collector.profile]
 color_temp_k = 3203.703703703704
-saturation = 1.3
 height_min = 7.0
 height_max = 9.0
 brightness_min = 0.65
@@ -228,6 +227,7 @@ illumination_intensity = 2.1296296296296298
 spacing_min = 45.0
 spacing_max = 101.48148148148148
 side = "alternating"
+saturation = 1.3
 
 [[lights.streetlights.residential]]
 weight = 0.25
@@ -237,7 +237,6 @@ weight = 0.3
 
 [lights.streetlights.residential.profile]
 color_temp_k = 3074.074074074074
-saturation = 1.1
 height_min = 5.0
 height_max = 7.0
 brightness_min = 0.5
@@ -248,13 +247,13 @@ illumination_intensity = 1.8518518518518516
 spacing_min = 80.0
 spacing_max = 120.0
 side = "one"
+saturation = 1.1
 
 [[lights.streetlights.residential]]
 weight = 0.25
 
 [lights.streetlights.residential.profile]
 color_temp_k = 3074.074074074074
-saturation = 1.1
 height_min = 5.0
 height_max = 7.0
 brightness_min = 0.5
@@ -265,13 +264,13 @@ illumination_intensity = 1.8518518518518516
 spacing_min = 80.0
 spacing_max = 120.0
 side = "one"
+saturation = 1.1
 
 [[lights.streetlights.residential]]
 weight = 0.15
 
 [lights.streetlights.residential.profile]
 color_temp_k = 3074.074074074074
-saturation = 1.1
 height_min = 5.0
 height_max = 7.0
 brightness_min = 0.5
@@ -282,13 +281,13 @@ illumination_intensity = 1.8518518518518516
 spacing_min = 80.0
 spacing_max = 120.0
 side = "one"
+saturation = 1.1
 
 [[lights.streetlights.residential]]
 weight = 0.05
 
 [lights.streetlights.residential.profile]
 color_temp_k = 3074.074074074074
-saturation = 1.1
 height_min = 5.0
 height_max = 7.0
 brightness_min = 0.5
@@ -299,6 +298,7 @@ illumination_intensity = 1.8518518518518516
 spacing_min = 80.0
 spacing_max = 120.0
 side = "both"
+saturation = 1.1
 
 [[lights.streetlights.service]]
 weight = 0.7
@@ -308,7 +308,6 @@ weight = 0.2
 
 [lights.streetlights.service.profile]
 color_temp_k = 5000.0
-saturation = 1.0
 height_min = 4.0
 height_max = 6.0
 brightness_min = 0.4
@@ -319,13 +318,13 @@ illumination_intensity = 1.9444444444444444
 spacing_min = 80.0
 spacing_max = 150.0
 side = "one"
+saturation = 1.0
 
 [[lights.streetlights.service]]
 weight = 0.1
 
 [lights.streetlights.service.profile]
 color_temp_k = 5000.0
-saturation = 1.0
 height_min = 4.0
 height_max = 6.0
 brightness_min = 0.4
@@ -336,10 +335,15 @@ illumination_intensity = 1.9444444444444444
 spacing_min = 80.0
 spacing_max = 150.0
 side = "one"
+saturation = 1.0
 
 [lights.cars]
 separation_min = 1.6
 separation_max = 2.4
+headlight_brightness_min = 0.7
+headlight_brightness_max = 0.9
+taillight_brightness_min = 0.3
+taillight_brightness_max = 0.5
 density_highway_min = 25.0
 density_highway_max = 50.0
 density_major_min = 40.0
@@ -586,17 +590,80 @@ haze_alpha = 28
 vignette_strength = 0.35
 vignette_radius = 0.7
 
+[grade]
+exposure = 0.0
+tonemap = "aces"
+
+[stars]
+stars_enabled = false
+count = 200
+brightness_min = 0.03
+brightness_max = 0.15
+color_variation = 15
+radius = 1.0
+
 [devmode]
 render_width = 896
 render_height = 720
 
 [devmode.camera]
-pos_x = -500.0
-pos_y = 0.0
-pos_z = 800.0
+pos_x = -236.36363636363637
+pos_y = -1036.3636363636338
+pos_z = 30.0
 target_x = 5000.0
-target_y = 0.0
+target_y = -981.8181818181793
 target_z = 0.0
-fov = 35.270270270270274
+fov = 10.0
 near = 100.0
 far = 60000.0
+
+[heat_haze]
+enabled = true
+amplitude_px = 0.5
+max_distance_m = 20000.0
+distance_exponent = 1.5
+sky_distance_factor = 0.5
+seed = 42
+screen_width_px = 2048
+screen_height_px = 4096
+layers = [
+    { L0 = 2.5, pixel_scale_m = 0.5, weight = 0.6, wind_x_pxs = 4.0, wind_y_pxs = 35.0 },
+    { L0 = 1.0, pixel_scale_m = 0.2, weight = 0.8, wind_x_pxs = -3.0, wind_y_pxs = 70.0 },
+    { L0 = 0.3, pixel_scale_m = 0.1, weight = 1.0, wind_x_pxs = 8.0, wind_y_pxs = 120.0 },
+]
+
+[buildings]
+enabled = true
+floor_height_m = 3.2
+height_jitter = 0.12
+building_max_distance_m = 12000.0
+window_max_distance_m = 6000.0
+wall_color = "#0B0A09"
+roof_color = "#080807"
+face_shade_strength = 0.2
+window_lit_fraction = 0.1
+window_width_m = 1.4
+window_height_m = 1.1
+window_pitch_m = 2.4
+window_side_margin_m = 0.8
+window_sill_margin_m = 0.9
+window_roof_margin_m = 0.6
+window_color_temp_min_k = 1900.0
+window_color_temp_max_k = 8333.333333333332
+window_saturation = 0.85
+window_brightness_min = 0.15
+window_brightness_max = 0.5
+window_glow_px = 0.0
+
+[buildings.height_defaults]
+house = 4.5
+detached = 4.5
+residential = 4.5
+garage = 4.5
+apartments = 9.6
+retail = 6.5
+commercial = 6.5
+office = 6.5
+industrial = 8.0
+warehouse = 8.0
+default = 5.0

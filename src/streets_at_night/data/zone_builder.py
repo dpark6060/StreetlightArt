@@ -409,76 +409,70 @@ def _grid_lots(
     Returns:
         List[Polygon]: All footprint polygons on the grid (unfiltered).
     """
-    footprints = []
+    # Generate lot origins with the same nested accumulation (x += lot_w,
+    # y += lot_d) as before, so the exact floating-point sequence — and thus
+    # which boundary lots are included — is preserved. Only the polygon
+    # construction is vectorized: building N shapely polygons in one call
+    # instead of one Polygon() per lot (the dominant cost here).
+    origins = []
     x = min_x
     while x + lot_w <= max_x:
-        footprints.extend(_column_lots(x, min_y, max_y, lot_w, lot_d, coverage))
+        y = min_y
+        while y + lot_d <= max_y:
+            origins.append((x, y))
+            y += lot_d
         x += lot_w
-    return footprints
+
+    if not origins:
+        return []
+    return _make_lot_footprints(np.asarray(origins, dtype=float), lot_w, lot_d, coverage)
 
 
-def _column_lots(
-    x: float,
-    min_y: float,
-    max_y: float,
+def _make_lot_footprints(
+    origins: np.ndarray,
     lot_w: float,
     lot_d: float,
     coverage: float,
 ) -> t.List[Polygon]:
-    """Generate a vertical column of lot footprints at a given x position.
+    """Build coverage-inset house footprints for every lot origin at once.
+
+    Each footprint is inset from its lot edges by the coverage ratio and
+    centered within the lot, matching the previous per-lot construction — the
+    vertex order is identical, so the resulting polygons (and their centroids)
+    are the same. All polygons are created with a single ``shapely.polygons``
+    call rather than one ``Polygon()`` per lot.
 
     Args:
-        x (float): Left edge of this column in ENU metres.
-        min_y (float): Bottom of the column.
-        max_y (float): Top of the column.
+        origins (np.ndarray): (N, 2) lot lower-left corners in ENU metres.
         lot_w (float): Lot width in metres.
         lot_d (float): Lot depth in metres.
-        coverage (float): Footprint coverage fraction (0–1).
+        coverage (float): Fraction of lot covered by the footprint (0–1).
 
     Returns:
-        List[Polygon]: Footprint polygons in this column.
-    """
-    footprints = []
-    y = min_y
-    while y + lot_d <= max_y:
-        footprints.append(_make_lot_footprint(x, y, lot_w, lot_d, coverage))
-        y += lot_d
-    return footprints
-
-
-def _make_lot_footprint(
-    lot_x: float,
-    lot_y: float,
-    lot_w: float,
-    lot_d: float,
-    coverage: float,
-) -> Polygon:
-    """Build a house footprint polygon centered within a lot.
-
-    The footprint is inset from the lot edges using the coverage ratio,
-    centered within the lot rectangle.
-
-    Args:
-        lot_x (float): Lot lower-left X in ENU metres.
-        lot_y (float): Lot lower-left Y in ENU metres.
-        lot_w (float): Lot width in metres.
-        lot_d (float): Lot depth in metres.
-        coverage (float): Fraction of lot covered by footprint (0–1).
-
-    Returns:
-        Polygon: House footprint polygon in ENU metres.
+        List[Polygon]: House footprint polygons in ENU metres.
     """
     fp_w = lot_w * coverage
     fp_d = lot_d * coverage
     margin_x = (lot_w - fp_w) / 2.0
     margin_y = (lot_d - fp_d) / 2.0
 
-    x0 = lot_x + margin_x
-    y0 = lot_y + margin_y
+    x0 = origins[:, 0] + margin_x
+    y0 = origins[:, 1] + margin_y
     x1 = x0 + fp_w
     y1 = y0 + fp_d
 
-    return Polygon([(x0, y0), (x1, y0), (x1, y1), (x0, y1)])
+    # Ring order (x0,y0)->(x1,y0)->(x1,y1)->(x0,y1) matches the old per-lot
+    # Polygon so geometry and centroids are unchanged.
+    rings = np.stack(
+        [
+            np.column_stack([x0, y0]),
+            np.column_stack([x1, y0]),
+            np.column_stack([x1, y1]),
+            np.column_stack([x0, y1]),
+        ],
+        axis=1,
+    )
+    return list(shapely.polygons(rings))
 
 
 # ---------------------------------------------------------------------------

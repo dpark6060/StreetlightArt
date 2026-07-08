@@ -55,6 +55,36 @@ def test_build_render_passes_includes_composite_last_without_labels():
     assert passes[-1] is render_composite
 
 
+def test_build_render_passes_runs_buildings_between_roads_and_illumination():
+    # Arrange — patch every pass so invoking them is cheap and order is recorded.
+    scene = mock.MagicMock()
+    with mock.patch.multiple(
+        "streets_at_night.devmode.render_helpers",
+        render_ground=mock.DEFAULT,
+        render_roads_export=mock.DEFAULT,
+        render_buildings=mock.DEFAULT,
+        render_illumination=mock.DEFAULT,
+        render_lights_export=mock.DEFAULT,
+        render_atmosphere=mock.DEFAULT,
+        render_composite=mock.DEFAULT,
+    ) as mocks:
+        manager = mock.Mock()
+        manager.attach_mock(mocks["render_roads_export"], "roads")
+        manager.attach_mock(mocks["render_buildings"], "buildings")
+        manager.attach_mock(mocks["render_illumination"], "illum")
+
+        # Act
+        passes = build_render_passes(scene, gbuffer="gb", use_labels=False)
+        for render_pass in passes:
+            render_pass(scene, "camera", "backend")
+
+    # Assert — buildings runs, forwards the shared gbuffer, and sits after roads
+    # and before illumination (matching the export pipeline order).
+    mocks["render_buildings"].assert_called_once_with(scene, "camera", "backend", gbuffer="gb")
+    order = [c[0] for c in manager.mock_calls]
+    assert order.index("roads") < order.index("buildings") < order.index("illum")
+
+
 def test_build_render_passes_appends_label_pass_when_requested():
     # Arrange
     scene = mock.MagicMock()

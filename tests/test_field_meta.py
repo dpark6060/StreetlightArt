@@ -12,6 +12,7 @@ from streets_at_night.devmode.field_meta import FieldMeta, get_field_meta
         # sample_value sits inside each rule's base range so containment does
         # not widen it — this isolates rule matching.
         ("color_temp_k", 4000.0, 1000.0, 10000.0, False),
+        ("window_lit_fraction", 0.5, 0.0, 1.0, False),
         ("saturation", 1.0, 0.0, 2.0, False),
         ("beam_angle_deg", 90.0, 10.0, 170.0, False),
         ("illumination_inner_fraction", 0.5, 0.0, 1.0, False),

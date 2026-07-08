@@ -16,6 +16,7 @@ from PIL import Image
 
 from ..config.schema import SceneConfig
 from ..rendering.atmosphere_pass import render_atmosphere
+from ..rendering.building_pass import render_buildings
 from ..rendering.compositor import render_composite
 from ..rendering.ground_pass import render_ground
 from ..rendering.illumination_pass import render_illumination
@@ -123,10 +124,11 @@ def build_render_passes(
 ) -> list:
     """Build the devmode render pass list, matching the export pipeline order.
 
-    Illumination and atmosphere are wrapped to receive the shared G-buffer.
-    The composite pass must be present and after the light passes so the
-    accumulated linear light buffer is resolved into the visible image; labels
-    come last so they overlay the final composited frame.
+    Buildings, illumination, and atmosphere are wrapped to receive the shared
+    G-buffer. Buildings run after roads and before illumination (same order as
+    the export pipeline). The composite pass must be present and after the light
+    passes so the accumulated linear light buffer is resolved into the visible
+    image; labels come last so they overlay the final composited frame.
 
     Args:
         scene: The scene to render (used for the label pass camera).
@@ -139,12 +141,16 @@ def build_render_passes(
     def _illumination_pass(s: t.Any, c: t.Any, b: t.Any) -> t.Any:
         return render_illumination(s, c, b, gbuffer=gbuffer)
 
+    def _buildings_pass(s: t.Any, c: t.Any, b: t.Any) -> t.Any:
+        return render_buildings(s, c, b, gbuffer=gbuffer)
+
     def _atmosphere_pass(s: t.Any, c: t.Any, b: t.Any) -> None:
         render_atmosphere(s, c, b, gbuffer=gbuffer)
 
     passes = [
         render_ground,
         render_roads_export,
+        _buildings_pass,
         _illumination_pass,
         render_lights_export,
         _atmosphere_pass,

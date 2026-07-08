@@ -485,6 +485,64 @@ def test_scene_add_car_pairs_appends_to_car_pairs(
     assert fake_pair in scene.car_pairs
 
 
+def test_scene_get_lights_aabb_returns_none_when_no_lights(
+    three_segments: list,
+    camera: object,
+    scene_config: SceneConfig,
+) -> None:
+    scene = Scene(three_segments, camera, scene_config)
+
+    assert scene.get_lights_aabb() is None
+
+
+def test_scene_get_lights_aabb_spans_all_light_positions(
+    three_segments: list,
+    camera: object,
+    scene_config: SceneConfig,
+    sample_light: LightSource,
+) -> None:
+    scene = Scene(three_segments, camera, scene_config)
+    far_light = LightSource(
+        position=np.array([-100.0, 900.0, 5.0]),
+        color=(255, 255, 255),
+        brightness=1.0,
+        size=0.5,
+        glow_radius=10.0,
+        illumination_intensity=0.8,
+        illumination=ConeIllumination(20.0, 2.0, 0.0),
+    )
+    scene.add_lights([sample_light, far_light])
+
+    # sample_light is at (200, 200), far_light at (-100, 900)
+    assert scene.get_lights_aabb() == (-100.0, 200.0, 200.0, 900.0)
+
+
+def test_scene_get_lights_aabb_invalidated_after_add_lights(
+    three_segments: list,
+    camera: object,
+    scene_config: SceneConfig,
+    sample_light: LightSource,
+) -> None:
+    scene = Scene(three_segments, camera, scene_config)
+    scene.add_lights([sample_light])
+
+    # Populate the cache, then add a light beyond the current bounds.
+    assert scene.get_lights_aabb() == (200.0, 200.0, 200.0, 200.0)
+    far_light = LightSource(
+        position=np.array([1000.0, -50.0, 5.0]),
+        color=(255, 255, 255),
+        brightness=1.0,
+        size=0.5,
+        glow_radius=10.0,
+        illumination_intensity=0.8,
+        illumination=ConeIllumination(20.0, 2.0, 0.0),
+    )
+    scene.add_lights([far_light])
+
+    # The cached AABB must expand to include the newly added light.
+    assert scene.get_lights_aabb() == (200.0, -50.0, 1000.0, 200.0)
+
+
 def test_scene_get_lights_near_without_index_returns_all(
     three_segments: list,
     camera: object,

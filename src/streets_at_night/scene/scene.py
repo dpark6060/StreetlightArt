@@ -88,6 +88,7 @@ class Scene:
         self._light_index: t.Optional[SpatialIndex] = None
         self._building_index: t.Optional[SpatialIndex] = None
         self._index_bounds: t.Optional[t.Tuple[float, float, float, float]] = None
+        self._lights_aabb: t.Optional[t.Tuple[float, float, float, float]] = None
 
     def build_spatial_index(self) -> None:
         """Build the spatial indexes over road segments, zones, and buildings.
@@ -128,15 +129,17 @@ class Scene:
             lights (list[LightSource]): Light sources to add.
         """
         self.lights.extend(lights)
+        self._lights_aabb = None  # invalidate cached AABB; recomputed on demand
         if self._index_bounds is None:
             return
 
         if self._light_index is None:
             min_x, min_y, max_x, max_y = self._index_bounds
             self._light_index = SpatialIndex(min_x, min_y, max_x, max_y, cell_size=500.0)
-        for light in lights:
-            pos = light.position
-            self._light_index.insert(light, pos[0], pos[1], pos[0], pos[1])
+        if not lights:
+            return
+        positions = np.array([light.position for light in lights])
+        self._light_index.insert_points(lights, positions[:, 0], positions[:, 1])
 
     def add_car_pairs(self, car_pairs: list) -> None:
         """Register car light pairs for render-time facing resolution.
@@ -145,6 +148,30 @@ class Scene:
             car_pairs (list): CarLightPair objects to register.
         """
         self.car_pairs.extend(car_pairs)
+
+    def get_lights_aabb(self) -> t.Optional[t.Tuple[float, float, float, float]]:
+        """Return the XY bounding box of all light positions, or None if empty.
+
+        Computed once from every light's (x, y) position and cached; the cache
+        is invalidated whenever lights are added. Consumers use this to crop
+        world-space work (e.g. the illumination map) to the region that can
+        actually contain light, rather than the full camera far-plane footprint.
+
+        Returns:
+            tuple[float, float, float, float] | None: (min_x, min_y, max_x,
+            max_y) in ENU meters, or None when the scene has no lights.
+        """
+        if not self.lights:
+            return None
+        if self._lights_aabb is None:
+            positions = np.array([light.position for light in self.lights])
+            self._lights_aabb = (
+                float(positions[:, 0].min()),
+                float(positions[:, 1].min()),
+                float(positions[:, 0].max()),
+                float(positions[:, 1].max()),
+            )
+        return self._lights_aabb
 
     def get_roads_in_rect(
         self,

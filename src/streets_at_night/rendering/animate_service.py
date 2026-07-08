@@ -22,7 +22,9 @@ from ..camera.coordinates import create_transformer
 from ..config.paths import compute_origin
 from ..config.schema import HeatHazeConfig, SceneConfig
 from ..scene_loader import camera_position_enu, target_position_enu
-from .heat_haze import HeatHaze, compute_depth_map
+
+if t.TYPE_CHECKING:
+    from .heat_haze import HeatHaze
 
 ProgressFn = t.Optional[t.Callable[[str, float], None]]
 
@@ -76,7 +78,7 @@ def build_animate_haze(
     display_width: int,
     display_height: int,
     progress: ProgressFn = None,
-) -> HeatHaze:
+) -> "HeatHaze":
     """Construct a HeatHaze instance for animation.
 
     Builds a Camera from the scene config so the per-pixel depth map matches
@@ -94,6 +96,8 @@ def build_animate_haze(
     Returns:
         HeatHaze: Ready-to-use haze instance.
     """
+    from .heat_haze import HeatHaze, compute_depth_map
+
     transformer = create_transformer(*compute_origin(config))
     camera = create_camera(
         position=camera_position_enu(config, transformer),
@@ -114,7 +118,7 @@ def build_animate_haze(
     return haze
 
 
-def default_video_duration(haze: HeatHaze) -> float:
+def default_video_duration(haze: "HeatHaze") -> float:
     """Pick a default video duration covering one cyclic loop of the haze.
 
     Uses the haze's ``loop_period_s()`` — computed from the effective
@@ -135,7 +139,7 @@ def default_video_duration(haze: HeatHaze) -> float:
 
 
 def record_haze(
-    haze: HeatHaze,
+    haze: "HeatHaze",
     fps: int,
     n_frames: int,
     out_path: Path,
@@ -161,7 +165,7 @@ def record_haze(
 
 
 def record_haze_seamless(
-    haze: HeatHaze,
+    haze: "HeatHaze",
     fps: int,
     n_frames: int,
     crossfade_frames: int,

@@ -30,12 +30,14 @@ from ...rendering.animate_service import (
     record_haze,
     record_haze_seamless,
 )
-from ...rendering.heat_haze import HeatHaze
 from ..imaging import array_to_pygame_surface
 from ..jobs import JobEvent, ProgressFn
 from ..widgets.file_picker import FilePickerRow
 from ..widgets.labeled_entry import build_labeled_entry
 from .base import Tab
+
+if t.TYPE_CHECKING:
+    from ...rendering.heat_haze import HeatHaze
 
 _PANEL_WIDTH = 360
 _PANEL_MARGIN = 8
@@ -58,7 +60,7 @@ def build_preview_haze(
     view_w: int,
     view_h: int,
     progress: ProgressFn,
-) -> HeatHaze:
+) -> "HeatHaze":
     """Load the base frame and build a haze sized to the view area (worker job).
 
     Runs on the worker thread and returns the :class:`HeatHaze` as plain data;
@@ -150,7 +152,7 @@ class AnimateTab(Tab):
         self._progress_bar: t.Optional[pygame_gui.elements.UIProgressBar] = None
         self._status: t.Optional[pygame_gui.elements.UILabel] = None
 
-        self._haze: t.Optional[HeatHaze] = None
+        self._haze: t.Optional["HeatHaze"] = None
         self._playing = False
         self._elapsed = 0.0
         self._seamless = False
@@ -478,7 +480,7 @@ class AnimateTab(Tab):
         elif pending == "record":
             self._on_record_done(result)
 
-    def _on_preview_ready(self, haze: HeatHaze) -> None:
+    def _on_preview_ready(self, haze: "HeatHaze") -> None:
         """Store the built haze and start real-time playback.
 
         Args:

@@ -468,6 +468,40 @@ def test_compute_visible_bounds_clamps_hits_to_camera_far():
     assert max_x == pytest.approx(1000.0)
 
 
+def test_compute_visible_bounds_crops_to_lights_aabb():
+    # Arrange — visible ground spans +/-1 km, but lights only exist within +/-100 m
+    gbuffer = _make_grid_gbuffer(center=0.0, half_extent=1000.0, size=4)
+    camera = _make_camera(position=np.array([0.0, 0.0, 500.0]), far=50000.0)
+    lights_aabb = (-100.0, -100.0, 100.0, 100.0)
+
+    # Act
+    min_x, min_y, max_x, max_y = _compute_visible_bounds(
+        gbuffer, camera, padding=200.0, lights_aabb=lights_aabb
+    )
+
+    # Assert — bounds crop to the lights AABB expanded by padding, not the
+    # much larger visible ground extent
+    assert min_x == pytest.approx(-300.0)
+    assert max_x == pytest.approx(300.0)
+    assert min_y == pytest.approx(-300.0)
+    assert max_y == pytest.approx(300.0)
+
+
+def test_compute_visible_bounds_returns_none_when_no_light_overlap():
+    # Arrange — visible ground near the origin, all lights far to the east
+    gbuffer = _make_grid_gbuffer(center=0.0, half_extent=500.0, size=4)
+    camera = _make_camera(position=np.array([0.0, 0.0, 500.0]), far=50000.0)
+    lights_aabb = (40000.0, 40000.0, 41000.0, 41000.0)
+
+    # Act
+    bounds = _compute_visible_bounds(
+        gbuffer, camera, padding=200.0, lights_aabb=lights_aabb
+    )
+
+    # Assert — no overlap between visible ground and lights, so no map
+    assert bounds is None
+
+
 # ---------------------------------------------------------------------------
 # _auto_scale_illumination_resolution
 # ---------------------------------------------------------------------------
@@ -553,6 +587,9 @@ def test_render_illumination_bounds_follow_gbuffer_not_roads():
     scene.road_segments = [
         mock.MagicMock(geometry=np.array([[-20000.0, -20000.0, 0.0], [20000.0, 20000.0, 0.0]]))
     ]
+    # Lights span the whole road network, so the visible ground (not the
+    # lights AABB) is what must crop the map here.
+    scene.get_lights_aabb.return_value = (-20000.0, -20000.0, 20000.0, 20000.0)
 
     camera = _make_camera(position=np.array([0.0, 0.0, 500.0]), far=50000.0)
     backend = mock.MagicMock()
@@ -583,6 +620,7 @@ def test_offscreen_light_is_culled():
     scene = mock.MagicMock()
     scene.lights = [near_light, offscreen_light]
     scene.config.atmosphere = _make_atmosphere()
+    scene.get_lights_aabb.return_value = (0.0, 0.0, 30000.0, 0.0)
 
     camera = _make_camera(position=np.array([0.0, 0.0, 500.0]), far=50000.0)
     backend = mock.MagicMock()

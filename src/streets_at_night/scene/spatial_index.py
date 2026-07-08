@@ -6,6 +6,8 @@ giving O(1) insert and lookup for road segment culling.
 
 import typing as t
 
+import numpy as np
+
 
 class SpatialIndex:
     """Uniform grid spatial index. O(1) insert and lookup.
@@ -69,6 +71,42 @@ class SpatialIndex:
                     self._grid[key] = []
                 self._grid[key].append(item)
                 self._item_count += 1
+
+    def insert_points(
+        self,
+        items: t.Sequence[t.Any],
+        xs: np.ndarray,
+        ys: np.ndarray,
+    ) -> None:
+        """Insert many point items in one call, computing cells vectorized.
+
+        Equivalent to calling ``insert(item, x, y, x, y)`` for each item, but
+        the cell index for every point is computed with a single vectorized
+        floor-divide + clamp instead of two per-point ``_world_to_cell`` calls.
+        The resulting cell assignment (and item order within a cell) is
+        identical to the per-item path.
+
+        Args:
+            items (Sequence): Point items to store, aligned with xs/ys.
+            xs (np.ndarray): (N,) world x coordinates.
+            ys (np.ndarray): (N,) world y coordinates.
+        """
+        cxs = np.clip(
+            ((xs - self._min_x) / self._cell_size).astype(int), 0, self._max_cx
+        )
+        cys = np.clip(
+            ((ys - self._min_y) / self._cell_size).astype(int), 0, self._max_cy
+        )
+
+        grid = self._grid
+        for item, cx, cy in zip(items, cxs.tolist(), cys.tolist()):
+            key = (cx, cy)
+            cell = grid.get(key)
+            if cell is None:
+                grid[key] = [item]
+            else:
+                cell.append(item)
+        self._item_count += len(items)
 
     def query_rect(
         self,

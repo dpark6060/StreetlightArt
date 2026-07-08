@@ -249,7 +249,12 @@ def _ensure_ccw(ring: np.ndarray) -> np.ndarray:
     """
     x = ring[:, 0]
     y = ring[:, 1]
-    signed_area = np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y)
+    # Shoelace signed area without np.roll: the interior terms plus the
+    # explicit wrap term. Only the sign is used, so summation order is
+    # irrelevant, and this avoids two full-array roll allocations per ring.
+    signed_area = (
+        np.sum(x[:-1] * y[1:] - x[1:] * y[:-1]) + (x[-1] * y[0] - x[0] * y[-1])
+    )
     if signed_area < 0:
         return ring[::-1].copy()
     return ring

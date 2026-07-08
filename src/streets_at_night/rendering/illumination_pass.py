@@ -100,7 +100,7 @@ def render_illumination(
         (_effective_pool_radius(light) for light in scene.lights), default=0.0
     )
     padding = max(_BOUNDS_PADDING_M, max_light_radius)
-    bounds = _compute_visible_bounds(gbuffer, camera, padding)
+    bounds = _compute_visible_bounds(gbuffer, camera, padding, scene.get_lights_aabb())
     if bounds is None:
         return {}
 
@@ -131,6 +131,7 @@ def _compute_visible_bounds(
     gbuffer: GroundHit,
     camera: Camera,
     padding: float,
+    lights_aabb: t.Optional[t.Tuple[float, float, float, float]] = None,
 ) -> t.Optional[t.Tuple[float, float, float, float]]:
     """Compute illumination map world bounds from the visible ground G-buffer.
 
@@ -141,15 +142,27 @@ def _compute_visible_bounds(
     the raycast itself does not enforce the far clip plane, which would
     otherwise re-inflate the bounds.
 
+    When ``lights_aabb`` is supplied, the result is intersected with it
+    (expanded by ``padding`` so pool spill near the edge is preserved). No
+    light exists beyond that box, so the cropped-out region carries zero
+    illumination anyway; cropping keeps the map from ballooning to a
+    near-horizon shot's tens-of-kilometers footprint over empty ground, which
+    would otherwise force the pixel-budget guard to coarsen resolution on the
+    pools that are actually visible.
+
     Args:
         gbuffer (GroundHit): Per-pixel ground raycast for this frame.
         camera (Camera): Active camera, used for the far-plane clamp.
         padding (float): Meters of padding added on every side so lights near
             the visible edge still spill their pool into frame.
+        lights_aabb (tuple[float, float, float, float] | None): (min_x, min_y,
+            max_x, max_y) bounding box of all light positions, or None to skip
+            the intersection.
 
     Returns:
         tuple[float, float, float, float] | None: (min_x, min_y, max_x, max_y)
-            in meters, or None if no pixel in the G-buffer hits the ground.
+            in meters, or None if no pixel in the G-buffer hits the ground, or
+            the visible region does not overlap any light.
     """
     mask = gbuffer.ground_mask
     if not np.any(mask):
@@ -163,6 +176,15 @@ def _compute_visible_bounds(
     max_x = float(hit_x[mask].max()) + padding
     min_y = float(hit_y[mask].min()) - padding
     max_y = float(hit_y[mask].max()) + padding
+
+    if lights_aabb is not None:
+        lx0, ly0, lx1, ly1 = lights_aabb
+        min_x = max(min_x, lx0 - padding)
+        min_y = max(min_y, ly0 - padding)
+        max_x = min(max_x, lx1 + padding)
+        max_y = min(max_y, ly1 + padding)
+        if min_x >= max_x or min_y >= max_y:
+            return None
 
     return min_x, min_y, max_x, max_y
 

@@ -1,6 +1,6 @@
 """Building data model — extruded footprint geometry for mass and window rendering."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -22,9 +22,17 @@ class Building:
         building_kind: Raw OSM ``building`` tag value (e.g. "house",
             "retail"), used for stats/debug and height-default lookup.
         window_seed: Per-building seed for reproducible window layout.
+        centroid: (2,) ENU mean of the footprint vertices, precomputed once
+            so the render's per-frame distance culling doesn't recompute it.
+            Excluded from equality/repr (numpy array; derived data).
     """
 
     footprint: np.ndarray
     height: float
     building_kind: str
     window_seed: int
+    centroid: np.ndarray = field(init=False, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        """Precompute the footprint centroid for render-time distance culling."""
+        self.centroid = self.footprint.mean(axis=0)

@@ -70,11 +70,22 @@ def hex_to_linear(hex_str: str) -> t.Tuple[float, float, float]:
     return (float(lin[0]), float(lin[1]), float(lin[2]))
 
 
+# Memo of 0-255 sRGB tuple -> linear RGB tuple. The light and illumination
+# passes convert LightSource.color hundreds of thousands of times per frame,
+# but only a few hundred distinct colors exist (finite authored palettes), so a
+# dict lookup replaces almost all of the per-light float work. Bounded by the
+# palette size; persists across frames (helps preview/devmode too).
+_SRGB255_LINEAR_CACHE: t.Dict[
+    t.Tuple[float, float, float], t.Tuple[float, float, float]
+] = {}
+
+
 def srgb255_to_linear(rgb: t.Tuple[int, int, int]) -> t.Tuple[float, float, float]:
     """Convert an 8-bit sRGB tuple (0-255) to a linear RGB tuple in [0, 1].
 
     Convenience for the many light models that already hold their color as a
-    0-255 RGB tuple (``LightSource.color``).
+    0-255 RGB tuple (``LightSource.color``). Results are memoized by color, so
+    repeated conversions of the same authored color are a dict lookup.
 
     Args:
         rgb (tuple[int, int, int]): sRGB color, each channel 0-255.
@@ -82,9 +93,16 @@ def srgb255_to_linear(rgb: t.Tuple[int, int, int]) -> t.Tuple[float, float, floa
     Returns:
         tuple[float, float, float]: Linear (R, G, B) each in [0, 1].
     """
-    arr = np.array(rgb, dtype=np.float32) / 255.0
+    key = (float(rgb[0]), float(rgb[1]), float(rgb[2]))
+    cached = _SRGB255_LINEAR_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    arr = np.array(key, dtype=np.float32) / 255.0
     lin = srgb_to_linear(arr)
-    return (float(lin[0]), float(lin[1]), float(lin[2]))
+    result = (float(lin[0]), float(lin[1]), float(lin[2]))
+    _SRGB255_LINEAR_CACHE[key] = result
+    return result
 
 
 def tonemap_aces(linear: np.ndarray) -> np.ndarray:

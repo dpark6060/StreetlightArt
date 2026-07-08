@@ -107,6 +107,12 @@ def build_light_catalog(config: SceneConfig) -> t.List[LightKind]:
     kinds.append(LightKind("Commercial: Parking", commercial, "parking_"))
     kinds.append(LightKind("Commercial: Storefronts", commercial, "storefront_"))
 
+    # Lit-window controls, shown only when the config has a [buildings] section.
+    # The window_ prefix scopes the section to the emissive-window fields (lit
+    # fraction, brightness, color temperature, saturation, sizing, glow).
+    if config.buildings is not None:
+        kinds.append(LightKind("Buildings: Windows", config.buildings, "window_"))
+
     # City-wide color_temp_shift_k master lever, which no per-pool entry covers.
     kinds.append(LightKind("Streetlights: Global", config.lights.streetlights, "color_temp_shift"))
 

@@ -114,7 +114,7 @@ src/streets_at_night/
       file_picker.py           # FilePickerRow — text entry + browse dialog
       labeled_entry.py         # LabeledEntry — label + text entry row
   devmode/
-    synthetic_scene.py        # Builds the 10-row synthetic ENU test scene
+    synthetic_scene.py        # Builds the 11-row synthetic ENU test scene (incl. a Houses row of buildings)
     real_scene.py              # Loads a clipped strip of real OSM road data for devmode
     devmode_camera.py          # Builds an ENU-space Camera from DevmodeCameraConfig
     dynamic_panel.py           # build_dynamic_section — data-driven slider panel from field metadata

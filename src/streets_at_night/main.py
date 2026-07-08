@@ -33,7 +33,6 @@ from .rendering.animate_service import (
     record_haze,
     record_haze_seamless,
 )
-from .rendering.heat_haze import HeatHaze, compute_depth_map
 from .data.osm_loader import load_buildings, load_land_use, load_roads
 from .data.road_classifier import classify_roads
 from .data.verify_plot import save_verification_plot
@@ -48,6 +47,7 @@ from .scene.scene import Scene
 
 if t.TYPE_CHECKING:
     from .rendering.flat_map import FlatMapMeta
+    from .rendering.heat_haze import HeatHaze
     from .rendering.raycast import GroundHit
 
 
@@ -157,6 +157,12 @@ def main() -> None:
         default=None,
         help="Output format (default: auto-detect from output path extension)",
     )
+    render_parser.add_argument(
+        "--no-scene-cache",
+        action="store_true",
+        default=False,
+        help="Rebuild the scene from scratch instead of reusing the scene cache",
+    )
 
     animate_parser = subparsers.add_parser(
         "animate",
@@ -263,6 +269,7 @@ def main() -> None:
             width_override=args.width,
             height_override=args.height,
             format_override=args.format,
+            use_scene_cache=not args.no_scene_cache,
         )
     elif args.command == "animate":
         cmd_animate(args, config)
@@ -372,6 +379,8 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
     heat_haze_cfg = config.heat_haze
     haze = None
     if heat_haze_cfg is not None and heat_haze_cfg.enabled:
+        from .rendering.heat_haze import HeatHaze, compute_depth_map
+
         haze = HeatHaze(preview_width, preview_height, heat_haze_cfg)
         haze.set_base_frame(anim.base_frame)
         haze.set_depth_map(compute_depth_map(
@@ -581,7 +590,7 @@ def _resolve_record_dimensions(
     return int(width), int(height)
 
 
-def _save_animate_frame(haze: HeatHaze, elapsed_t: float) -> None:
+def _save_animate_frame(haze: "HeatHaze", elapsed_t: float) -> None:
     """Save the current heat haze frame to disk.
 
     Args:
@@ -604,6 +613,7 @@ def cmd_render(
     width_override: t.Optional[int] = None,
     height_override: t.Optional[int] = None,
     format_override: t.Optional[str] = None,
+    use_scene_cache: bool = True,
 ) -> None:
     """Render a perspective road image from the configured camera.
 
@@ -622,6 +632,8 @@ def cmd_render(
         height_override (int | None): Override the preset height in pixels.
         format_override (str | None): Force output format ("png" or "tiff").
             When None, format is auto-detected from the output path extension.
+        use_scene_cache (bool): When True (default), reuse the built-scene disk
+            cache. Pass False to force a full rebuild.
     """
     cache_dir.mkdir(parents=True, exist_ok=True)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -629,7 +641,7 @@ def cmd_render(
     preset = config.quality_presets[quality]
     preset = _apply_resolution_overrides(preset, width_override, height_override)
 
-    scene = load_scene(config, quality, cache_dir)
+    scene = load_scene(config, quality, cache_dir, use_scene_cache=use_scene_cache)
 
     print(f"Rendering at {preset.width}×{preset.height}...")
     backend = PillowBackend(preset.width, preset.height)

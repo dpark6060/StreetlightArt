@@ -176,11 +176,36 @@ def frustum_cull_segments(
     Returns:
         list: Filtered and near-clipped (p1, p2) world coordinate pairs.
     """
+    if not segments:
+        return []
+
+    # Compute camera-space z for every endpoint in one batched matmul rather
+    # than four scalar matmuls per edge (two here for the far cull, two more
+    # inside clip_line_to_near_plane). The per-edge logic below is unchanged;
+    # it just reads the precomputed z values.
+    endpoints = np.empty((len(segments) * 2, 3), dtype=float)
+    for i, (p1, p2) in enumerate(segments):
+        endpoints[2 * i] = p1
+        endpoints[2 * i + 1] = p2
+    cam_z = _camera_z_batch(endpoints, view_matrix)
+
     result = []
-    for p1, p2 in segments:
-        visible = _process_segment(p1, p2, view_matrix, near, far)
-        if visible is not None:
-            result.append(visible)
+    near_z = -near
+    for i, (p1, p2) in enumerate(segments):
+        z1 = cam_z[2 * i]
+        z2 = cam_z[2 * i + 1]
+
+        if z1 < -far and z2 < -far:
+            continue
+
+        p1_in_front = z1 < near_z
+        p2_in_front = z2 < near_z
+        if not p1_in_front and not p2_in_front:
+            continue
+        if p1_in_front and p2_in_front:
+            result.append((p1, p2))
+            continue
+        result.append(_clip_one_endpoint(p1, p2, z1, z2, near, p1_in_front))
     return result
 
 
@@ -303,6 +328,25 @@ def _camera_z(point_world: np.ndarray, view_matrix: np.ndarray) -> float:
     return float(view_matrix[2] @ homogeneous)
 
 
+def _camera_z_batch(points: np.ndarray, view_matrix: np.ndarray) -> np.ndarray:
+    """Compute camera-space z for many world points in one matmul.
+
+    Row 2 of the view matrix dotted with each homogeneous point gives its
+    camera-space z: ``x*m20 + y*m21 + z*m22 + m23``. Batching this over an
+    (N, 3) array replaces N scalar ``_camera_z`` calls (each an ``np.append``
+    plus a 4-vector dot) with a single vectorized operation.
+
+    Args:
+        points (np.ndarray): (N, 3) world coordinates in ENU meters.
+        view_matrix (np.ndarray): (4, 4) world-to-camera matrix.
+
+    Returns:
+        np.ndarray: (N,) camera-space z coordinates.
+    """
+    row = view_matrix[2]
+    return points @ row[:3] + row[3]
+
+
 def _clip_one_endpoint(
     p1_world: np.ndarray,
     p2_world: np.ndarray,
@@ -356,13 +400,19 @@ def _clip_polygon_edges(
     """
     output: t.List[np.ndarray] = []
     n = len(vertices)
+    if n == 0:
+        return output
+
+    # Camera-space z for every vertex in one matmul, indexed per edge below,
+    # rather than two scalar _camera_z calls per edge.
+    cam_z = _camera_z_batch(np.asarray(vertices, dtype=float), view_matrix)
 
     for i in range(n):
         a = vertices[i]
         b = vertices[(i + 1) % n]
 
-        za = _camera_z(a, view_matrix)
-        zb = _camera_z(b, view_matrix)
+        za = cam_z[i]
+        zb = cam_z[(i + 1) % n]
 
         a_inside = za < -near
         b_inside = zb < -near
@@ -405,35 +455,3 @@ def _lerp_to_near_plane(
     near_z = -near
     t_val = (near_z - za) / (zb - za)
     return a + t_val * (b - a)
-
-
-def _process_segment(
-    p1: np.ndarray,
-    p2: np.ndarray,
-    view_matrix: np.ndarray,
-    near: float,
-    far: float,
-) -> t.Optional[t.Tuple[np.ndarray, np.ndarray]]:
-    """Apply culling and near-plane clipping to a single segment.
-
-    Rejects the segment if both endpoints are entirely beyond the far plane.
-    Clips to the near plane if one endpoint is behind it.
-
-    Args:
-        p1 (np.ndarray): (3,) first endpoint in world space.
-        p2 (np.ndarray): (3,) second endpoint in world space.
-        view_matrix (np.ndarray): (4, 4) view matrix.
-        near (float): Near plane distance in meters.
-        far (float): Far plane distance in meters.
-
-    Returns:
-        tuple[np.ndarray, np.ndarray] | None: Visible segment, or None.
-    """
-    z1 = _camera_z(p1, view_matrix)
-    z2 = _camera_z(p2, view_matrix)
-
-    both_beyond_far = (z1 < -far) and (z2 < -far)
-    if both_beyond_far:
-        return None
-
-    return clip_line_to_near_plane(p1, p2, view_matrix, near)

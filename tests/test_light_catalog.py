@@ -82,6 +82,28 @@ def test_build_light_catalog_global_streetlight_kind(config):
     assert glob.field_prefix == "color_temp_shift"
 
 
+def test_build_light_catalog_buildings_windows_kind_present(config):
+    # Act
+    catalog = build_light_catalog(config)
+    by_label = {k.label: k for k in catalog}
+
+    # Assert — the window section targets the buildings config, scoped to window_ fields.
+    windows = by_label["Buildings: Windows"]
+    assert windows.target is config.buildings
+    assert windows.field_prefix == "window_"
+
+
+def test_build_light_catalog_omits_buildings_windows_when_unconfigured(config):
+    # Arrange — an older config with no [buildings] section.
+    config.buildings = None
+
+    # Act
+    labels = [k.label for k in build_light_catalog(config)]
+
+    # Assert
+    assert "Buildings: Windows" not in labels
+
+
 def test_build_light_catalog_target_identity_mutation_reaches_config(config):
     # Arrange
     catalog = build_light_catalog(config)

@@ -61,7 +61,7 @@ def test_load_scene_calls_each_boundary_with_right_args(config, patched_boundary
     cache_dir = Path("cache")
     bbox = (34.3, 34.1, -117.2, -117.4)
 
-    result = scene_loader.load_scene(config, "low", cache_dir)
+    result = scene_loader.load_scene(config, "low", cache_dir, use_scene_cache=False)
 
     patched_boundary["load_roads"].assert_called_once_with(bbox, cache_dir)
     patched_boundary["classify_roads"].assert_called_once_with(
@@ -83,7 +83,7 @@ def test_load_scene_calls_each_boundary_with_right_args(config, patched_boundary
 
 
 def test_load_scene_passes_preset_aspect_ratio_to_camera(config, patched_boundary):
-    scene_loader.load_scene(config, "low", Path("cache"))
+    scene_loader.load_scene(config, "low", Path("cache"), use_scene_cache=False)
 
     _, kwargs = patched_boundary["create_camera"].call_args
     assert kwargs["fov_deg"] == 60.0
@@ -97,7 +97,9 @@ def test_load_scene_with_progress_calls_callback_and_prints_nothing(
 ):
     messages = []
 
-    scene_loader.load_scene(config, "low", Path("cache"), progress=messages.append)
+    scene_loader.load_scene(
+        config, "low", Path("cache"), progress=messages.append, use_scene_cache=False
+    )
 
     captured = capsys.readouterr()
     assert captured.out == ""
@@ -105,10 +107,44 @@ def test_load_scene_with_progress_calls_callback_and_prints_nothing(
 
 
 def test_load_scene_without_progress_prints_messages(config, patched_boundary, capsys):
-    scene_loader.load_scene(config, "low", Path("cache"))
+    scene_loader.load_scene(config, "low", Path("cache"), use_scene_cache=False)
 
     captured = capsys.readouterr()
     assert "Loading road network" in captured.out
+
+
+def test_load_scene_cache_hit_skips_build(config, patched_boundary):
+    # A cache hit rehydrates from content and must not touch OSM or build_scene.
+    with mock.patch(
+        "streets_at_night.scene_loader.compute_scene_cache_key", return_value="k"
+    ), mock.patch(
+        "streets_at_night.scene_loader.load_scene_content", return_value={"lights": []}
+    ), mock.patch(
+        "streets_at_night.scene_loader._scene_from_content", return_value="cached_scene"
+    ) as from_content:
+        result = scene_loader.load_scene(config, "low", Path("cache"))
+
+    assert result == "cached_scene"
+    from_content.assert_called_once()
+    patched_boundary["load_roads"].assert_not_called()
+    patched_boundary["build_scene"].assert_not_called()
+
+
+def test_load_scene_cache_miss_saves_content(config, patched_boundary):
+    # A cache miss builds normally and persists the built content.
+    with mock.patch(
+        "streets_at_night.scene_loader.compute_scene_cache_key", return_value="k"
+    ), mock.patch(
+        "streets_at_night.scene_loader.load_scene_content", return_value=None
+    ), mock.patch(
+        "streets_at_night.scene_loader.save_scene_content"
+    ) as save, mock.patch(
+        "streets_at_night.scene_loader._content_from_scene", return_value={"c": 1}
+    ):
+        scene_loader.load_scene(config, "low", Path("cache"))
+
+    patched_boundary["build_scene"].assert_called_once()
+    save.assert_called_once_with(Path("cache"), "k", {"c": 1})
 
 
 # ---------------------------------------------------------------------------

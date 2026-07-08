@@ -1,6 +1,7 @@
 # Radical
 """Tests for devmode synthetic scene construction and config round-trip."""
 
+import numpy as np
 import pytest
 
 from streets_at_night.config.defaults import DEFAULTS
@@ -109,6 +110,12 @@ def scene_config(
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def config_with_buildings() -> SceneConfig:
+    """Return a full default SceneConfig including a [buildings] section."""
+    return dataclass_from_dict(SceneConfig, DEFAULTS)
+
+
 def test_build_synthetic_scene_returns_scene(scene_config: SceneConfig) -> None:
     """build_synthetic_scene returns a Scene with lights populated."""
 
@@ -116,6 +123,62 @@ def test_build_synthetic_scene_returns_scene(scene_config: SceneConfig) -> None:
 
     assert isinstance(result, Scene)
     assert len(result.lights) > 0
+
+
+def test_synthetic_scene_has_buildings_when_configured(
+    config_with_buildings: SceneConfig,
+) -> None:
+    """The Houses row adds buildings when the config has a [buildings] section."""
+
+    result = build_synthetic_scene(config_with_buildings)
+
+    assert len(result.buildings) > 0
+
+
+def test_synthetic_scene_has_no_buildings_when_unconfigured(
+    scene_config: SceneConfig,
+) -> None:
+    """A config without a [buildings] section produces a scene with no buildings."""
+
+    result = build_synthetic_scene(scene_config)
+
+    assert result.buildings == []
+
+
+def test_synthetic_scene_buildings_have_mixed_heights(
+    config_with_buildings: SceneConfig,
+) -> None:
+    """The Houses row mixes short houses and taller apartment blocks."""
+
+    result = build_synthetic_scene(config_with_buildings)
+
+    heights = [b.height for b in result.buildings]
+    assert any(h < 5.0 for h in heights), "expected at least one short house"
+    assert any(h > 10.0 for h in heights), "expected at least one tall apartment block"
+
+
+def test_synthetic_building_footprints_are_ccw(
+    config_with_buildings: SceneConfig,
+) -> None:
+    """Synthetic footprints wind counter-clockwise (positive shoelace area)."""
+
+    result = build_synthetic_scene(config_with_buildings)
+
+    footprint = result.buildings[0].footprint
+    x = footprint[:, 0]
+    y = footprint[:, 1]
+    signed_area = np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y)
+    assert signed_area > 0.0
+
+
+def test_synthetic_scene_buildings_row_adds_no_road_segment(
+    config_with_buildings: SceneConfig,
+) -> None:
+    """The Houses row does not add an eleventh road segment (still 10)."""
+
+    result = build_synthetic_scene(config_with_buildings)
+
+    assert len(result.road_segments) == 10
 
 
 def test_synthetic_scene_has_correct_road_segments(scene_config: SceneConfig) -> None:

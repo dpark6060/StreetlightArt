@@ -187,28 +187,21 @@ def _get_visible_buildings(
     """
     min_x, min_y, max_x, max_y = visible_ground_aabb(camera)
     candidates = scene.get_buildings_in_rect(min_x, min_y, max_x, max_y)
+    if not candidates:
+        return []
 
+    # Vectorize the centroid-distance cull and sort over all candidates rather
+    # than computing footprint.mean + norm per building in Python. Centroids are
+    # precomputed on each Building, so this is one array gather + one norm.
     cam_xy = camera.position[:2]
-    with_distance = [
-        (building, _get_centroid_distance(building, cam_xy)) for building in candidates
-    ]
-    in_range = [pair for pair in with_distance if pair[1] <= max_distance_m]
-    in_range.sort(key=lambda pair: pair[1], reverse=True)
-    return in_range
+    centroids = np.array([building.centroid for building in candidates])
+    distances = np.linalg.norm(centroids - cam_xy, axis=1)
 
-
-def _get_centroid_distance(building: "Building", cam_xy: np.ndarray) -> float:
-    """Compute the XY distance from the camera to a building footprint centroid.
-
-    Args:
-        building (Building): The building.
-        cam_xy (np.ndarray): (2,) camera position projected to the XY plane.
-
-    Returns:
-        float: Euclidean distance in meters.
-    """
-    centroid = building.footprint.mean(axis=0)
-    return float(np.linalg.norm(centroid - cam_xy))
+    in_range = np.nonzero(distances <= max_distance_m)[0]
+    # Stable descending sort (farthest first) so ties keep candidate order,
+    # matching Python's stable list.sort(reverse=True) painter ordering.
+    order = in_range[np.argsort(-distances[in_range], kind="stable")]
+    return [(candidates[i], float(distances[i])) for i in order]
 
 
 def _draw_building(
@@ -248,34 +241,122 @@ def _draw_building(
     Returns:
         bool: True if the roof (and possibly walls) were drawn.
     """
-    roof_vertices_3d = _build_roof_vertices(building)
-    roof_screen = _project_face(roof_vertices_3d, view_matrix, proj_matrix, near, width, height)
+    faces_3d = _build_building_faces(building, facing_walls)
+    faces_screen = _project_faces(faces_3d, view_matrix, proj_matrix, near, width, height)
+
+    roof_screen = faces_screen[0]
     if roof_screen is None:
         return False
     if _is_below_pixel_threshold(roof_screen):
         return False
 
-    _draw_walls(
-        building, facing_walls, view_matrix, proj_matrix, near, width, height,
-        wall_color, shade_strength, backend,
-    )
+    for wall, wall_screen in zip(facing_walls, faces_screen[1:]):
+        if wall_screen is None:
+            continue
+        shade = _get_face_shade(wall.normal, shade_strength)
+        backend.draw_polygon(wall_screen, _apply_shade(wall_color, shade))
+
     backend.draw_polygon(roof_screen, roof_color)
     return True
 
 
-def _build_roof_vertices(building: "Building") -> t.List[np.ndarray]:
-    """Build the roof ring's world-space vertices at z = building height.
+def _build_building_faces(
+    building: "Building", facing_walls: t.List[FacingWall]
+) -> t.List[np.ndarray]:
+    """Build world-space vertex arrays for a building's roof and facing walls.
+
+    The first entry is the roof ring (footprint at z = height); the rest are
+    the camera-facing wall quads in ``facing_walls`` order. Vertex order within
+    each face matches the earlier per-face builders, so the projected polygons
+    fill identically — only the arrays are built in one place so the whole
+    building can be projected in a single batch.
 
     Args:
-        building (Building): The building.
+        building (Building): The building whose faces to build.
+        facing_walls (list[FacingWall]): This building's camera-facing wall
+            edges, already backface-culled.
 
     Returns:
-        list[np.ndarray]: (3,) world-space vertices, no closing duplicate.
+        list[np.ndarray]: [(N, 3) roof, (4, 3) wall, ...] world-space faces.
     """
-    return [
-        np.array([x, y, building.height])
-        for x, y in building.footprint
-    ]
+    footprint = building.footprint
+    height = building.height
+    n = len(footprint)
+
+    roof = np.empty((n, 3), dtype=float)
+    roof[:, 0] = footprint[:, 0]
+    roof[:, 1] = footprint[:, 1]
+    roof[:, 2] = height
+    faces: t.List[np.ndarray] = [roof]
+
+    for wall in facing_walls:
+        p0, p1 = wall.p0, wall.p1
+        faces.append(
+            np.array([
+                [p0[0], p0[1], 0.0],
+                [p1[0], p1[1], 0.0],
+                [p1[0], p1[1], height],
+                [p0[0], p0[1], height],
+            ])
+        )
+    return faces
+
+
+def _project_faces(
+    faces_3d: t.List[np.ndarray],
+    view_matrix: np.ndarray,
+    proj_matrix: np.ndarray,
+    near: float,
+    width: int,
+    height: int,
+) -> t.List[t.Optional[t.List[t.Tuple[float, float]]]]:
+    """Project every face of one building, batching when nothing crosses near.
+
+    Fast path — when every vertex of every face is in front of the near plane
+    (the common case for an aerial camera), near-plane clipping is a no-op, so
+    all faces are projected in a single matmul and sliced back apart per face.
+    Otherwise each face falls back to the per-face near-clip + project path,
+    identical to the pre-batch behavior.
+
+    Args:
+        faces_3d (list[np.ndarray]): Per-face (K, 3) world-space vertex arrays.
+        view_matrix (np.ndarray): (4, 4) view matrix.
+        proj_matrix (np.ndarray): (4, 4) projection matrix.
+        near (float): Camera near plane distance.
+        width (int): Screen width in pixels.
+        height (int): Screen height in pixels.
+
+    Returns:
+        list[list[tuple[float, float]] | None]: Screen-space vertices per face,
+        aligned with ``faces_3d``; None where a face is behind near or
+        degenerate after clipping.
+    """
+    all_vertices = np.concatenate(faces_3d, axis=0)
+    cam_z = all_vertices @ view_matrix[2, :3] + view_matrix[2, 3]
+    if not np.all(cam_z < -near):
+        return [
+            _project_face(list(face), view_matrix, proj_matrix, near, width, height)
+            for face in faces_3d
+        ]
+
+    screen_coords, _, _ = project_points_full(
+        all_vertices, view_matrix, proj_matrix, (width, height)
+    )
+    result: t.List[t.Optional[t.List[t.Tuple[float, float]]]] = []
+    offset = 0
+    for face in faces_3d:
+        count = len(face)
+        chunk = screen_coords[offset:offset + count]
+        verts = [(float(x), float(y)) for x, y in chunk]
+        # The all-inside Sutherland-Hodgman pass in clip_polygon_to_near_plane
+        # (the slow path) emits vertices rotated left by one. Reproduce that
+        # rotation so the polygon handed to draw_polygon is byte-for-byte the
+        # same list the per-face path produced — PIL's fill can break boundary
+        # ties differently for a different start vertex, so an identical
+        # polygon in a different rotation is not pixel-identical.
+        result.append(verts[1:] + verts[:1])
+        offset += count
+    return result
 
 
 def _get_facing_walls(building: "Building", camera: Camera) -> t.List[FacingWall]:
@@ -304,69 +385,6 @@ def _get_facing_walls(building: "Building", camera: Camera) -> t.List[FacingWall
             facing_walls.append(FacingWall(edge_index=i, p0=p0, p1=p1, normal=normal))
 
     return facing_walls
-
-
-def _draw_walls(
-    building: "Building",
-    facing_walls: t.List[FacingWall],
-    view_matrix: np.ndarray,
-    proj_matrix: np.ndarray,
-    near: float,
-    width: int,
-    height: int,
-    wall_color: t.Tuple[int, int, int],
-    shade_strength: float,
-    backend: RenderBackend,
-) -> int:
-    """Project and draw each precomputed camera-facing wall quad.
-
-    Args:
-        building (Building): The building whose walls to draw.
-        facing_walls (list[FacingWall]): This building's camera-facing wall
-            edges, already backface-culled.
-        view_matrix (np.ndarray): (4, 4) view matrix.
-        proj_matrix (np.ndarray): (4, 4) projection matrix.
-        near (float): Camera near plane distance.
-        width (int): Screen width in pixels.
-        height (int): Screen height in pixels.
-        wall_color (tuple[int, int, int]): Base wall RGB color.
-        shade_strength (float): Per-face shading strength (0-1).
-        backend (RenderBackend): Target render surface.
-
-    Returns:
-        int: Number of wall quads drawn.
-    """
-    drawn = 0
-    for wall in facing_walls:
-        wall_vertices_3d = _build_wall_vertices(wall.p0, wall.p1, building.height)
-        wall_screen = _project_face(wall_vertices_3d, view_matrix, proj_matrix, near, width, height)
-        if wall_screen is None:
-            continue
-
-        shade = _get_face_shade(wall.normal, shade_strength)
-        backend.draw_polygon(wall_screen, _apply_shade(wall_color, shade))
-        drawn += 1
-
-    return drawn
-
-
-def _build_wall_vertices(p0: np.ndarray, p1: np.ndarray, height: float) -> t.List[np.ndarray]:
-    """Build a wall quad's world-space vertices for one footprint edge.
-
-    Args:
-        p0 (np.ndarray): (2,) edge start point.
-        p1 (np.ndarray): (2,) edge end point.
-        height (float): Building height in meters.
-
-    Returns:
-        list[np.ndarray]: Four (3,) vertices: bottom-p0, bottom-p1, top-p1, top-p0.
-    """
-    return [
-        np.array([p0[0], p0[1], 0.0]),
-        np.array([p1[0], p1[1], 0.0]),
-        np.array([p1[0], p1[1], height]),
-        np.array([p0[0], p0[1], height]),
-    ]
 
 
 def _get_outward_normal(p0: np.ndarray, p1: np.ndarray) -> np.ndarray:

@@ -1,9 +1,11 @@
 """Builds a synthetic ENU-space test scene for devmode parameter tuning.
 
-The scene contains 10 rows of content stacked along the Y axis. Each row
+The scene contains 11 rows of content stacked along the Y axis. Each row
 extends from X=0 to X=10000m. Rows 0-4 are road types with streetlights
 and cars. Row 5 is a car-only row. Rows 6-9 are direct light source rows
-(house lights, sign lights, parking lights, storefronts).
+(house lights, sign lights, parking lights, storefronts). Row 10 is a
+buildings row of mixed-height houses and apartment blocks, so the extruded
+mass render and lit windows can be tuned from the Devmode panel.
 """
 
 import random
@@ -14,6 +16,7 @@ import numpy as np
 from ..config.defaults import DEFAULTS
 from ..config.loader import build_devmode_camera_config
 from ..config.schema import SceneConfig
+from ..models.building import Building
 from ..models.commercial import create_parking_lot_light, create_sign_light, create_storefront_light
 from ..models.house_light import create_house_light
 from ..models.light_source import LightSource
@@ -41,6 +44,7 @@ ROW_LABELS: t.List[t.Tuple[str, float]] = [
     ("Sign Lights",    -500.0),
     ("Parking Lights", -700.0),
     ("Storefront",     -900.0),
+    ("Houses",        -1100.0),
 ]
 
 # Road type for each of rows 0-4 (index matches ROW_LABELS)
@@ -79,7 +83,8 @@ def build_synthetic_scene(config: SceneConfig) -> Scene:
     """
     camera = _build_camera(config)
     road_segments = _build_road_segments()
-    scene = _create_scene(road_segments, camera, config)
+    buildings = _build_synthetic_buildings(config)
+    scene = _create_scene(road_segments, camera, config, buildings)
     scene.build_spatial_index()
 
     rng = random.Random(config.seed)
@@ -185,13 +190,15 @@ def _create_scene(
     road_segments: t.List[RoadSegment],
     camera: "Camera",
     config: SceneConfig,
+    buildings: t.List[Building],
 ) -> Scene:
-    """Instantiate a Scene with the given segments and camera.
+    """Instantiate a Scene with the given segments, camera, and buildings.
 
     Args:
         road_segments (list[RoadSegment]): All ten road segments.
         camera (Camera): The devmode camera.
         config (SceneConfig): Scene configuration.
+        buildings (list[Building]): Buildings for the Houses row (may be empty).
 
     Returns:
         Scene: Uninitialised scene (no spatial index, no lights yet).
@@ -204,7 +211,90 @@ def _create_scene(
         commercial_zones=[],
         dark_zones=[],
         transformer=None,
+        buildings=buildings,
     )
+
+
+# --- Buildings row -----------------------------------------------------------
+
+# Alternating (footprint_width_m, footprint_depth_m, height_m, kind) templates
+# for the Houses row. Short houses grow no window rows (height below the
+# sill + roof margin + one floor); the taller apartment blocks grow several,
+# so the window sliders have a visible effect. Cycled along the row by index.
+_BUILDING_TEMPLATES: t.List[t.Tuple[float, float, float, str]] = [
+    (12.0, 10.0, 4.5, "house"),
+    (24.0, 16.0, 14.0, "apartments"),
+    (14.0, 11.0, 4.5, "house"),
+    (28.0, 18.0, 22.0, "apartments"),
+    (20.0, 14.0, 18.0, "apartments"),
+]
+
+# Spacing between building footprint centers along the Houses row (meters).
+_BUILDING_SPACING = 200.0
+
+
+def _build_synthetic_buildings(config: SceneConfig) -> t.List[Building]:
+    """Build the Houses row: mixed-height buildings spaced along X.
+
+    Buildings alternate through ``_BUILDING_TEMPLATES`` (short houses and taller
+    apartment blocks) at ``_BUILDING_SPACING`` intervals across the row. Near
+    buildings fall inside the window render distance so their lit windows are
+    visible and tunable; far ones demonstrate the distance falloff. Footprints
+    are axis-aligned CCW rectangles so the mass render's backface cull works.
+
+    Returns an empty list when the config has no ``[buildings]`` section, so
+    older configs still produce a scene (just without the Houses row).
+
+    Args:
+        config (SceneConfig): Scene configuration. Buildings are built only when
+            ``config.buildings`` is present.
+
+    Returns:
+        list[Building]: Buildings for the Houses row, or [] when unconfigured.
+    """
+    if config.buildings is None:
+        return []
+
+    y = ROW_LABELS[10][1]
+    buildings: t.List[Building] = []
+    seed = 0
+    x = _BUILDING_SPACING
+    while x < _ROW_X_END:
+        width, depth, height, kind = _BUILDING_TEMPLATES[seed % len(_BUILDING_TEMPLATES)]
+        footprint = _rect_footprint_ccw(x, y, width, depth)
+        buildings.append(
+            Building(footprint=footprint, height=height, building_kind=kind, window_seed=seed)
+        )
+        seed += 1
+        x += _BUILDING_SPACING
+    return buildings
+
+
+def _rect_footprint_ccw(
+    center_x: float, center_y: float, width: float, depth: float
+) -> np.ndarray:
+    """Build an axis-aligned rectangular footprint, CCW, centered on a point.
+
+    Winding is counter-clockwise (bottom-left, bottom-right, top-right,
+    top-left) so ``building_pass`` computes outward wall normals correctly.
+
+    Args:
+        center_x (float): Footprint center X in ENU meters.
+        center_y (float): Footprint center Y in ENU meters.
+        width (float): Extent along X in meters.
+        depth (float): Extent along Y in meters.
+
+    Returns:
+        np.ndarray: (4, 2) CCW exterior ring, no closing duplicate.
+    """
+    hw = width / 2.0
+    hd = depth / 2.0
+    return np.array([
+        [center_x - hw, center_y - hd],
+        [center_x + hw, center_y - hd],
+        [center_x + hw, center_y + hd],
+        [center_x - hw, center_y + hd],
+    ])
 
 
 def _populate_road_lights(
