@@ -41,9 +41,9 @@ _BASE_ILLUMINATION_RESOLUTION: float = 2.0
 _BOUNDS_PADDING_M: float = 200.0
 
 # Maximum illumination map size in pixels (H * W). Resolution is coarsened
-# beyond this to keep the map to a few hundred MB regardless of how much
+# beyond this to cap the float32 RGB map at ~3 GB regardless of how much
 # ground the camera can see (e.g. a near-horizon shot over a large bbox).
-_MAX_ILLUM_MAP_PIXELS: int = 64_000_000
+_MAX_ILLUM_MAP_PIXELS: int = 256_000_000
 
 
 def render_illumination(
