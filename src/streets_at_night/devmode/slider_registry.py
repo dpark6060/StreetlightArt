@@ -59,6 +59,7 @@ class SliderRegistry:
         bool_buttons: Maps UIButton → config_path tuple.
         bool_states: Maps UIButton → current bool value.
         text_entries: Maps UITextEntryLine → config_path tuple (for non-slider string fields).
+        swatches: Maps hex-valued UITextEntryLine → its UIImage colour swatch.
         extra_widgets: Any widgets (e.g. row labels) not tracked in the above dicts.
         dirty: Set of SliderDescriptor.label values for sliders the user has
             actually moved (via drag or text entry) since the section was
@@ -74,6 +75,7 @@ class SliderRegistry:
         self.bool_buttons: t.Dict[t.Any, tuple] = {}
         self.bool_states: t.Dict[t.Any, bool] = {}
         self.text_entries: t.Dict[t.Any, tuple] = {}
+        self.swatches: t.Dict[t.Any, t.Any] = {}
         self.color_pools: t.List[ColorPoolBinding] = []
         self.extra_widgets: t.List[t.Any] = []
         self.dirty: t.Set[str] = set()
@@ -158,6 +160,7 @@ class SliderRegistry:
         widgets.extend(self.value_entries.values())
         widgets.extend(self.bool_buttons.keys())
         widgets.extend(self.text_entries.keys())
+        widgets.extend(self.swatches.values())
         widgets.extend(self.color_pool_widgets())
         widgets.extend(self.extra_widgets)
         return widgets
