@@ -480,3 +480,11 @@ def test_direct_light_row_segments_match_row_y_offsets(scene_config: SceneConfig
         assert actual_y == expected_y, (
             f"Segment {i} Y={actual_y} does not match ROW_LABELS[{i}] Y={expected_y}"
         )
+
+
+def test_row_labels_uniform_200m_pitch() -> None:
+    # Act
+    offsets = [y for _, y in ROW_LABELS]
+
+    # Assert — 10 rows from 900 down to -900 at a uniform 200m pitch
+    assert offsets == [900.0, 700.0, 500.0, 300.0, 100.0, -100.0, -300.0, -500.0, -700.0, -900.0]

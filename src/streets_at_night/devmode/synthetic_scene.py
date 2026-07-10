@@ -39,10 +39,10 @@ ROW_LABELS: t.List[t.Tuple[str, float]] = [
     ("Residential",     300.0),
     ("Service",         100.0),
     ("Cars",           -100.0),
-    ("Sign Lights",    -500.0),
-    ("Parking Lights", -700.0),
-    ("Storefront",     -900.0),
-    ("Houses",        -1100.0),
+    ("Sign Lights",    -300.0),
+    ("Parking Lights", -500.0),
+    ("Storefront",     -700.0),
+    ("Houses",         -900.0),
 ]
 
 # Road type for each of rows 0-4 (index matches ROW_LABELS)
@@ -217,16 +217,19 @@ def _create_scene(
 # --- Buildings row -----------------------------------------------------------
 
 # Alternating (footprint_width_m, footprint_depth_m, height_m, kind) templates
-# for the Houses row. Short houses fall back to a single lit-window row
-# (height below the sill + roof margin + one floor); the taller apartment
-# blocks grow several, so the window sliders have a visible effect. Cycled
-# along the row by index.
+# for the Houses row, chosen to exercise the window system's behaviors side by
+# side: a 2.4m shed-height house whose usable wall band (height minus
+# sill+roof margins) is smaller than one window, so it renders dark; 4.5m
+# houses that get exactly one fallback row; a retail block on the global
+# (sparse) lit fraction for contrast with the residential fraction; and
+# apartment towers with multiple window rows. Cycled along the row by index.
 _BUILDING_TEMPLATES: t.List[t.Tuple[float, float, float, str]] = [
     (12.0, 10.0, 4.5, "house"),
     (24.0, 16.0, 14.0, "apartments"),
+    (10.0, 8.0, 2.4, "house"),
+    (16.0, 12.0, 6.5, "retail"),
     (14.0, 11.0, 4.5, "house"),
     (28.0, 18.0, 22.0, "apartments"),
-    (20.0, 14.0, 18.0, "apartments"),
 ]
 
 # Spacing between building footprint centers along the Houses row (meters).
