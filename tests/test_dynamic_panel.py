@@ -102,8 +102,8 @@ def test_build_dynamic_section_renders_color_pool_rows_and_binding(headless_mana
 
 def test_build_dynamic_section_color_pool_entries_prefilled(headless_manager, scroll, config):
     # Arrange
-    kind = LightKind("House Lights", config.lights.house_lights, None)
-    pool = config.lights.house_lights.colors
+    kind = LightKind("Commercial: Parking", config.lights.commercial, "parking_")
+    pool = config.lights.commercial.parking_colors
     registry = SliderRegistry()
 
     # Act

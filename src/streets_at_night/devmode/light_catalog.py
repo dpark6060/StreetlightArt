@@ -100,8 +100,6 @@ def build_light_catalog(config: SceneConfig) -> t.List[LightKind]:
     kinds.append(LightKind("Cars: Density", cars, "density_"))
     kinds.append(LightKind("Cars: Separation", cars, "separation_"))
 
-    kinds.append(LightKind("House Lights", config.lights.house_lights, None))
-
     commercial = config.lights.commercial
     kinds.append(LightKind("Commercial: Signs", commercial, "sign_"))
     kinds.append(LightKind("Commercial: Parking", commercial, "parking_"))

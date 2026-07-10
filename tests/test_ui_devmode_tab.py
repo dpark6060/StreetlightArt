@@ -106,8 +106,8 @@ def test_switching_light_kinds_preserves_edited_value(config, headless_manager, 
         slider.set_current_value(0.42)
         tab._handle_slider_moved(slider)
 
-        # Act — leave for House Lights, then return.
-        tab._build_section("House Lights")
+        # Act — leave for Commercial: Signs, then return.
+        tab._build_section("Commercial: Signs")
         tab._build_section("Streetlight: Highway (pool 0)")
         returned_slider = next(
             s for s, d in tab._light_registry.sliders.items()

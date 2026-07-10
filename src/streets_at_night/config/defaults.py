@@ -458,24 +458,6 @@ DEFAULTS: dict = {
             "storefront_spacing_min": 5.0,
             "storefront_spacing_max": 8.0,
         },
-        "house_lights": {
-            # Color pool: 45% warm yellow, 25% warm white, 15% amber, 15% TV blue
-            "colors": {
-                "colors": [
-                    ("#FFE4A0", 0.45),
-                    ("#FFF0D0", 0.25),
-                    ("#FFCC80", 0.15),
-                    ("#D0E0FF", 0.15),
-                ]
-            },
-            "brightness_min": 0.3,
-            "brightness_max": 0.6,
-            "glow_radius": 6.0,
-            "illumination_radius": 8.0,
-            "illumination_intensity": 0.35,
-            "illumination_falloff": 2.0,
-            "illumination_inner_fraction": 0.0,
-        },
     },
     "atmosphere": {
         # falloff_distance is the shared extinction coefficient k: lights dim by

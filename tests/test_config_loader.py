@@ -401,9 +401,9 @@ def test_load_config_pre_migration_streetlight_profile_raises_value_error(
 
 
 def test_load_config_ignores_stale_house_light_keys(tmp_path):
-    # Arrange — a pre-removal TOML with zones.house keys that no longer exist.
-    # [lights.house_lights] is left in place (Task 4 removes that section, not
-    # this one) so this only exercises the zones.house.{min,max}_lights removal.
+    # Arrange — a pre-removal TOML with keys that no longer exist on the
+    # schema: zones.house.{min,max}_lights and the whole [lights.house_lights]
+    # section. Both must be silently ignored by the deep-merge loader.
     stale = tmp_path / "stale.toml"
     stale.write_text(
         "\n".join(
@@ -424,3 +424,4 @@ def test_load_config_ignores_stale_house_light_keys(tmp_path):
     # Assert — loads without error, stale zones.house keys simply dropped
     assert not hasattr(result.zones.house, "min_lights")
     assert not hasattr(result.zones.house, "max_lights")
+    assert not hasattr(result.lights, "house_lights")

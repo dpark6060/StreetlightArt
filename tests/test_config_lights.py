@@ -2,8 +2,8 @@
 """Tests for Stage 5 light configuration in streets_at_night.config.
 
 Covers: LightConfig, StreetLightConfig, CarConfig, CommercialLightConfig,
-HouseLightConfig, FixturePoolEntry, and FixtureProfileConfig loading
-from defaults and from an empty TOML overlay.
+FixturePoolEntry, and FixtureProfileConfig loading from defaults and from an
+empty TOML overlay.
 """
 
 from pathlib import Path
@@ -17,7 +17,6 @@ from streets_at_night.config.schema import (
     CommercialLightConfig,
     FixturePoolEntry,
     FixtureProfileConfig,
-    HouseLightConfig,
     LightConfig,
     SceneConfig,
     StreetLightConfig,
@@ -80,11 +79,6 @@ def test_light_config_has_cars(loaded_config: SceneConfig):
 def test_light_config_has_commercial(loaded_config: SceneConfig):
     # Assert
     assert isinstance(loaded_config.lights.commercial, CommercialLightConfig)
-
-
-def test_light_config_has_house_lights(loaded_config: SceneConfig):
-    # Assert
-    assert isinstance(loaded_config.lights.house_lights, HouseLightConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -176,19 +170,6 @@ def test_commercial_sign_colors_non_empty(loaded_config: SceneConfig):
 
     assert isinstance(sign_colors, list)
     assert len(sign_colors) > 0
-
-
-# ---------------------------------------------------------------------------
-# HouseLightConfig — color pool
-# ---------------------------------------------------------------------------
-
-
-def test_house_light_colors_non_empty(loaded_config: SceneConfig):
-    # Assert
-    house_colors = loaded_config.lights.house_lights.colors.colors
-
-    assert isinstance(house_colors, list)
-    assert len(house_colors) > 0
 
 
 # ---------------------------------------------------------------------------

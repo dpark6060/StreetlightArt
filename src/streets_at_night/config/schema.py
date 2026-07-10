@@ -199,27 +199,12 @@ class CommercialLightConfig:
 
 
 @dataclass
-class HouseLightConfig:
-    """House light configuration for residential window, porch, and interior lights."""
-
-    colors: ColorPoolConfig
-    brightness_min: float
-    brightness_max: float
-    glow_radius: float
-    illumination_radius: float
-    illumination_intensity: float
-    illumination_falloff: float
-    illumination_inner_fraction: float
-
-
-@dataclass
 class LightConfig:
     """Top-level light configuration for all light types in the scene."""
 
     streetlights: StreetLightConfig
     cars: CarConfig
     commercial: CommercialLightConfig
-    house_lights: HouseLightConfig
 
 
 @dataclass

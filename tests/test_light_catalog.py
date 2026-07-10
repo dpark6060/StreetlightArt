@@ -56,14 +56,12 @@ def test_build_light_catalog_car_kinds_present_with_prefixes(config):
         assert by_label[label].target is config.lights.cars
 
 
-def test_build_light_catalog_house_and_commercial_kinds(config):
+def test_build_light_catalog_commercial_kinds(config):
     # Act
     catalog = build_light_catalog(config)
     by_label = {k.label: k for k in catalog}
 
     # Assert
-    assert by_label["House Lights"].target is config.lights.house_lights
-    assert by_label["House Lights"].field_prefix is None
     assert by_label["Commercial: Signs"].field_prefix == "sign_"
     assert by_label["Commercial: Parking"].field_prefix == "parking_"
     assert by_label["Commercial: Storefronts"].field_prefix == "storefront_"
