@@ -163,8 +163,12 @@ def render_buildings(
             continue
         if window_buffer is None:
             window_buffer = np.zeros((height, width, 3), dtype=np.float32)
+        # Extinction uses true 3D camera distance (matches every other light,
+        # which uses render_utils.camera_distance). The XY `distance` above is
+        # kept for culling/sort/subpixel; only the extinction factor changes.
+        distance_3d = math.hypot(distance, float(camera.position[2]))
         extinction = _get_window_extinction(
-            distance, building_config.window_extinction_strength, falloff_m
+            distance_3d, building_config.window_extinction_strength, falloff_m
         )
         windows_drawn += _accumulate_building_windows(
             building, facing_walls, distance, view_matrix, proj_matrix, width, height,
@@ -714,7 +718,8 @@ def _get_window_extinction(distance_m: float, strength: float, falloff_distance_
     1.0 matches the attenuation applied to every other light core.
 
     Args:
-        distance_m (float): Camera distance to the building, in meters.
+        distance_m (float): True 3D camera distance to the building, in
+            meters (includes camera height, not just the XY ground distance).
         strength (float): Extinction strength multiplier.
         falloff_distance_m (float): Atmosphere falloff distance in meters.
 
@@ -1022,9 +1027,10 @@ def _accumulate_window_rect(
 def _apply_window_glow(buffer: np.ndarray, glow_px: float) -> np.ndarray:
     """Optionally soften the window emission buffer with a small box blur.
 
-    Kept off by default (``glow_px == 0``) since lit windows are meant to be
-    sharp emissive rectangles, not bloom sources. When enabled, gives a
-    subtle "diffuse through glass" softness without per-window PSFs.
+    Enabled by default (``glow_px == 1.2``): a subtle bloom softens lit
+    windows into the atmosphere, giving a "diffuse through glass" look
+    without per-window PSFs. Set ``glow_px <= 0`` to disable and keep
+    windows as sharp emissive rectangles.
 
     Args:
         buffer (np.ndarray): Float32 (H, W, 3) linear buffer.

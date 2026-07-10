@@ -483,6 +483,31 @@ def test_get_window_extinction_nonpositive_falloff_is_one():
     assert factor == 1.0
 
 
+@mock.patch("streets_at_night.rendering.building_pass._get_window_extinction")
+def test_render_buildings_passes_3d_distance_to_extinction(
+    mock_extinction, overhead_camera, mock_backend, building_config, unit_square_footprint
+):
+    # Arrange — building centroid at [5, 5]; camera at [5, -500, 400].
+    # XY distance is 505m, but extinction must use the true 3D distance.
+    mock_extinction.return_value = 1.0
+    building = Building(
+        footprint=unit_square_footprint, height=6.0, building_kind="retail", window_seed=1
+    )
+    scene = mock.MagicMock()
+    scene.config.buildings = building_config
+    scene.config.atmosphere.falloff_distance = 8000.0
+    scene.get_buildings_in_rect.return_value = [building]
+    expected_distance_3d = math.hypot(505.0, 400.0)
+
+    # Act
+    render_buildings(scene, overhead_camera, mock_backend)
+
+    # Assert — extinction called with 3D distance, not the XY 505m
+    mock_extinction.assert_called_once()
+    passed_distance = mock_extinction.call_args.args[0]
+    assert passed_distance == pytest.approx(expected_distance_3d)
+
+
 # ---------------------------------------------------------------------------
 # _accumulate_building_windows / render_buildings — lit selection + accumulation
 # ---------------------------------------------------------------------------

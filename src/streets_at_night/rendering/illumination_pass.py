@@ -367,20 +367,38 @@ def _apply_soft_knee(illum_map: np.ndarray, knee_start: float, knee_max: float) 
     monotonic, so brighter stacks always stay brighter. Disabled (returns
     the input unchanged) when ``knee_max <= knee_start``.
 
+    Mutates ``illum_map`` in place (and returns it) to avoid allocating
+    several full-map temporaries — on a budget-capped ~3 GB map the old
+    out-of-place form churned ~10 GB transient. The only caller rebinds the
+    result and never reuses the input, so in-place is safe. Behavior is
+    bit-identical to the out-of-place form for float32 inputs.
+
     Args:
         illum_map (np.ndarray): (H, W, 3) float32 linear illumination map.
+            Mutated in place.
         knee_start (float): Intensity where compression begins.
         knee_max (float): Asymptotic intensity ceiling.
 
     Returns:
-        np.ndarray: The compressed map (may be the input array when disabled).
+        np.ndarray: The compressed map (the input array, mutated; returned
+        unchanged when disabled).
     """
     if knee_max <= knee_start:
         return illum_map
     span = knee_max - knee_start
-    over = np.maximum(illum_map - knee_start, 0.0)
-    compressed = knee_start + span * over / (over + span)
-    return np.where(illum_map > knee_start, compressed, illum_map).astype(np.float32)
+
+    # over = max(illum_map - knee_start, 0.0)
+    over = illum_map - knee_start
+    np.maximum(over, 0.0, out=over)
+    # denom = over + span (needed before `over` is overwritten below)
+    denom = over + span
+    # compressed = knee_start + span * over / denom, computed in `over`
+    over *= span
+    over /= denom
+    over += knee_start
+    # Keep compressed only where above the knee; leave the rest untouched.
+    np.copyto(illum_map, over, where=illum_map > knee_start)
+    return illum_map
 
 
 def _paint_illumination_blob(
