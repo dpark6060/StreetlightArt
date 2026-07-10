@@ -351,6 +351,47 @@ def test_get_window_row_count_returns_zero_for_negative_usable_height(building_c
     assert rows == 0
 
 
+def test_get_window_row_count_returns_fallback_row_for_short_house(building_config):
+    # Act — 4.5m house: usable 3.0m is less than one 3.2m floor, but a 1.1m window fits
+    rows = _get_window_row_count(4.5, building_config)
+
+    # Assert
+    assert rows == 1
+
+
+def test_get_window_row_count_returns_zero_when_no_window_fits(building_config):
+    # Act — 2.0m wall: usable 0.5m is smaller than window_height_m 1.1m
+    rows = _get_window_row_count(2.0, building_config)
+
+    # Assert
+    assert rows == 0
+
+
+def test_get_window_row_count_multi_floor_heights_unaffected_by_fallback(building_config):
+    # Act — 10m building: floor(8.5 / 3.2) = 2 rows, fallback path not involved
+    rows = _get_window_row_count(10.0, building_config)
+
+    # Assert
+    assert rows == 2
+
+
+def test_build_window_grid_short_house_gets_single_centered_row(south_wall_edge, building_config):
+    # Arrange
+    p0, p1, normal = south_wall_edge
+
+    # Act — 4.5m house on a 10m wall
+    cells = build_window_grid(
+        p0, p1, 4.5, normal, edge_index=0, window_seed=1, config=building_config
+    )
+
+    # Assert — 1 row x 3 cols; row center z = 0.9 + (3.0 - 3.2)/2 + 1.6 = 2.4,
+    # so windows span 1.85..2.95, below the 3.9m roofline
+    assert len(cells) == 3
+    for cell in cells:
+        assert cell.corners[0][2] == pytest.approx(1.85)
+        assert cell.corners[2][2] == pytest.approx(2.95)
+
+
 def test_get_window_col_count_returns_zero_for_negative_usable_width(building_config):
     # Act
     cols = _get_window_col_count(1.0, building_config)

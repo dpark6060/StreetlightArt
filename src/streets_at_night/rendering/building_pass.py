@@ -582,17 +582,24 @@ def build_window_grid(
 def _get_window_row_count(height: float, config: BuildingConfig) -> int:
     """Compute how many window rows fit in a wall's vertical band.
 
+    Buildings too short for a full floor still get one centered row when a
+    window physically fits in the band, so one-story houses render lit
+    windows instead of dark boxes.
+
     Args:
         height (float): Building height in meters.
         config (BuildingConfig): Window margin/spacing configuration.
 
     Returns:
-        int: Number of rows that fit (may be 0 or negative if too short).
+        int: Number of rows that fit (0 when not even one window fits).
     """
     usable = height - config.window_roof_margin_m - config.window_sill_margin_m
     if usable <= 0.0:
         return 0
-    return int(np.floor(usable / config.floor_height_m))
+    rows = int(np.floor(usable / config.floor_height_m))
+    if rows == 0 and usable >= config.window_height_m:
+        return 1
+    return rows
 
 
 def _get_window_col_count(wall_width: float, config: BuildingConfig) -> int:
