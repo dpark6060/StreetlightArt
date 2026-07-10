@@ -74,9 +74,6 @@ def zone_config():
         ),
         yard_base_color="#060A04",
         yard_variation=2,
-        min_lights=0,
-        max_lights=2,
-        light_weights=[1.0, 1.0, 1.0],
         footprint_coverage=0.65,
         lot_width=15.0,
         lot_depth=25.0,
@@ -365,7 +362,6 @@ def test_build_zones_reproducible_with_same_seed(
         for house_a, house_b in zip(zone_a.houses, zone_b.houses):
             assert house_a.base_color == house_b.base_color
             assert house_a.yard_color == house_b.yard_color
-            assert house_a.num_lights == house_b.num_lights
 
 
 # ---------------------------------------------------------------------------

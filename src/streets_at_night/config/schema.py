@@ -53,9 +53,6 @@ class HouseConfig:
     exterior_colors: ColorPoolConfig
     yard_base_color: str
     yard_variation: int
-    min_lights: int
-    max_lights: int
-    light_weights: t.List[float]
     footprint_coverage: float
     lot_width: float
     lot_depth: float

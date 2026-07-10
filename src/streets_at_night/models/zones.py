@@ -12,8 +12,8 @@ from .house import House
 class ResidentialZone:
     """A residential zone boundary with its collection of houses.
 
-    Data container only.  Light placement is handled by the placement
-    engine (house_light_placer) in Stage 5.
+    Data container only.  Houses are lit via extruded building geometry
+    (building_pass), not by a dedicated light-placement engine.
     """
 
     boundary: Polygon

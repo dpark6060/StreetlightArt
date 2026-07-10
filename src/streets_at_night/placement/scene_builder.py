@@ -4,7 +4,7 @@ Builds a fully initialised Scene from classified road data and optional
 land use / building GeoDataFrames. When land use and building data are
 provided, zone_builder is invoked to populate zone lists on the Scene.
 After the scene is built, populate_lights runs all placement engines to
-add streetlights, cars, commercial lights, and house lights.
+add streetlights, cars, and commercial lights.
 """
 
 import random
@@ -23,7 +23,6 @@ from ..models.road_types import RoadType
 from .building_builder import build_buildings
 from .car_placer import place_cars
 from .commercial_placer import place_commercial_lights
-from .house_light_placer import collect_house_lights
 from .streetlight_placer import place_streetlights
 from ..scene.scene import Scene
 
@@ -84,16 +83,16 @@ def build_scene(
         buildings=buildings,
     )
     scene.build_spatial_index()
-    streetlights, car_lights, commercial_lights, house_lights = populate_lights(
+    streetlights, car_lights, commercial_lights = populate_lights(
         scene, config, random.Random(config.seed)
     )
-    _print_light_summary(streetlights, car_lights, commercial_lights, house_lights)
+    _print_light_summary(streetlights, car_lights, commercial_lights)
     return scene
 
 
 def populate_lights(
     scene: Scene, config: SceneConfig, rng: random.Random
-) -> t.Tuple[t.List, t.List, t.List, t.List]:
+) -> t.Tuple[t.List, t.List, t.List]:
     """Run all light placers and add results to the scene.
 
     Creates deterministic child RNGs per placer from the master seed, then
@@ -108,30 +107,28 @@ def populate_lights(
             are derived from this to keep each placer independent.
 
     Returns:
-        Tuple[List, List, List, List]: (streetlights, car_lights,
-            commercial_lights, house_lights) — all generated LightSources
-            by type, already added to the scene.
+        Tuple[List, List, List]: (streetlights, car_lights,
+            commercial_lights) — all generated LightSources by type,
+            already added to the scene.
     """
-    streetlight_rng, car_rng, commercial_rng, house_rng = _create_child_rngs(rng)
+    streetlight_rng, car_rng, commercial_rng = _create_child_rngs(rng)
 
     streetlights = _run_streetlight_placer(scene, config, streetlight_rng)
     car_lights, car_pairs = _run_car_placer(scene, config, car_rng)
     commercial_lights = _run_commercial_placer(scene, config, commercial_rng)
-    house_lights = _run_house_light_placer(scene, config, house_rng)
 
     scene.add_lights(streetlights)
     scene.add_lights(car_lights)
     scene.add_lights(commercial_lights)
-    scene.add_lights(house_lights)
     scene.add_car_pairs(car_pairs)
 
-    return streetlights, car_lights, commercial_lights, house_lights
+    return streetlights, car_lights, commercial_lights
 
 
 def _create_child_rngs(
     rng: random.Random,
-) -> t.Tuple[random.Random, random.Random, random.Random, random.Random]:
-    """Create four independent child RNGs from a master RNG.
+) -> t.Tuple[random.Random, random.Random, random.Random]:
+    """Create three independent child RNGs from a master RNG.
 
     Each child is seeded from a unique integer drawn from the master, so
     placer order does not affect any other placer's random sequence.
@@ -140,11 +137,10 @@ def _create_child_rngs(
         rng (random.Random): Master RNG to draw seeds from.
 
     Returns:
-        Tuple[Random, Random, Random, Random]:
-            (streetlight_rng, car_rng, commercial_rng, house_rng)
+        Tuple[Random, Random, Random]:
+            (streetlight_rng, car_rng, commercial_rng)
     """
     return (
-        random.Random(rng.randint(0, 2**32)),
         random.Random(rng.randint(0, 2**32)),
         random.Random(rng.randint(0, 2**32)),
         random.Random(rng.randint(0, 2**32)),
@@ -206,29 +202,10 @@ def _run_commercial_placer(
     return place_commercial_lights(scene.commercial_zones, config.lights, rng)
 
 
-def _run_house_light_placer(
-    scene: Scene,
-    config: SceneConfig,
-    rng: random.Random,
-) -> t.List:
-    """Run the house light collector and return generated lights.
-
-    Args:
-        scene (Scene): Scene providing residential zones.
-        config (SceneConfig): Scene configuration with lights section.
-        rng (random.Random): Seeded RNG for this placer.
-
-    Returns:
-        List[LightSource]: All house LightSources.
-    """
-    return collect_house_lights(scene.residential_zones, config.lights, rng)
-
-
 def _print_light_summary(
     streetlights: t.List,
     car_lights: t.List,
     commercial_lights: t.List,
-    house_lights: t.List,
 ) -> None:
     """Print a breakdown of lights placed by type and a total.
 
@@ -236,14 +213,12 @@ def _print_light_summary(
         streetlights (List): Streetlight LightSources.
         car_lights (List): Car LightSources.
         commercial_lights (List): Commercial LightSources.
-        house_lights (List): House LightSources.
     """
-    total = len(streetlights) + len(car_lights) + len(commercial_lights) + len(house_lights)
+    total = len(streetlights) + len(car_lights) + len(commercial_lights)
     print(f"Lights placed: {total} total")
     print(f"  Streetlights : {len(streetlights)}")
     print(f"  Car lights   : {len(car_lights)}")
     print(f"  Commercial   : {len(commercial_lights)}")
-    print(f"  House lights : {len(house_lights)}")
 
 
 def _build_zones_if_available(

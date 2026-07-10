@@ -107,23 +107,6 @@ def test_house_config_defaults_yard_variation(empty_toml: Path):
     assert result.zones.house.yard_variation == DEFAULTS["zones"]["house"]["yard_variation"]
 
 
-def test_house_config_defaults_min_max_lights(empty_toml: Path):
-    # Act
-    result = load_config(empty_toml)
-
-    # Assert
-    assert result.zones.house.min_lights == DEFAULTS["zones"]["house"]["min_lights"]
-    assert result.zones.house.max_lights == DEFAULTS["zones"]["house"]["max_lights"]
-
-
-def test_house_config_defaults_light_weights(empty_toml: Path):
-    # Act
-    result = load_config(empty_toml)
-
-    # Assert
-    assert result.zones.house.light_weights == DEFAULTS["zones"]["house"]["light_weights"]
-
-
 def test_house_config_defaults_footprint_and_lot(empty_toml: Path):
     # Act
     result = load_config(empty_toml)

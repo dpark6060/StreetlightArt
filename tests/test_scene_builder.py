@@ -50,9 +50,6 @@ def zone_config() -> ZoneConfig:
             exterior_colors=ColorPoolConfig(colors=[("#0D0A08", 1.0)]),
             yard_base_color="#060A04",
             yard_variation=2,
-            min_lights=0,
-            max_lights=5,
-            light_weights=[5.0, 3.0, 1.5, 0.5, 0.3, 0.1],
             footprint_coverage=0.65,
             lot_width=15.0,
             lot_depth=25.0,
@@ -133,15 +130,13 @@ def _make_straight_segment(road_type: RoadType, length: float = 500.0) -> RoadSe
 @mock.patch("streets_at_night.placement.scene_builder.place_streetlights")
 @mock.patch("streets_at_night.placement.scene_builder.place_cars")
 @mock.patch("streets_at_night.placement.scene_builder.place_commercial_lights")
-@mock.patch("streets_at_night.placement.scene_builder.collect_house_lights")
 def test_populate_lights_calls_streetlight_placer(
-    mock_house, mock_commercial, mock_cars, mock_streetlights, scene_config
+    mock_commercial, mock_cars, mock_streetlights, scene_config
 ):
     # Arrange
     mock_streetlights.return_value = []
     mock_cars.return_value = ([], [])
     mock_commercial.return_value = []
-    mock_house.return_value = []
     segments = [_make_straight_segment(RoadType.HIGHWAY)]
     scene = _make_mock_scene(segments, scene_config)
     rng = random.Random(42)
@@ -156,15 +151,13 @@ def test_populate_lights_calls_streetlight_placer(
 @mock.patch("streets_at_night.placement.scene_builder.place_streetlights")
 @mock.patch("streets_at_night.placement.scene_builder.place_cars")
 @mock.patch("streets_at_night.placement.scene_builder.place_commercial_lights")
-@mock.patch("streets_at_night.placement.scene_builder.collect_house_lights")
 def test_populate_lights_calls_car_placer(
-    mock_house, mock_commercial, mock_cars, mock_streetlights, scene_config
+    mock_commercial, mock_cars, mock_streetlights, scene_config
 ):
     # Arrange
     mock_streetlights.return_value = []
     mock_cars.return_value = ([], [])
     mock_commercial.return_value = []
-    mock_house.return_value = []
     segments = [_make_straight_segment(RoadType.HIGHWAY)]
     scene = _make_mock_scene(segments, scene_config)
     rng = random.Random(42)
@@ -179,15 +172,13 @@ def test_populate_lights_calls_car_placer(
 @mock.patch("streets_at_night.placement.scene_builder.place_streetlights")
 @mock.patch("streets_at_night.placement.scene_builder.place_cars")
 @mock.patch("streets_at_night.placement.scene_builder.place_commercial_lights")
-@mock.patch("streets_at_night.placement.scene_builder.collect_house_lights")
 def test_populate_lights_calls_commercial_placer(
-    mock_house, mock_commercial, mock_cars, mock_streetlights, scene_config
+    mock_commercial, mock_cars, mock_streetlights, scene_config
 ):
     # Arrange
     mock_streetlights.return_value = []
     mock_cars.return_value = ([], [])
     mock_commercial.return_value = []
-    mock_house.return_value = []
     scene = _make_mock_scene([], scene_config)
     rng = random.Random(42)
 
@@ -201,31 +192,8 @@ def test_populate_lights_calls_commercial_placer(
 @mock.patch("streets_at_night.placement.scene_builder.place_streetlights")
 @mock.patch("streets_at_night.placement.scene_builder.place_cars")
 @mock.patch("streets_at_night.placement.scene_builder.place_commercial_lights")
-@mock.patch("streets_at_night.placement.scene_builder.collect_house_lights")
-def test_populate_lights_calls_house_light_placer(
-    mock_house, mock_commercial, mock_cars, mock_streetlights, scene_config
-):
-    # Arrange
-    mock_streetlights.return_value = []
-    mock_cars.return_value = ([], [])
-    mock_commercial.return_value = []
-    mock_house.return_value = []
-    scene = _make_mock_scene([], scene_config)
-    rng = random.Random(42)
-
-    # Act
-    populate_lights(scene, scene_config, rng)
-
-    # Assert
-    mock_house.assert_called_once()
-
-
-@mock.patch("streets_at_night.placement.scene_builder.place_streetlights")
-@mock.patch("streets_at_night.placement.scene_builder.place_cars")
-@mock.patch("streets_at_night.placement.scene_builder.place_commercial_lights")
-@mock.patch("streets_at_night.placement.scene_builder.collect_house_lights")
 def test_populate_lights_adds_all_lights_to_scene(
-    mock_house, mock_commercial, mock_cars, mock_streetlights, scene_config
+    mock_commercial, mock_cars, mock_streetlights, scene_config
 ):
     # Arrange
     street_light = LightSource(
@@ -249,7 +217,6 @@ def test_populate_lights_adds_all_lights_to_scene(
     mock_streetlights.return_value = [street_light]
     mock_cars.return_value = ([car_light], [])
     mock_commercial.return_value = []
-    mock_house.return_value = []
     scene = _make_mock_scene([], scene_config)
     rng = random.Random(42)
 
@@ -257,22 +224,20 @@ def test_populate_lights_adds_all_lights_to_scene(
     populate_lights(scene, scene_config, rng)
 
     # Assert — add_lights called for each placer's result
-    assert scene.add_lights.call_count == 4
+    assert scene.add_lights.call_count == 3
 
 
 @mock.patch("streets_at_night.placement.scene_builder.place_streetlights")
 @mock.patch("streets_at_night.placement.scene_builder.place_cars")
 @mock.patch("streets_at_night.placement.scene_builder.place_commercial_lights")
-@mock.patch("streets_at_night.placement.scene_builder.collect_house_lights")
 def test_populate_lights_adds_car_pairs_to_scene(
-    mock_house, mock_commercial, mock_cars, mock_streetlights, scene_config
+    mock_commercial, mock_cars, mock_streetlights, scene_config
 ):
     # Arrange
     mock_pair = mock.MagicMock()
     mock_streetlights.return_value = []
     mock_cars.return_value = ([], [mock_pair])
     mock_commercial.return_value = []
-    mock_house.return_value = []
     scene = _make_mock_scene([], scene_config)
     rng = random.Random(42)
 
@@ -286,15 +251,13 @@ def test_populate_lights_adds_car_pairs_to_scene(
 @mock.patch("streets_at_night.placement.scene_builder.place_streetlights")
 @mock.patch("streets_at_night.placement.scene_builder.place_cars")
 @mock.patch("streets_at_night.placement.scene_builder.place_commercial_lights")
-@mock.patch("streets_at_night.placement.scene_builder.collect_house_lights")
 def test_populate_lights_passes_road_segments_to_streetlight_placer(
-    mock_house, mock_commercial, mock_cars, mock_streetlights, scene_config
+    mock_commercial, mock_cars, mock_streetlights, scene_config
 ):
     # Arrange
     mock_streetlights.return_value = []
     mock_cars.return_value = ([], [])
     mock_commercial.return_value = []
-    mock_house.return_value = []
     segments = [_make_straight_segment(RoadType.MAJOR_ROAD)]
     scene = _make_mock_scene(segments, scene_config)
     rng = random.Random(42)
@@ -310,16 +273,14 @@ def test_populate_lights_passes_road_segments_to_streetlight_placer(
 @mock.patch("streets_at_night.placement.scene_builder.place_streetlights")
 @mock.patch("streets_at_night.placement.scene_builder.place_cars")
 @mock.patch("streets_at_night.placement.scene_builder.place_commercial_lights")
-@mock.patch("streets_at_night.placement.scene_builder.collect_house_lights")
 def test_populate_lights_uses_independent_child_rngs(
-    mock_house, mock_commercial, mock_cars, mock_streetlights, scene_config
+    mock_commercial, mock_cars, mock_streetlights, scene_config
 ):
     # Arrange — capture the RNG passed to each placer
     captured_rngs = []
     mock_streetlights.side_effect = lambda segs, cfg, rng: captured_rngs.append(rng) or []
     mock_cars.side_effect = lambda segs, cfg, rng: captured_rngs.append(rng) or ([], [])
     mock_commercial.side_effect = lambda zones, cfg, rng: captured_rngs.append(rng) or []
-    mock_house.side_effect = lambda zones, cfg, rng: captured_rngs.append(rng) or []
     scene = _make_mock_scene([], scene_config)
     rng = random.Random(42)
 
@@ -327,5 +288,5 @@ def test_populate_lights_uses_independent_child_rngs(
     populate_lights(scene, scene_config, rng)
 
     # Assert — each placer gets a distinct RNG object (child RNG, not the master)
-    assert len(captured_rngs) == 4
-    assert len(set(id(r) for r in captured_rngs)) == 4
+    assert len(captured_rngs) == 3
+    assert len(set(id(r) for r in captured_rngs)) == 3

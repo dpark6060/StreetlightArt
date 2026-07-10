@@ -57,9 +57,6 @@ def zone_config() -> ZoneConfig:
             exterior_colors=ColorPoolConfig(colors=[("#0D0A08", 1.0)]),
             yard_base_color="#060A04",
             yard_variation=2,
-            min_lights=0,
-            max_lights=3,
-            light_weights=[1.0, 1.0, 1.0, 0.5, 0.3, 0.1],
             footprint_coverage=0.65,
             lot_width=15.0,
             lot_depth=25.0,
@@ -174,19 +171,19 @@ def test_synthetic_building_footprints_are_ccw(
 def test_synthetic_scene_buildings_row_adds_no_road_segment(
     config_with_buildings: SceneConfig,
 ) -> None:
-    """The Houses row does not add an eleventh road segment (still 10)."""
+    """The Houses row does not add a tenth road segment (still 9)."""
 
     result = build_synthetic_scene(config_with_buildings)
 
-    assert len(result.road_segments) == 10
+    assert len(result.road_segments) == 9
 
 
 def test_synthetic_scene_has_correct_road_segments(scene_config: SceneConfig) -> None:
-    """build_synthetic_scene creates exactly 10 road segments (rows 0-9)."""
+    """build_synthetic_scene creates exactly 9 road segments (rows 0-8)."""
 
     result = build_synthetic_scene(scene_config)
 
-    assert len(result.road_segments) == 10
+    assert len(result.road_segments) == 9
 
 
 def test_road_segments_cover_all_five_road_types(scene_config: SceneConfig) -> None:
@@ -438,46 +435,46 @@ def test_all_road_rows_have_lights_after_build_synthetic_scene(scene_config: Sce
 
 
 def test_direct_light_row_segments_have_no_fixture_profile(scene_config: SceneConfig) -> None:
-    """Segments 6-9 (direct light rows) have fixture_profile=None."""
+    """Segments 6-8 (direct light rows) have fixture_profile=None."""
 
     result = build_synthetic_scene(scene_config)
 
-    for i in range(6, 10):
+    for i in range(6, 9):
         assert result.road_segments[i].fixture_profile is None, (
             f"Direct light row segment {i} should have fixture_profile=None"
         )
 
 
 def test_direct_light_row_segments_are_residential_type(scene_config: SceneConfig) -> None:
-    """Segments 6-9 use RoadType.RESIDENTIAL."""
+    """Segments 6-8 use RoadType.RESIDENTIAL."""
 
     result = build_synthetic_scene(scene_config)
 
-    for i in range(6, 10):
+    for i in range(6, 9):
         assert result.road_segments[i].road_type == RoadType.RESIDENTIAL, (
             f"Direct light row segment {i} should be RESIDENTIAL"
         )
 
 
 def test_direct_light_row_segments_have_wide_width(scene_config: SceneConfig) -> None:
-    """Segments 6-9 have a wider-than-default width to showcase illumination pools."""
+    """Segments 6-8 have a wider-than-default width to showcase illumination pools."""
     from streets_at_night.models.road_segment import get_default_width
 
     result = build_synthetic_scene(scene_config)
 
     default_residential_width = get_default_width(RoadType.RESIDENTIAL)
-    for i in range(6, 10):
+    for i in range(6, 9):
         assert result.road_segments[i].width > default_residential_width, (
             f"Direct light row segment {i} width should exceed default residential width"
         )
 
 
 def test_direct_light_row_segments_match_row_y_offsets(scene_config: SceneConfig) -> None:
-    """Segments 6-9 Y positions match the ROW_LABELS y offsets for rows 6-9."""
+    """Segments 6-8 Y positions match the ROW_LABELS y offsets for rows 6-8."""
 
     result = build_synthetic_scene(scene_config)
 
-    for i in range(6, 10):
+    for i in range(6, 9):
         expected_y = ROW_LABELS[i][1]
         actual_y = result.road_segments[i].geometry[0, 1]
         assert actual_y == expected_y, (

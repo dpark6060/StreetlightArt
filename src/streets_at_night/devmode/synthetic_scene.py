@@ -1,11 +1,11 @@
 """Builds a synthetic ENU-space test scene for devmode parameter tuning.
 
-The scene contains 11 rows of content stacked along the Y axis. Each row
+The scene contains 10 rows of content stacked along the Y axis. Each row
 extends from X=0 to X=10000m. Rows 0-4 are road types with streetlights
-and cars. Row 5 is a car-only row. Rows 6-9 are direct light source rows
-(house lights, sign lights, parking lights, storefronts). Row 10 is a
-buildings row of mixed-height houses and apartment blocks, so the extruded
-mass render and lit windows can be tuned from the Devmode panel.
+and cars. Row 5 is a car-only row. Rows 6-8 are direct light source rows
+(sign lights, parking lights, storefronts). Row 9 is a buildings row of
+mixed-height houses and apartment blocks, so the extruded mass render and
+lit windows can be tuned from the Devmode panel.
 """
 
 import random
@@ -18,7 +18,6 @@ from ..config.loader import build_devmode_camera_config
 from ..config.schema import SceneConfig
 from ..models.building import Building
 from ..models.commercial import create_parking_lot_light, create_sign_light, create_storefront_light
-from ..models.house_light import create_house_light
 from ..models.light_source import LightSource
 from ..models.road_segment import RoadSegment, get_default_width
 from ..models.road_types import RoadType
@@ -40,7 +39,6 @@ ROW_LABELS: t.List[t.Tuple[str, float]] = [
     ("Residential",     300.0),
     ("Service",         100.0),
     ("Cars",           -100.0),
-    ("House Lights",   -300.0),
     ("Sign Lights",    -500.0),
     ("Parking Lights", -700.0),
     ("Storefront",     -900.0),
@@ -71,8 +69,9 @@ def build_synthetic_scene(config: SceneConfig) -> Scene:
     """Build a synthetic ENU-space scene for devmode parameter tuning.
 
     Creates 10 rows of visual content. Rows 0-4 are road segments with
-    streetlights and cars. Row 5 is a car-only row. Rows 6-9 are direct
-    light source rows placed at evenly-spaced X positions.
+    streetlights and cars. Row 5 is a car-only row. Rows 6-8 are direct
+    light source rows placed at evenly-spaced X positions. Row 9 is the
+    buildings row.
 
     Args:
         config (SceneConfig): Scene configuration. Uses config.devmode for
@@ -143,11 +142,11 @@ def _make_row_geometry(y: float) -> np.ndarray:
 
 
 def _build_road_segments() -> t.List[RoadSegment]:
-    """Create ten road segments for rows 0-9.
+    """Create nine road segments for rows 0-8.
 
     Rows 0-4 correspond to the five road types with streetlights. Row 5 is
     the car-only row using RoadType.HIGHWAY geometry but with
-    fixture_profile=None to prevent streetlight placement. Rows 6-9 are wide
+    fixture_profile=None to prevent streetlight placement. Rows 6-8 are wide
     surface segments (RoadType.RESIDENTIAL, fixture_profile=None) placed under
     the direct light source rows so the illumination pass has road geometry to
     illuminate.
@@ -157,7 +156,7 @@ def _build_road_segments() -> t.List[RoadSegment]:
     individual sub-segments that fall within the camera frustum.
 
     Returns:
-        list[RoadSegment]: Ten road segments, one per row.
+        list[RoadSegment]: Nine road segments, one per row.
     """
     segments = []
 
@@ -175,7 +174,7 @@ def _build_road_segments() -> t.List[RoadSegment]:
     )
     segments.append(car_segment)
 
-    for _, y_offset in ROW_LABELS[6:10]:
+    for _, y_offset in ROW_LABELS[6:9]:
         segments.append(RoadSegment(
             geometry=_make_row_geometry(y_offset),
             road_type=RoadType.RESIDENTIAL,
@@ -195,7 +194,7 @@ def _create_scene(
     """Instantiate a Scene with the given segments, camera, and buildings.
 
     Args:
-        road_segments (list[RoadSegment]): All ten road segments.
+        road_segments (list[RoadSegment]): All nine road segments.
         camera (Camera): The devmode camera.
         config (SceneConfig): Scene configuration.
         buildings (list[Building]): Buildings for the Houses row (may be empty).
@@ -218,9 +217,10 @@ def _create_scene(
 # --- Buildings row -----------------------------------------------------------
 
 # Alternating (footprint_width_m, footprint_depth_m, height_m, kind) templates
-# for the Houses row. Short houses grow no window rows (height below the
-# sill + roof margin + one floor); the taller apartment blocks grow several,
-# so the window sliders have a visible effect. Cycled along the row by index.
+# for the Houses row. Short houses fall back to a single lit-window row
+# (height below the sill + roof margin + one floor); the taller apartment
+# blocks grow several, so the window sliders have a visible effect. Cycled
+# along the row by index.
 _BUILDING_TEMPLATES: t.List[t.Tuple[float, float, float, str]] = [
     (12.0, 10.0, 4.5, "house"),
     (24.0, 16.0, 14.0, "apartments"),
@@ -255,7 +255,7 @@ def _build_synthetic_buildings(config: SceneConfig) -> t.List[Building]:
     if config.buildings is None:
         return []
 
-    y = ROW_LABELS[10][1]
+    y = ROW_LABELS[9][1]
     buildings: t.List[Building] = []
     seed = 0
     x = _BUILDING_SPACING
@@ -311,13 +311,13 @@ def _populate_road_lights(
     always has visible streetlights for parameter tuning.
 
     The car placer runs on segments 0-5 (road type rows and car-only row),
-    excluding the direct light surface segments in rows 6-9.
+    excluding the direct light surface segments in rows 6-8.
 
     Args:
         scene (Scene): The scene to populate.
         config (SceneConfig): Scene configuration.
         rng (random.Random): Master RNG seeded from config.seed.
-        road_segments (list[RoadSegment]): All ten road segments.
+        road_segments (list[RoadSegment]): All nine road segments.
     """
     streetlight_rng = random.Random(rng.randint(0, 2**32))
     car_rng = random.Random(rng.randint(0, 2**32))
@@ -411,31 +411,27 @@ def _populate_direct_light_rows(
     config: SceneConfig,
     rng: random.Random,
 ) -> None:
-    """Place direct light sources for rows 6-9 and add them to the scene.
+    """Place direct light sources for rows 6-8 and add them to the scene.
 
     Each row gets lights at evenly-spaced X positions from 0 to 10000m.
-    Row 6: house lights. Row 7: sign lights. Row 8: parking lights.
-    Row 9: storefront lights.
+    Row 6: sign lights. Row 7: parking lights. Row 8: storefront lights.
 
     Args:
         scene (Scene): The scene to populate.
         config (SceneConfig): Scene configuration providing light params.
         rng (random.Random): Master RNG; child RNGs are derived from it.
     """
-    house_rng = random.Random(rng.randint(0, 2**32))
     sign_rng = random.Random(rng.randint(0, 2**32))
     parking_rng = random.Random(rng.randint(0, 2**32))
     storefront_rng = random.Random(rng.randint(0, 2**32))
 
     x_positions = _get_row_x_positions()
 
-    house_y = ROW_LABELS[6][1]
-    sign_y = ROW_LABELS[7][1]
-    parking_y = ROW_LABELS[8][1]
-    storefront_y = ROW_LABELS[9][1]
+    sign_y = ROW_LABELS[6][1]
+    parking_y = ROW_LABELS[7][1]
+    storefront_y = ROW_LABELS[8][1]
 
     lights: t.List[LightSource] = []
-    lights.extend(_create_house_light_row(x_positions, house_y, config, house_rng))
     lights.extend(_create_sign_light_row(x_positions, sign_y, config, sign_rng))
     lights.extend(_create_parking_light_row(x_positions, parking_y, config, parking_rng))
     lights.extend(_create_storefront_light_row(x_positions, storefront_y, config, storefront_rng))
@@ -455,29 +451,6 @@ def _get_row_x_positions() -> t.List[float]:
         positions.append(x)
         x += _DIRECT_LIGHT_SPACING
     return positions
-
-
-def _create_house_light_row(
-    x_positions: t.List[float],
-    y: float,
-    config: SceneConfig,
-    rng: random.Random,
-) -> t.List[LightSource]:
-    """Create house light instances along a row.
-
-    Args:
-        x_positions (list[float]): X coordinates for light placement.
-        y (float): Y coordinate (ENU meters) for this row.
-        config (SceneConfig): Scene configuration.
-        rng (random.Random): RNG for this row.
-
-    Returns:
-        list[LightSource]: House lights for this row.
-    """
-    return [
-        create_house_light(np.array([x, y, 3.0]), config.lights.house_lights, rng)
-        for x in x_positions
-    ]
 
 
 def _create_sign_light_row(

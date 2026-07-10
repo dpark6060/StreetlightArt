@@ -6,7 +6,7 @@ import random
 import pytest
 from shapely.geometry import box
 
-from streets_at_night.config.schema import ColorPoolConfig, HouseConfig, HouseLightConfig
+from streets_at_night.config.schema import ColorPoolConfig, HouseConfig
 from streets_at_night.models.house import House
 
 
@@ -29,33 +29,10 @@ def house_config() -> HouseConfig:
         ),
         yard_base_color="#060A04",
         yard_variation=2,
-        min_lights=0,
-        max_lights=5,
-        light_weights=[5.0, 3.0, 1.5, 0.5, 0.3, 0.1],
         footprint_coverage=0.65,
         lot_width=15.0,
         lot_depth=25.0,
         setback=10.0,
-    )
-
-
-@pytest.fixture
-def house_light_config() -> HouseLightConfig:
-    """Return a HouseLightConfig built from DEFAULTS values."""
-    return HouseLightConfig(
-        colors=ColorPoolConfig(colors=[
-            ("#FFE4A0", 0.45),
-            ("#FFF0D0", 0.25),
-            ("#FFCC80", 0.15),
-            ("#D0E0FF", 0.15),
-        ]),
-        brightness_min=0.3,
-        brightness_max=0.6,
-        glow_radius=6.0,
-        illumination_radius=8.0,
-        illumination_intensity=0.35,
-        illumination_falloff=2.0,
-        illumination_inner_fraction=0.0,
     )
 
 
@@ -97,76 +74,12 @@ def test_init_sets_yard_color(house):
 
 
 # ---------------------------------------------------------------------------
-# __init__ — num_lights
-# ---------------------------------------------------------------------------
-
-def test_init_sets_num_lights(house, house_config):
-    # Assert
-    assert isinstance(house.num_lights, int)
-    assert house_config.min_lights <= house.num_lights <= house_config.max_lights
-
-
-# ---------------------------------------------------------------------------
-# __init__ — light_positions
-# ---------------------------------------------------------------------------
-
-def test_init_computes_light_positions(house):
-    # Assert
-    assert isinstance(house.light_positions, list)
-    assert len(house.light_positions) == house.num_lights
-    for pos in house.light_positions:
-        assert isinstance(pos, tuple)
-        assert len(pos) == 2
-
-
-# ---------------------------------------------------------------------------
 # __init__ — footprint stored
 # ---------------------------------------------------------------------------
 
 def test_footprint_stored(house, footprint):
     # Assert
     assert house.footprint is footprint
-
-
-# ---------------------------------------------------------------------------
-# get_lights
-# ---------------------------------------------------------------------------
-
-def test_get_lights_returns_light_sources_for_each_position(house, house_light_config):
-    # Arrange
-    from streets_at_night.models.light_source import LightSource
-    rng = random.Random(1)
-
-    # Act
-    result = house.get_lights(rng, house_light_config)
-
-    # Assert
-    assert len(result) == house.num_lights
-    assert all(isinstance(light, LightSource) for light in result)
-
-
-def test_get_lights_returns_empty_list_when_no_lights(house_config, footprint, house_light_config):
-    # Arrange — force num_lights to 0 by using a config with max_lights=0
-    config = HouseConfig(
-        exterior_colors=house_config.exterior_colors,
-        yard_base_color=house_config.yard_base_color,
-        yard_variation=house_config.yard_variation,
-        min_lights=0,
-        max_lights=0,
-        light_weights=[1.0],
-        footprint_coverage=house_config.footprint_coverage,
-        lot_width=house_config.lot_width,
-        lot_depth=house_config.lot_depth,
-        setback=house_config.setback,
-    )
-    rng = random.Random(5)
-    no_light_house = House(footprint=footprint, config=config, rng=rng)
-
-    # Act
-    result = no_light_house.get_lights(rng, house_light_config)
-
-    # Assert
-    assert result == []
 
 
 # ---------------------------------------------------------------------------
@@ -185,8 +98,6 @@ def test_seeded_rng_reproducible(house_config, footprint):
     # Assert
     assert house_a.base_color == house_b.base_color
     assert house_a.yard_color == house_b.yard_color
-    assert house_a.num_lights == house_b.num_lights
-    assert house_a.light_positions == house_b.light_positions
 
 
 # ---------------------------------------------------------------------------

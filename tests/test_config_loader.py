@@ -393,3 +393,34 @@ def test_load_config_pre_migration_streetlight_profile_raises_value_error(
     # Act & Assert — a bare KeyError would give the user no idea what to do
     with pytest.raises(ValueError, match="color_temp_k.*beam_angle_deg"):
         load_config(pre_migration_streetlight_toml)
+
+
+# ---------------------------------------------------------------------------
+# Stale house-light keys (removed in the house-lights-to-windows migration)
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_ignores_stale_house_light_keys(tmp_path):
+    # Arrange — a pre-removal TOML with zones.house keys that no longer exist.
+    # [lights.house_lights] is left in place (Task 4 removes that section, not
+    # this one) so this only exercises the zones.house.{min,max}_lights removal.
+    stale = tmp_path / "stale.toml"
+    stale.write_text(
+        "\n".join(
+            [
+                "[zones.house]",
+                "min_lights = 0",
+                "max_lights = 5",
+                "",
+                "[lights.house_lights]",
+                "brightness_min = 0.3",
+            ]
+        )
+    )
+
+    # Act
+    result = load_config(stale)
+
+    # Assert — loads without error, stale zones.house keys simply dropped
+    assert not hasattr(result.zones.house, "min_lights")
+    assert not hasattr(result.zones.house, "max_lights")
