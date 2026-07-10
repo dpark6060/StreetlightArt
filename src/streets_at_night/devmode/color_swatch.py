@@ -135,4 +135,5 @@ def _fill_surface(hex_text: str) -> pygame.Surface:
     """Build a SWATCH_SIZE square surface filled with the given hex colour."""
     surface = pygame.Surface((SWATCH_SIZE, SWATCH_SIZE))
     surface.fill(pygame.Color(hex_text))
+    pygame.draw.rect(surface, pygame.Color(120, 120, 120), surface.get_rect(), 1)
     return surface

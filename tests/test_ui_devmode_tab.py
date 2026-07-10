@@ -378,6 +378,32 @@ def test_colour_picked_sets_entry_applies_and_refreshes(built_tab):
     assert built_tab._color_dialog_entry is None
 
 
+def test_camera_input_ignored_while_colour_dialog_open(built_tab):
+    # Arrange — open the colour dialog via a swatch click.
+    built_tab._build_section("Atmosphere")
+    registry = built_tab._active_registry()
+    _entry, swatch = next(iter(registry.swatches.items()))
+    pos = swatch.get_abs_rect().center
+    built_tab.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": pos}))
+    assert built_tab._is_modal_dialog_open() is True
+
+    camera = built_tab._scene.camera
+    pos_before = camera.position.copy()
+    tgt_before = camera.target.copy()
+    fov_before = camera.fov_deg
+
+    # Act — a synthetic input frame that would otherwise reach handle_input.
+    with mock.patch.object(devmode_tab_module, "handle_input") as mock_input:
+        moved = built_tab._apply_camera_input([pygame.event.Event(pygame.KEYDOWN, {"key": pygame.K_w})], 0.016)
+
+    # Assert — early return: no camera passthrough, camera untouched.
+    assert moved is False
+    mock_input.assert_not_called()
+    assert np.array_equal(camera.position, pos_before)
+    assert np.array_equal(camera.target, tgt_before)
+    assert camera.fov_deg == fov_before
+
+
 def test_section_switch_closes_open_colour_dialog(built_tab):
     # Arrange
     built_tab._build_section("Atmosphere")

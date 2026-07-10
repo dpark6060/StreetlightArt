@@ -364,6 +364,8 @@ class DevmodeTab(Tab):
         elif event.type == pygame_gui.UI_WINDOW_CLOSE and event.ui_element is self._color_dialog:
             self._color_dialog = None
             self._color_dialog_entry = None
+        elif event.type == pygame_gui.UI_WINDOW_CLOSE and event.ui_element is self._save_dialog:
+            self._save_dialog = None
 
     def _handle_button(self, element: t.Any) -> None:
         """Route a button press to Rerender / Save / Real-Tiles / a bool toggle."""
@@ -588,6 +590,8 @@ class DevmodeTab(Tab):
         self._sync_buttons_enabled()
         if not self._scene_ready():
             return
+        if self._is_modal_dialog_open():
+            return
         events, minimap_moved = self._process_minimap_events(events)
         moved = self._apply_camera_input(events, dt) or minimap_moved
         if moved:
@@ -596,6 +600,10 @@ class DevmodeTab(Tab):
         elif should_render_full(self._last_move_time, self._elapsed, moved):
             self._render_full()
             self._last_move_time = None
+
+    def _is_modal_dialog_open(self) -> bool:
+        """Check whether a colour picker or save dialog is covering the view."""
+        return self._color_dialog is not None or self._save_dialog is not None
 
     def _apply_camera_input(self, events: t.List[pygame.event.Event], dt: float) -> bool:
         """Feed events to handle_input only when the cursor is over the view area.
@@ -612,6 +620,9 @@ class DevmodeTab(Tab):
             bool: True if the camera actually moved this frame.
         """
         camera = self._scene.camera
+        if self._is_modal_dialog_open():
+            self._drag_state.clear()
+            return False
         if not self._view_rect.collidepoint(pygame.mouse.get_pos()):
             self._drag_state.clear()
             return False
