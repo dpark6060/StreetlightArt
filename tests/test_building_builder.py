@@ -53,6 +53,7 @@ def building_config() -> BuildingConfig:
         roof_color="#080807",
         face_shade_strength=0.2,
         window_lit_fraction=0.12,
+        window_lit_fraction_residential=0.4,
         window_width_m=1.4,
         window_height_m=1.1,
         window_pitch_m=2.4,

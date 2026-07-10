@@ -380,6 +380,7 @@ class BuildingConfig:
     roof_color: str
     face_shade_strength: float
     window_lit_fraction: float
+    window_lit_fraction_residential: float
     window_width_m: float
     window_height_m: float
     window_pitch_m: float

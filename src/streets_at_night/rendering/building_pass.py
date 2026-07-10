@@ -52,6 +52,10 @@ _WINDOW_SUBPIXEL_DISTANCE_M: float = 2000.0
 # of a rasterized rectangle.
 _WINDOW_SUBPIXEL_PIXEL_THRESHOLD: float = 1.0
 
+# Building kinds that use the residential window lit fraction. Synthetic-lot
+# house footprints are tagged "house" by building_builder, so they're covered.
+_RESIDENTIAL_KINDS: t.FrozenSet[str] = frozenset({"house", "detached", "residential"})
+
 
 @dataclass
 class FacingWall:
@@ -727,6 +731,7 @@ def _accumulate_building_windows(
         int: Number of windows that were lit and accumulated.
     """
     force_subpixel = distance_m >= _WINDOW_SUBPIXEL_DISTANCE_M
+    lit_fraction = _get_lit_fraction(building.building_kind, config)
     lit_count = 0
     for wall in facing_walls:
         cells = build_window_grid(
@@ -735,11 +740,28 @@ def _accumulate_building_windows(
         )
         for cell in cells:
             if _accumulate_window_cell(
-                cell, view_matrix, proj_matrix, width, height, config, force_subpixel, window_buffer,
+                cell, view_matrix, proj_matrix, width, height, config, lit_fraction,
+                force_subpixel, window_buffer,
             ):
                 lit_count += 1
 
     return lit_count
+
+
+def _get_lit_fraction(building_kind: str, config: BuildingConfig) -> float:
+    """Return the window lit fraction for a building's kind.
+
+    Args:
+        building_kind (str): Raw OSM ``building`` tag value.
+        config (BuildingConfig): Window configuration.
+
+    Returns:
+        float: ``window_lit_fraction_residential`` for house-like kinds,
+        ``window_lit_fraction`` for everything else.
+    """
+    if building_kind in _RESIDENTIAL_KINDS:
+        return config.window_lit_fraction_residential
+    return config.window_lit_fraction
 
 
 def _accumulate_window_cell(
@@ -749,6 +771,7 @@ def _accumulate_window_cell(
     width: int,
     height: int,
     config: BuildingConfig,
+    lit_fraction: float,
     force_subpixel: bool,
     window_buffer: np.ndarray,
 ) -> bool:
@@ -761,6 +784,8 @@ def _accumulate_window_cell(
         width (int): Screen width in pixels.
         height (int): Screen height in pixels.
         config (BuildingConfig): Window color/brightness configuration.
+        lit_fraction (float): Fraction of windows on this building that are
+            lit, already resolved for the building's kind.
         force_subpixel (bool): If True, always use the sub-pixel path
             regardless of the projected quad's screen size.
         window_buffer (np.ndarray): Float32 (H, W, 3) linear buffer,
@@ -770,7 +795,7 @@ def _accumulate_window_cell(
         bool: True if the window was lit and its emission was accumulated.
     """
     rng = _get_window_rng(cell.rng_key)
-    if not _is_window_lit(rng, config.window_lit_fraction):
+    if not _is_window_lit(rng, lit_fraction):
         return False
 
     linear_color = _get_window_linear_color(rng, config)

@@ -15,6 +15,7 @@ from streets_at_night.rendering.building_pass import (
     _accumulate_building_windows,
     _accumulate_subpixel_window,
     _get_facing_walls,
+    _get_lit_fraction,
     _get_outward_normal,
     _get_window_col_count,
     _get_window_row_count,
@@ -50,6 +51,7 @@ def building_config() -> BuildingConfig:
         roof_color="#080807",
         face_shade_strength=0.2,
         window_lit_fraction=0.12,
+        window_lit_fraction_residential=0.4,
         window_width_m=1.4,
         window_height_m=1.1,
         window_pitch_m=2.4,
@@ -424,6 +426,29 @@ def test_get_facing_walls_returns_only_the_camera_facing_edge(unit_square_footpr
     # Assert
     assert [wall.edge_index for wall in facing_walls] == [0]
     assert isinstance(facing_walls[0], FacingWall)
+
+
+# ---------------------------------------------------------------------------
+# _get_lit_fraction — per-building-kind lit fraction selection
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "kind,expected",
+    [
+        ("house", 0.4),
+        ("detached", 0.4),
+        ("residential", 0.4),
+        ("apartments", 0.12),
+        ("retail", 0.12),
+        ("yes", 0.12),
+    ],
+)
+def test_get_lit_fraction_selects_fraction_by_building_kind(kind, expected, building_config):
+    # Act
+    fraction = _get_lit_fraction(kind, building_config)
+
+    # Assert
+    assert fraction == expected
 
 
 # ---------------------------------------------------------------------------
