@@ -7,7 +7,7 @@ Renders an aerial night view of San Bernardino, CA using OpenStreetMap road data
 **What it does:**
 
 1. **`verify`** — Downloads road, land use, and building data from OSM via `osmnx` for a bounding box (default: San Bernardino area, `scene_config.toml [bounds]`). Caches raw data as `.gpkg` files in `cache/`. Classifies roads by OSM `highway` tag into 6 `RoadType` categories. Saves a matplotlib verification plot to `output/verify.png`.
-2. **`preview`** — Builds a fully populated `Scene` (roads, zones, streetlights, cars, commercial and house lights; ENU meters via UTM Zone 11N; spatial index at 500m cell size). Generates a flat top-down road map (`PIL.Image`, cached as `cache/flat_map_*.png`). Runs a pygame event loop at 1280x720 where each frame raycasts every screen pixel through the camera to the z=0 ground plane and samples the flat map, then optionally applies heat-haze distortion. WASD/QE/arrows/mouse-drag for camera control. P for screenshot, R for reset, C to save the current camera position back to the TOML config, ESC to quit. `--no-lights` skips light rendering for a faster preview.
+2. **`preview`** — Builds a fully populated `Scene` (roads, zones, streetlights, cars, commercial lights, and lit-window buildings; ENU meters via UTM Zone 11N; spatial index at 500m cell size). Generates a flat top-down road map (`PIL.Image`, cached as `cache/flat_map_*.png`). Runs a pygame event loop at 1280x720 where each frame raycasts every screen pixel through the camera to the z=0 ground plane and samples the flat map, then optionally applies heat-haze distortion. WASD/QE/arrows/mouse-drag for camera control. P for screenshot, R for reset, C to save the current camera position back to the TOML config, ESC to quit. `--no-lights` skips light rendering for a faster preview.
 3. **`render`** — Builds the same fully populated Scene, but renders via `PillowBackend` at a configurable quality preset (low=1920x1080, medium=3840x2160, high=7680x4320, overridable with `--width`/`--height`). Runs the full linear-HDR pass pipeline (ground, roads, illumination, lights, atmosphere, compositor) with progress reporting per pass. Saves PNG or TIFF to `output/render.png` (`--format`, `--no-lights` to skip illumination/light passes).
 4. **`animate`** — Animates Kolmogorov heat-haze distortion over a previously rendered still image (`output/render.png` by default). Two modes: an interactive pygame window (default, press P to save a frame, ESC to quit), or `--record FILE` which renders frames offline through `imageio`/ffmpeg to an MP4 at a chosen quality/resolution, optionally with `--seamless` looping via a crossfade tail. Requires `[heat_haze] enabled = true` in the config; the depth map used for haze distortion is rebuilt from the config camera at the target resolution.
 5. **`devmode`** — Alias that opens the tabbed `ui` directly on its Devmode tab (`run_ui(..., initial_tab="Devmode")`). Keeps `--cache-dir`; the old `--real-tiles` flag is gone (the tab has a synthetic/real toggle). The standalone `cmd_devmode` event loop and hand-written control panel were removed in the Fable UI rework — the Devmode tab now owns scene rendering and panel construction.
@@ -20,7 +20,7 @@ Renders an aerial night view of San Bernardino, CA using OpenStreetMap road data
 - UTM zone is hardcoded to 11N (EPSG:32611) — only correct for Southern California
 - Road classification drops footways, cycleways, paths, pedestrian, tracks, steps, bridleway
 - Flat map capped at 8000px in either dimension; resolution auto-scales coarser if exceeded
-- Zones, streetlights, cars, commercial and house lights, atmosphere, and heat haze are all implemented (not stubs); `zone_builder.py` builds residential/commercial/dark zones from OSM land use + building footprints, `RoadSegment.fixture_profile` drives per-segment streetlight sampling
+- Zones, streetlights, cars, commercial lights, atmosphere, and heat haze are all implemented (not stubs); houses render as extruded building geometry with lit windows (`models/building.py`, `placement/building_builder.py`, `rendering/building_pass.py`) rather than point lights, with a single-row window fallback for one-story heights and a residential lit fraction of 0.4 for house/detached/residential kinds; `zone_builder.py` builds residential/commercial/dark zones from OSM land use + building footprints, `RoadSegment.fixture_profile` drives per-segment streetlight sampling
 - Export lighting is a linear-HDR pipeline: light contributions accumulate unclamped in a float32 linear buffer (`PillowBackend._light`), and a single compositor pass at the end applies exposure, ACES tone mapping, and sRGB encoding — intermediate passes never clamp
 - Atmosphere includes airlight/extinction: the same `falloff_distance` extinction coefficient that dims lights with range also drives a depth-based airlight veil in `atmosphere_pass.py`
 - Streetlight ground pools can be "physical" (derived from pole height + `beam_angle_deg`, when both are set) or a legacy authored two-zone cone (inner flat zone + falloff curve), selected per-fixture in `illumination_pass.py`
@@ -53,8 +53,8 @@ src/streets_at_night/
     light_source.py        # LightSource dataclass — universal light model consumed by renderer
     streetlight.py         # FixtureProfile, FixturePool, StreetLight factory
     car.py                 # CarLightPair — paired headlight/taillight set for one car
-    house.py                # House data model — footprint, colors, light positions
-    house_light.py          # Factory function for house window/porch lights
+    house.py                # House data model — footprint and colors
+    building.py              # Building dataclass — extruded footprint geometry for mass/window rendering
     commercial.py            # Factory functions for commercial zone light sources
     zones.py                # ResidentialZone, CommercialZone, DarkZone data containers
     color_pool.py            # Weighted random color selection from a named palette
@@ -78,7 +78,7 @@ src/streets_at_night/
     streetlight_placer.py   # Place streetlights along road segments using fixture profiles
     car_placer.py            # Place CarLightPair instances along road segments
     commercial_placer.py     # Signs, storefronts, and parking lot lights in commercial zones
-    house_light_placer.py    # Activate lights on each House in residential zones
+    building_builder.py      # Build Building objects from OSM footprints + residential house lots
     geometry_utils.py        # Shared 2D geometry helpers (perpendicular_2d, etc.) for placers
   rendering/
     backend.py               # RenderBackend ABC — draw_line/draw_polygon/get_image/add_linear/etc.
@@ -94,6 +94,7 @@ src/streets_at_night/
     ground_pass.py            # render_ground / render_ground_export — sky/ground fill, tiled zone colors
     illumination_pass.py      # render_illumination — world-space ground light pools, raycast-sampled
     light_pass.py             # render_lights_preview / render_lights_export — cores + glow halos
+    building_pass.py          # Building mass render — extruded walls/roofs + lit windows (additive linear)
     atmosphere_pass.py        # render_atmosphere — horizon glow + depth-based airlight veil
     compositor.py             # render_composite — stars, vignette, exposure, tone-map, sRGB encode
     heat_haze.py               # HeatHaze — multi-layer Kolmogorov phase-screen distortion (torch/MPS)
@@ -114,7 +115,7 @@ src/streets_at_night/
       file_picker.py           # FilePickerRow — text entry + browse dialog
       labeled_entry.py         # LabeledEntry — label + text entry row
   devmode/
-    synthetic_scene.py        # Builds the 11-row synthetic ENU test scene (incl. a Houses row of buildings)
+    synthetic_scene.py        # Builds the 10-row synthetic ENU test scene (incl. a Houses row of buildings)
     real_scene.py              # Loads a clipped strip of real OSM road data for devmode
     devmode_camera.py          # Builds an ENU-space Camera from DevmodeCameraConfig
     dynamic_panel.py           # build_dynamic_section — data-driven slider panel from field metadata
@@ -149,12 +150,14 @@ main.py:main()
             `-- build_scene(roads, transformer, camera, config, land_use, buildings)
                  |-- convert_road_geometry()       # WGS84 LineStrings → ENU (N,3) arrays
                  |-- build_zones()                 # land use + buildings → residential/commercial/dark zones
+                 |-- _build_buildings_if_configured() # OSM footprints + residential lots → Building list
                  |-- scene.build_spatial_index()   # uniform grid, 500m cells
-                 `-- populate_lights()             # streetlight/car/commercial/house placers → scene lights
+                 `-- populate_lights()             # streetlight/car/commercial placers → scene lights
        -> get_export_passes(cache_dir, no_lights, quality_preset)
        -> render_scene_frame_with_progress(scene, PillowBackend, passes)
             |-- render_ground_export      # sky/ground fill, tiled per-zone colors
             |-- render_roads_export       # per-segment 3D projection + frustum culling
+            |-- render_buildings          # extruded walls/roofs (opaque) + lit windows (additive linear)
             |-- render_illumination       # world-space light-pool map, raycast-sampled, additive linear
             |-- render_lights_export      # bright cores + gaussian glow halos, additive linear
             |-- render_atmosphere         # horizon glow + airlight veil, additive linear

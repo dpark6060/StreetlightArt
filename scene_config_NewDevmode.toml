@@ -43,16 +43,6 @@ tile_resolution_px = 128
 [zones.house]
 yard_base_color = "#060A04"
 yard_variation = 2
-min_lights = 0
-max_lights = 5
-light_weights = [
-    5.0,
-    3.0,
-    1.5,
-    0.5,
-    0.3,
-    0.1,
-]
 footprint_coverage = 0.65
 lot_width = 15.0
 lot_depth = 25.0
@@ -339,7 +329,7 @@ saturation = 1.0
 
 [lights.cars]
 separation_min = 1.6
-separation_max = 2.4
+separation_max = 2.611111111111111
 headlight_brightness_min = 0.7
 headlight_brightness_max = 0.9
 taillight_brightness_min = 0.3
@@ -348,15 +338,15 @@ density_highway_min = 25.0
 density_highway_max = 50.0
 density_major_min = 40.0
 density_major_max = 80.0
-density_collector_min = 80.0
+density_collector_min = 11.11111111111111
 density_collector_max = 150.0
 density_residential_min = 150.0
-density_residential_max = 400.0
+density_residential_max = 488.88888888888886
 density_service_min = 300.0
 density_service_max = 800.0
-headlight_glow_radius = 3.333333333333333
-headlight_illumination_radius = 27.51851851851852
-headlight_illumination_intensity = 1.0
+headlight_glow_radius = 1.0
+headlight_illumination_radius = 22.22222222222222
+headlight_illumination_intensity = 0.4722222222222222
 headlight_illumination_falloff = 3.6574074074074074
 headlight_illumination_inner_fraction = 0.0
 taillight_glow_radius = 2.7777777777777777
@@ -404,16 +394,16 @@ colors = [
 [lights.commercial]
 sign_brightness_min = 0.6
 sign_brightness_max = 0.9
-sign_glow_radius = 8.0
-sign_illumination_radius = 22.22222222222222
-sign_illumination_intensity = 1.4814814814814814
+sign_glow_radius = 2.2222222222222223
+sign_illumination_radius = 13.333333333333332
+sign_illumination_intensity = 0.9465020576131687
 sign_illumination_falloff = 6.0
 sign_illumination_inner_fraction = 0.0
 parking_brightness_min = 0.75
 parking_brightness_max = 1.0
 parking_glow_radius = 5.555555555555555
-parking_illumination_radius = 103.29629629629629
-parking_illumination_intensity = 0.8333333333333333
+parking_illumination_radius = 71.7335390946502
+parking_illumination_intensity = 0.5555555555555556
 parking_illumination_falloff = 3.555555555555556
 parking_illumination_inner_fraction = 0.0
 parking_grid_spacing_min = 20.0
@@ -488,35 +478,6 @@ colors = [
     ],
     [
         "#F0F0FF",
-        0.15,
-    ],
-]
-
-[lights.house_lights]
-brightness_min = 0.3
-brightness_max = 0.6
-glow_radius = 3.7037037037037033
-illumination_radius = 11.11111111111111
-illumination_intensity = 1.9444444444444444
-illumination_falloff = 2.0
-illumination_inner_fraction = 0.0
-
-[lights.house_lights.colors]
-colors = [
-    [
-        "#FFE4A0",
-        0.45,
-    ],
-    [
-        "#FFF0D0",
-        0.25,
-    ],
-    [
-        "#FFCC80",
-        0.15,
-    ],
-    [
-        "#D0E0FF",
         0.15,
     ],
 ]
@@ -607,13 +568,13 @@ render_width = 896
 render_height = 720
 
 [devmode.camera]
-pos_x = -236.36363636363637
-pos_y = -1036.3636363636338
-pos_z = 30.0
-target_x = 5000.0
-target_y = -981.8181818181793
+pos_x = -454.5454545454545
+pos_y = -54.545454545452
+pos_z = 1000.0
+target_x = 3363.636363636364
+target_y = -54.545454545452
 target_z = 0.0
-fov = 10.0
+fov = 30.37037037037037
 near = 100.0
 far = 60000.0
 
@@ -642,6 +603,7 @@ wall_color = "#0B0A09"
 roof_color = "#080807"
 face_shade_strength = 0.2
 window_lit_fraction = 0.1
+window_lit_fraction_residential = 0.4
 window_width_m = 1.4
 window_height_m = 1.1
 window_pitch_m = 2.4

@@ -74,6 +74,6 @@ You can also force the format with `--format png` or `--format tiff` regardless 
 - [`[quality.*]`](../config.md#qualitylow--qualitymedium--qualityhigh) — resolution presets
 - [`[roads.export.*]`](../config.md#roadsexportroad_type) — road colors and widths
 - [`[zones]`](../config.md#zones) — ground tile colors and house placement
-- [`[lights.*]`](../config.md#lights) — streetlights, cars, commercial, house lights
+- [`[lights.*]`](../config.md#lights) — streetlights, cars, commercial lights
 - [`[atmosphere]`](../config.md#atmosphere) — haze, scatter, horizon glow, vignette
 - [`[stars]`](../config.md#stars) — optional star field

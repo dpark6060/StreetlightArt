@@ -17,7 +17,7 @@ class ConeIllumination:
 
     A flat inner disc (``inner_fraction`` of ``radius``) at full intensity,
     then a power-law fade to zero at ``radius``. Used by lights with no
-    meaningful pole height — cars, signs, storefronts, house lights.
+    meaningful pole height — cars, signs, storefronts.
 
     Attributes:
         radius: Ground pool radius in meters.

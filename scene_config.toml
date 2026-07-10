@@ -43,16 +43,6 @@ tile_resolution_px = 128
 [zones.house]
 yard_base_color = "#060A04"
 yard_variation = 2
-min_lights = 0
-max_lights = 5
-light_weights = [
-    5.0,
-    3.0,
-    1.5,
-    0.5,
-    0.3,
-    0.1,
-]
 footprint_coverage = 0.65
 lot_width = 15.0
 lot_depth = 25.0
@@ -471,33 +461,6 @@ colors = [
     ],
     [
         "#F0F0FF",
-        0.15,
-    ],
-]
-
-[lights.house_lights]
-brightness_min = 0.3
-brightness_max = 0.6
-glow_radius = 10.0
-illumination_radius = 9.45945945945946
-illumination_intensity = 0.4864864864864865
-
-[lights.house_lights.colors]
-colors = [
-    [
-        "#FFE4A0",
-        0.45,
-    ],
-    [
-        "#FFF0D0",
-        0.25,
-    ],
-    [
-        "#FFCC80",
-        0.15,
-    ],
-    [
-        "#D0E0FF",
         0.15,
     ],
 ]

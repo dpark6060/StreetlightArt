@@ -20,7 +20,6 @@ Deep merge applies at every nesting level, so you can override a single sub-key 
 - [Light Rendering: glow_radius vs illumination_radius](#light-rendering-glow_radius-vs-illumination_radius)
 - [`[lights.cars]`](#lightscars)
 - [`[lights.commercial]`](#lightscommercial)
-- [`[lights.house_lights]`](#lightshouse_lights)
 - [`[atmosphere]`](#atmosphere)
 - [`[stars]`](#stars)
 - [`[heat_haze]`](#heat_haze)
@@ -133,9 +132,6 @@ Parameters for synthetic house generation within residential zones.
 |---|---|---|---|
 | `yard_base_color` | str | `"#060A04"` | Base hex color for yard fill |
 | `yard_variation` | int | 2 | Per-channel RGB noise added to yard color |
-| `min_lights` | int | 0 | Minimum lights per house |
-| `max_lights` | int | 5 | Maximum lights per house |
-| `light_weights` | list[float] | `[5.0, 3.0, 1.5, 0.5, 0.3, 0.1]` | Probability weights for 0–5 lights |
 | `footprint_coverage` | float | 0.65 | Fraction of lot area covered by house footprint |
 | `lot_width` | float | 15.0 | Synthetic lot width in meters |
 | `lot_depth` | float | 25.0 | Synthetic lot depth in meters |
@@ -297,31 +293,6 @@ Default parking color pool: 70% LED white, 30% sodium.
 Default storefront color pool: 60% warm white, 25% warm yellow, 15% fluorescent.
 
 > **Note:** Commercial light configs are parsed from TOML but not yet wired to the runtime placement code — factories currently use hardcoded values.
-
-## `[lights.house_lights]`
-
-Controls lights placed in residential zone houses (window, porch, interior).
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `brightness_min` / `brightness_max` | float | 0.3 / 0.6 | Brightness range |
-| `glow_radius` | float | 6.0 | Glow halo radius in meters |
-| `illumination_radius` | float | 8.0 | Ground illumination radius in meters |
-| `illumination_intensity` | float | 0.35 | Opacity of ground illumination splat (0–1) |
-
-Default color pool: 45% warm yellow, 25% warm white, 15% amber, 15% TV blue.
-
-```toml
-[lights.house_lights.colors]
-colors = [
-    ["#FFE4A0", 0.45],
-    ["#FFF0D0", 0.25],
-    ["#FFCC80", 0.15],
-    ["#D0E0FF", 0.15],
-]
-```
-
-> **Note:** House light configs are parsed from TOML but not yet wired to the runtime placement code — the factory currently uses hardcoded values.
 
 ## `[atmosphere]`
 

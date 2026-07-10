@@ -15,9 +15,9 @@ Adjust values, click **Rerender**, and when it looks right click **Save** to
 write a TOML you can hand to [`render`](render.md).
 
 By default it renders a compact **synthetic scene**: rows of representative roads
-(one per road type) plus cars, commercial, and house lights, so every light
-category is on screen at once. Flip the **Real Tiles** toggle to tune against an
-actual strip of OSM road data instead.
+(one per road type) plus cars, commercial lights, and a row of buildings with lit
+windows, so every light category is on screen at once. Flip the **Real Tiles**
+toggle to tune against an actual strip of OSM road data instead.
 
 ## Flags
 
@@ -48,8 +48,8 @@ the current config actually contains:
 | Devmode Camera | Position, target, and FOV of the devmode camera (ENU meters) |
 | Streetlight: `<road type>` (pool N) | One entry **per fixture pool per road type** — its color temperature, saturation, beam angle, glow, illumination intensity, brightness/height/spacing ranges |
 | Cars: Headlights / Taillights / Density / Separation | The matching group of car-light fields |
-| House Lights | Window/porch brightness, glow, ground-pool cone |
 | Commercial: Signs / Parking / Storefronts | Per commercial light type: brightness, glow, ground-pool cone |
+| Buildings: Windows | Lit fraction, brightness, color temperature, saturation, window sizing, glow (shown only when the config has a `[buildings]` section) |
 | Streetlights: Global | The city-wide `color_temp_shift_k` lever (see below) |
 
 > **Per-pool editing.** Each streetlight *pool* is its own section, so editing
@@ -147,7 +147,7 @@ Global** section, or directly in `[lights.streetlights]` of your TOML.
   are preserved.
 - Streetlight ground pools are derived physically from **pole height + beam
   angle**, so streetlight sections expose `beam_angle_deg` rather than an
-  explicit radius. Cars, signs, and house lights use the authored cone model
+  explicit radius. Cars and commercial lights use the authored cone model
   (`illumination_radius` / `falloff` / `inner_fraction`).
 
 ## Related config

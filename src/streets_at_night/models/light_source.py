@@ -13,9 +13,9 @@ class LightSource:
     """A single light source in 3D ENU space.
 
     This is the sole light interface the renderer sees. Higher-level
-    objects (streetlights, cars, house lights, storefront signs) are all
-    reduced to LightSource instances before rendering. The renderer does
-    not know what kind of object produced a given LightSource.
+    objects (streetlights, cars, storefront signs) are all reduced to
+    LightSource instances before rendering. The renderer does not know
+    what kind of object produced a given LightSource.
 
     Attributes:
         position: 3-element array of (x, y, z) coordinates in local ENU
