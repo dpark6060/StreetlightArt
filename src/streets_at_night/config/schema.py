@@ -199,12 +199,28 @@ class CommercialLightConfig:
 
 
 @dataclass
+class IlluminationConfig:
+    """Ground illumination-map post-processing parameters.
+
+    The soft knee compresses stacked (overlapping) light pools: values up to
+    ``knee_start`` pass through unchanged; above it they compress smoothly
+    and asymptotically approach ``knee_max``, so overlapping pools still read
+    brighter than a single pool but can never blow out. Setting
+    ``knee_max <= knee_start`` disables the knee.
+    """
+
+    knee_start: float = 1.5
+    knee_max: float = 4.0
+
+
+@dataclass
 class LightConfig:
     """Top-level light configuration for all light types in the scene."""
 
     streetlights: StreetLightConfig
     cars: CarConfig
     commercial: CommercialLightConfig
+    illumination: IlluminationConfig = field(default_factory=IlluminationConfig)
 
 
 @dataclass

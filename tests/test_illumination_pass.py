@@ -9,7 +9,9 @@ import pytest
 from streets_at_night.camera.camera import Camera
 from streets_at_night.models.illumination import BeamIllumination, ConeIllumination
 from streets_at_night.models.light_source import LightSource
+from streets_at_night.config.schema import IlluminationConfig
 from streets_at_night.rendering.illumination_pass import (
+    _apply_soft_knee,
     _auto_scale_illumination_resolution,
     _build_illumination_map,
     _compute_visible_bounds,
@@ -584,6 +586,7 @@ def test_render_illumination_bounds_follow_gbuffer_not_roads():
     scene = mock.MagicMock()
     scene.lights = [_make_light(position=np.array([0.0, 0.0, 5.0]), illumination_radius=50.0)]
     scene.config.atmosphere = _make_atmosphere()
+    scene.config.lights.illumination = IlluminationConfig()
     scene.road_segments = [
         mock.MagicMock(geometry=np.array([[-20000.0, -20000.0, 0.0], [20000.0, 20000.0, 0.0]]))
     ]
@@ -620,6 +623,7 @@ def test_offscreen_light_is_culled():
     scene = mock.MagicMock()
     scene.lights = [near_light, offscreen_light]
     scene.config.atmosphere = _make_atmosphere()
+    scene.config.lights.illumination = IlluminationConfig()
     scene.get_lights_aabb.return_value = (0.0, 0.0, 30000.0, 0.0)
 
     camera = _make_camera(position=np.array([0.0, 0.0, 500.0]), far=50000.0)
@@ -638,3 +642,52 @@ def test_offscreen_light_is_culled():
     assert mock_paint.call_count == 1
     painted_light = mock_paint.call_args.args[1]
     assert painted_light is near_light
+
+
+# ---------------------------------------------------------------------------
+# _apply_soft_knee — compression curve
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (0.0, 0.0),
+        (1.0, 1.0),
+        (1.5, 1.5),          # exactly at knee_start: identity
+        (4.0, 1.5 + 2.5 * 2.5 / (2.5 + 2.5)),   # over=2.5, span=2.5 -> 2.75
+        (14.0, 1.5 + 2.5 * 12.5 / (12.5 + 2.5)),  # -> ~3.5833
+    ],
+)
+def test_apply_soft_knee_curve_table(value, expected):
+    # Arrange
+    illum_map = np.full((2, 2, 3), value, dtype=np.float32)
+
+    # Act
+    result = _apply_soft_knee(illum_map, knee_start=1.5, knee_max=4.0)
+
+    # Assert
+    assert result[0, 0, 0] == pytest.approx(expected, rel=1e-5)
+
+
+def test_apply_soft_knee_is_monotonic_above_start():
+    # Arrange — stacked pools must stay brighter than fewer pools
+    values = np.array([[[2.0, 4.0, 8.0]]], dtype=np.float32)
+
+    # Act
+    result = _apply_soft_knee(values, knee_start=1.5, knee_max=4.0)
+
+    # Assert
+    assert result[0, 0, 0] < result[0, 0, 1] < result[0, 0, 2]
+    assert result[0, 0, 2] < 4.0
+
+
+def test_apply_soft_knee_disabled_when_max_not_above_start():
+    # Arrange
+    illum_map = np.full((1, 1, 3), 9.0, dtype=np.float32)
+
+    # Act
+    result = _apply_soft_knee(illum_map, knee_start=2.0, knee_max=2.0)
+
+    # Assert — identity, same values back
+    assert np.array_equal(result, illum_map)

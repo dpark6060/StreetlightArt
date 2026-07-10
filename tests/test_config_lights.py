@@ -61,6 +61,12 @@ def test_load_config_lights_is_light_config_instance(loaded_config: SceneConfig)
     assert isinstance(loaded_config.lights, LightConfig)
 
 
+def test_light_config_has_illumination_knee_defaults(loaded_config: SceneConfig):
+    # Assert
+    assert loaded_config.lights.illumination.knee_start == 1.5
+    assert loaded_config.lights.illumination.knee_max == 4.0
+
+
 # ---------------------------------------------------------------------------
 # LightConfig sub-section types
 # ---------------------------------------------------------------------------

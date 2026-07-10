@@ -105,6 +105,9 @@ def build_light_catalog(config: SceneConfig) -> t.List[LightKind]:
     kinds.append(LightKind("Commercial: Parking", commercial, "parking_"))
     kinds.append(LightKind("Commercial: Storefronts", commercial, "storefront_"))
 
+    # Ground-pool soft knee — post-processing on the accumulated illumination map.
+    kinds.append(LightKind("Illumination: Ground Pools", config.lights.illumination, None))
+
     # Lit-window controls, shown only when the config has a [buildings] section.
     # The window_ prefix scopes the section to the emissive-window fields (lit
     # fraction, brightness, color temperature, saturation, sizing, glow).

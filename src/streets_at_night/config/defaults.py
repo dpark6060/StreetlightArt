@@ -458,6 +458,10 @@ DEFAULTS: dict = {
             "storefront_spacing_min": 5.0,
             "storefront_spacing_max": 8.0,
         },
+        "illumination": {
+            "knee_start": 1.5,
+            "knee_max": 4.0,
+        },
     },
     "atmosphere": {
         # falloff_distance is the shared extinction coefficient k: lights dim by

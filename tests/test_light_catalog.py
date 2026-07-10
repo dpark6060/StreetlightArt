@@ -80,6 +80,16 @@ def test_build_light_catalog_global_streetlight_kind(config):
     assert glob.field_prefix == "color_temp_shift"
 
 
+def test_build_light_catalog_includes_illumination_kind(config):
+    # Act
+    kinds = build_light_catalog(config)
+    by_label = {kind.label: kind for kind in kinds}
+
+    # Assert
+    assert by_label["Illumination: Ground Pools"].target is config.lights.illumination
+    assert by_label["Illumination: Ground Pools"].field_prefix is None
+
+
 def test_build_light_catalog_buildings_windows_kind_present(config):
     # Act
     catalog = build_light_catalog(config)

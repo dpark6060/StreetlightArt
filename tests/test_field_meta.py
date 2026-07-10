@@ -37,6 +37,14 @@ def test_get_field_meta_matches_rules(field_name, sample_value, expected_min, ex
     assert meta.is_int == expected_int
 
 
+def test_get_field_meta_knee_range():
+    # Act
+    meta = get_field_meta("knee_start", 1.5)
+
+    # Assert
+    assert (meta.min_val, meta.max_val) == (0.0, 10.0)
+
+
 def test_get_field_meta_color_temp_shift_precedes_color_temp():
     # Act — "color_temp_shift_k" contains both substrings; shift must win.
     meta = get_field_meta("color_temp_shift_k", 0.0)

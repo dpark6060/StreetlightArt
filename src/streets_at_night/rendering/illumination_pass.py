@@ -112,6 +112,9 @@ def render_illumination(
         camera.position, falloff_distance, min_brightness_threshold,
     )
 
+    knee = scene.config.lights.illumination
+    illum_map = _apply_soft_knee(illum_map, knee.knee_start, knee.knee_max)
+
     min_x, max_y, res = map_info
     illum_img = _sample_illumination_map(
         illum_map, gbuffer.hit_x, gbuffer.hit_y, gbuffer.ground_mask, min_x, max_y, res
@@ -354,6 +357,30 @@ def _build_illumination_map(
 
     map_info = (min_x, max_y, resolution)
     return illum_map, map_info
+
+
+def _apply_soft_knee(illum_map: np.ndarray, knee_start: float, knee_max: float) -> np.ndarray:
+    """Compress stacked illumination above knee_start toward knee_max.
+
+    Identity below ``knee_start``; above it, values compress smoothly
+    (C1-continuous at the knee) and asymptotically approach ``knee_max`` —
+    monotonic, so brighter stacks always stay brighter. Disabled (returns
+    the input unchanged) when ``knee_max <= knee_start``.
+
+    Args:
+        illum_map (np.ndarray): (H, W, 3) float32 linear illumination map.
+        knee_start (float): Intensity where compression begins.
+        knee_max (float): Asymptotic intensity ceiling.
+
+    Returns:
+        np.ndarray: The compressed map (may be the input array when disabled).
+    """
+    if knee_max <= knee_start:
+        return illum_map
+    span = knee_max - knee_start
+    over = np.maximum(illum_map - knee_start, 0.0)
+    compressed = knee_start + span * over / (over + span)
+    return np.where(illum_map > knee_start, compressed, illum_map).astype(np.float32)
 
 
 def _paint_illumination_blob(

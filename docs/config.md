@@ -20,6 +20,7 @@ Deep merge applies at every nesting level, so you can override a single sub-key 
 - [Light Rendering: glow_radius vs illumination_radius](#light-rendering-glow_radius-vs-illumination_radius)
 - [`[lights.cars]`](#lightscars)
 - [`[lights.commercial]`](#lightscommercial)
+- [`[lights.illumination]`](#lightsillumination)
 - [`[atmosphere]`](#atmosphere)
 - [`[stars]`](#stars)
 - [`[heat_haze]`](#heat_haze)
@@ -293,6 +294,15 @@ Default parking color pool: 70% LED white, 30% sodium.
 Default storefront color pool: 60% warm white, 25% warm yellow, 15% fluorescent.
 
 > **Note:** Commercial light configs are parsed from TOML but not yet wired to the runtime placement code — factories currently use hardcoded values.
+
+## `[lights.illumination]`
+
+A soft knee applied once to the finished ground illumination map, taming blown-out patches where parking-lot and storefront pools stack on top of each other. Values below `knee_start` pass through unchanged; above it they compress smoothly and asymptote toward `knee_max`, so overlapping pools still read brighter than a single pool but can never blow out. Set `knee_max <= knee_start` to disable it entirely.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `knee_start` | float | 1.5 | Linear intensity where compression begins; below this the map is untouched |
+| `knee_max` | float | 4.0 | Asymptotic intensity ceiling the compressed values approach but never reach |
 
 ## `[atmosphere]`
 

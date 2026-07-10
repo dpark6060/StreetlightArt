@@ -49,6 +49,7 @@ the current config actually contains:
 | Streetlight: `<road type>` (pool N) | One entry **per fixture pool per road type** — its color temperature, saturation, beam angle, glow, illumination intensity, brightness/height/spacing ranges |
 | Cars: Headlights / Taillights / Density / Separation | The matching group of car-light fields |
 | Commercial: Signs / Parking / Storefronts | Per commercial light type: brightness, glow, ground-pool cone |
+| Illumination: Ground Pools | Soft-knee compression for overlapping ground light pools (`knee_start` / `knee_max`) |
 | Buildings: Windows | Lit fraction, brightness, color temperature, saturation, window sizing, glow (always shown; values from `[buildings]` or defaults) |
 | Streetlights: Global | The city-wide `color_temp_shift_k` lever (see below) |
 
