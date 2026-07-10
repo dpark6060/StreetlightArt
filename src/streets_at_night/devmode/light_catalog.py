@@ -117,4 +117,7 @@ def build_light_catalog(config: SceneConfig) -> t.List[LightKind]:
     # City-wide color_temp_shift_k master lever, which no per-pool entry covers.
     kinds.append(LightKind("Streetlights: Global", config.lights.streetlights, "color_temp_shift"))
 
+    # Final color grade — exposure (stops) and tone-map operator.
+    kinds.append(LightKind("Grade", config.grade, None))
+
     return kinds

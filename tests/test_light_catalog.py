@@ -112,6 +112,16 @@ def test_build_light_catalog_omits_buildings_windows_when_unconfigured(config):
     assert "Buildings: Windows" not in labels
 
 
+def test_build_light_catalog_includes_grade_kind(config):
+    # Act
+    kinds = build_light_catalog(config)
+    by_label = {kind.label: kind for kind in kinds}
+
+    # Assert
+    assert by_label["Grade"].target is config.grade
+    assert by_label["Grade"].field_prefix is None
+
+
 def test_build_light_catalog_target_identity_mutation_reaches_config(config):
     # Arrange
     catalog = build_light_catalog(config)

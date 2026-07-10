@@ -45,6 +45,14 @@ def test_get_field_meta_knee_range():
     assert (meta.min_val, meta.max_val) == (0.0, 10.0)
 
 
+def test_get_field_meta_exposure_range():
+    # Act
+    meta = get_field_meta("exposure", 0.0)
+
+    # Assert
+    assert (meta.min_val, meta.max_val) == (-3.0, 3.0)
+
+
 def test_get_field_meta_color_temp_shift_precedes_color_temp():
     # Act — "color_temp_shift_k" contains both substrings; shift must win.
     meta = get_field_meta("color_temp_shift_k", 0.0)

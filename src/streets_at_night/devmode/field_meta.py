@@ -38,6 +38,7 @@ class FieldMeta:
 _FIELD_META_RULES: t.List[t.Tuple[str, FieldMeta]] = [
     ("extinction_strength", FieldMeta(0.0, 2.0)),
     ("knee", FieldMeta(0.0, 10.0)),
+    ("exposure", FieldMeta(-3.0, 3.0)),
     ("color_temp_shift", FieldMeta(-3000.0, 3000.0)),
     ("color_temp", FieldMeta(1000.0, 10000.0)),
     ("lit_fraction", FieldMeta(0.0, 1.0)),
