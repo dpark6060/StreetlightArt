@@ -375,6 +375,7 @@ class BuildingConfig:
     window_brightness_min: float
     window_brightness_max: float
     window_glow_px: float
+    window_extinction_strength: float
     height_defaults: t.Dict[str, float]
 
 

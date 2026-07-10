@@ -36,6 +36,7 @@ class FieldMeta:
 
 # Ordered (substring, FieldMeta) rules. First substring match wins.
 _FIELD_META_RULES: t.List[t.Tuple[str, FieldMeta]] = [
+    ("extinction_strength", FieldMeta(0.0, 2.0)),
     ("color_temp_shift", FieldMeta(-3000.0, 3000.0)),
     ("color_temp", FieldMeta(1000.0, 10000.0)),
     ("lit_fraction", FieldMeta(0.0, 1.0)),

@@ -1,6 +1,7 @@
 # Radical
 """Unit tests for streets_at_night.rendering.building_pass."""
 
+import math
 from unittest import mock
 
 import numpy as np
@@ -18,6 +19,7 @@ from streets_at_night.rendering.building_pass import (
     _get_lit_fraction,
     _get_outward_normal,
     _get_window_col_count,
+    _get_window_extinction,
     _get_window_row_count,
     _is_below_pixel_threshold,
     _is_wall_facing_camera,
@@ -64,6 +66,7 @@ def building_config() -> BuildingConfig:
         window_brightness_min=0.15,
         window_brightness_max=0.5,
         window_glow_px=0.0,
+        window_extinction_strength=1.0,
         height_defaults={"default": 5.0},
     )
 
@@ -226,6 +229,7 @@ def test_render_buildings_draws_roof_and_walls_for_visible_building(
     )
     scene = mock.MagicMock()
     scene.config.buildings = building_config
+    scene.config.atmosphere.falloff_distance = 8000.0
     scene.get_buildings_in_rect.return_value = [building]
 
     # Act
@@ -452,6 +456,34 @@ def test_get_lit_fraction_selects_fraction_by_building_kind(kind, expected, buil
 
 
 # ---------------------------------------------------------------------------
+# _get_window_extinction
+# ---------------------------------------------------------------------------
+
+def test_get_window_extinction_matches_exponential_law():
+    # Act — same law as render_utils.apply_brightness_falloff
+    factor = _get_window_extinction(8000.0, 1.0, 8000.0)
+
+    # Assert
+    assert factor == pytest.approx(math.exp(-1.0))
+
+
+def test_get_window_extinction_strength_zero_is_exactly_one():
+    # Act
+    factor = _get_window_extinction(12000.0, 0.0, 8000.0)
+
+    # Assert — bit-for-bit parity with pre-extinction behavior
+    assert factor == 1.0
+
+
+def test_get_window_extinction_nonpositive_falloff_is_one():
+    # Act — degenerate config must not divide by zero
+    factor = _get_window_extinction(5000.0, 1.0, 0.0)
+
+    # Assert
+    assert factor == 1.0
+
+
+# ---------------------------------------------------------------------------
 # _accumulate_building_windows / render_buildings — lit selection + accumulation
 # ---------------------------------------------------------------------------
 
@@ -498,7 +530,7 @@ def test_accumulate_building_windows_zero_emission_when_lit_fraction_zero(
     # Act
     lit_count = _accumulate_building_windows(
         window_test_building, [facing_wall_for_windows], 100.0,
-        view_matrix, proj_matrix, 1920, 1080, building_config, window_buffer,
+        view_matrix, proj_matrix, 1920, 1080, building_config, window_buffer, 1.0,
     )
 
     # Assert
@@ -522,7 +554,7 @@ def test_accumulate_building_windows_every_cell_emits_when_lit_fraction_one(
     # Act
     lit_count = _accumulate_building_windows(
         window_test_building, [facing_wall_for_windows], 100.0,
-        view_matrix, proj_matrix, 1920, 1080, building_config, window_buffer,
+        view_matrix, proj_matrix, 1920, 1080, building_config, window_buffer, 1.0,
     )
 
     # Assert — every grid cell was lit, and some emission landed in the buffer
@@ -540,12 +572,12 @@ def test_accumulate_building_windows_deterministic_across_repeated_runs(
     buffer_a = np.zeros((1080, 1920, 3), dtype=np.float32)
     count_a = _accumulate_building_windows(
         window_test_building, [facing_wall_for_windows], 100.0,
-        view_matrix, proj_matrix, 1920, 1080, building_config, buffer_a,
+        view_matrix, proj_matrix, 1920, 1080, building_config, buffer_a, 1.0,
     )
     buffer_b = np.zeros((1080, 1920, 3), dtype=np.float32)
     count_b = _accumulate_building_windows(
         window_test_building, [facing_wall_for_windows], 100.0,
-        view_matrix, proj_matrix, 1920, 1080, building_config, buffer_b,
+        view_matrix, proj_matrix, 1920, 1080, building_config, buffer_b, 1.0,
     )
 
     # Assert — identical seeds produce an identical result
@@ -563,6 +595,7 @@ def test_render_buildings_does_not_add_linear_when_lit_fraction_zero(
     )
     scene = mock.MagicMock()
     scene.config.buildings = building_config
+    scene.config.atmosphere.falloff_distance = 8000.0
     scene.get_buildings_in_rect.return_value = [building]
 
     # Act
@@ -582,6 +615,7 @@ def test_render_buildings_adds_linear_window_buffer_when_lit_fraction_one(
     )
     scene = mock.MagicMock()
     scene.config.buildings = building_config
+    scene.config.atmosphere.falloff_distance = 8000.0
     scene.get_buildings_in_rect.return_value = [building]
 
     # Act
@@ -658,7 +692,7 @@ def test_accumulate_building_windows_uses_subpixel_path_beyond_distance_threshol
     # Act
     lit_count = _accumulate_building_windows(
         window_test_building, [facing_wall_for_windows], 5000.0,
-        view_matrix, proj_matrix, 1920, 1080, building_config, window_buffer,
+        view_matrix, proj_matrix, 1920, 1080, building_config, window_buffer, 1.0,
     )
 
     # Assert — windows were lit and energy was added somewhere in the buffer

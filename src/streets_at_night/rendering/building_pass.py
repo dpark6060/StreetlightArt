@@ -10,6 +10,7 @@ float32 linear buffer via ``backend.add_linear`` — no bloom, no ground pool,
 just an emissive rectangle the compositor's tone map rolls off naturally.
 """
 
+import math
 import random
 import typing as t
 from dataclasses import dataclass
@@ -133,6 +134,9 @@ def render_buildings(
     wall_color = hex_to_rgb(building_config.wall_color)
     roof_color = hex_to_rgb(building_config.roof_color)
 
+    atmosphere = getattr(scene.config, "atmosphere", None)
+    falloff_m = atmosphere.falloff_distance if atmosphere is not None else 0.0
+
     drawn = 0
     window_buffer: t.Optional[np.ndarray] = None
     windows_drawn = 0
@@ -159,9 +163,12 @@ def render_buildings(
             continue
         if window_buffer is None:
             window_buffer = np.zeros((height, width, 3), dtype=np.float32)
+        extinction = _get_window_extinction(
+            distance, building_config.window_extinction_strength, falloff_m
+        )
         windows_drawn += _accumulate_building_windows(
             building, facing_walls, distance, view_matrix, proj_matrix, width, height,
-            building_config, window_buffer,
+            building_config, window_buffer, extinction,
         )
 
     if window_buffer is not None and windows_drawn > 0:
@@ -699,6 +706,27 @@ def _build_window_corners(
 # ---------------------------------------------------------------------------
 
 
+def _get_window_extinction(distance_m: float, strength: float, falloff_distance_m: float) -> float:
+    """Compute the atmospheric extinction factor for a building's windows.
+
+    Same exponential law as render_utils.apply_brightness_falloff, with a
+    strength knob scaling the exponent: 0.0 disables extinction exactly,
+    1.0 matches the attenuation applied to every other light core.
+
+    Args:
+        distance_m (float): Camera distance to the building, in meters.
+        strength (float): Extinction strength multiplier.
+        falloff_distance_m (float): Atmosphere falloff distance in meters.
+
+    Returns:
+        float: Multiplier in (0, 1]; exactly 1.0 when strength is 0 or the
+        falloff distance is non-positive.
+    """
+    if strength == 0.0 or falloff_distance_m <= 0.0:
+        return 1.0
+    return math.exp(-distance_m * strength / falloff_distance_m)
+
+
 def _accumulate_building_windows(
     building: "Building",
     facing_walls: t.List[FacingWall],
@@ -709,6 +737,7 @@ def _accumulate_building_windows(
     height: int,
     config: BuildingConfig,
     window_buffer: np.ndarray,
+    extinction: float,
 ) -> int:
     """Derive, light-test, and accumulate every lit window on a building.
 
@@ -726,6 +755,8 @@ def _accumulate_building_windows(
         config (BuildingConfig): Window sizing/color/brightness configuration.
         window_buffer (np.ndarray): Float32 (H, W, 3) linear buffer,
             modified in place.
+        extinction (float): Distance-based brightness multiplier for this
+            building's windows (1.0 = no attenuation).
 
     Returns:
         int: Number of windows that were lit and accumulated.
@@ -741,7 +772,7 @@ def _accumulate_building_windows(
         for cell in cells:
             if _accumulate_window_cell(
                 cell, view_matrix, proj_matrix, width, height, config, lit_fraction,
-                force_subpixel, window_buffer,
+                extinction, force_subpixel, window_buffer,
             ):
                 lit_count += 1
 
@@ -772,6 +803,7 @@ def _accumulate_window_cell(
     height: int,
     config: BuildingConfig,
     lit_fraction: float,
+    extinction: float,
     force_subpixel: bool,
     window_buffer: np.ndarray,
 ) -> bool:
@@ -786,6 +818,8 @@ def _accumulate_window_cell(
         config (BuildingConfig): Window color/brightness configuration.
         lit_fraction (float): Fraction of windows on this building that are
             lit, already resolved for the building's kind.
+        extinction (float): Distance-based brightness multiplier applied to
+            the window's emission (1.0 = no attenuation).
         force_subpixel (bool): If True, always use the sub-pixel path
             regardless of the projected quad's screen size.
         window_buffer (np.ndarray): Float32 (H, W, 3) linear buffer,
@@ -799,7 +833,7 @@ def _accumulate_window_cell(
         return False
 
     linear_color = _get_window_linear_color(rng, config)
-    brightness = _get_window_brightness(rng, config)
+    brightness = _get_window_brightness(rng, config) * extinction
 
     screen_coords = _project_window(cell.corners, view_matrix, proj_matrix, width, height)
     if screen_coords is None:

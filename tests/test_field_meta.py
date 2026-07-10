@@ -46,6 +46,14 @@ def test_get_field_meta_color_temp_shift_precedes_color_temp():
     assert meta.max_val == 3000.0
 
 
+def test_get_field_meta_extinction_strength_range():
+    # Act
+    meta = get_field_meta("window_extinction_strength", 1.0)
+
+    # Assert
+    assert (meta.min_val, meta.max_val) == (0.0, 2.0)
+
+
 def test_get_field_meta_value_above_rule_max_expands_max_with_headroom():
     # Act — brightness rule caps at 10; an authored 40 must not be clamped.
     meta = get_field_meta("brightness_max", 40.0)

@@ -66,6 +66,7 @@ def building_config() -> BuildingConfig:
         window_brightness_min=0.15,
         window_brightness_max=0.5,
         window_glow_px=0.0,
+        window_extinction_strength=1.0,
         height_defaults={"house": 4.5, "retail": 6.5, "default": 5.0},
     )
 

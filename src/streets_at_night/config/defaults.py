@@ -554,7 +554,8 @@ DEFAULTS: dict = {
         "window_saturation": 0.85,
         "window_brightness_min": 0.15,
         "window_brightness_max": 0.5,
-        "window_glow_px": 0.0,
+        "window_glow_px": 1.2,
+        "window_extinction_strength": 1.0,
         # height defaults per building tag
         "height_defaults": {
             "house": 4.5,
