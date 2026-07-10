@@ -24,8 +24,16 @@ from pathlib import Path
 import numpy as np
 import pygame
 import pygame_gui
+from pygame_gui.windows import UIColourPickerDialog
 
 from ...camera.controls import MouseDragState, handle_input
+from ...devmode.color_swatch import (
+    add_swatches,
+    color_to_hex,
+    find_swatch_entry_at,
+    is_hex_color,
+    refresh_swatch,
+)
 from ...devmode.config_bridge import apply_widgets_to_config, read_config_to_widgets
 from ...devmode.config_writer import write_config
 from ...devmode.dynamic_panel import build_dynamic_section
@@ -99,6 +107,10 @@ class DevmodeTab(Tab):
         # Minimap overlay + active drag target ("camera" | "target" | None).
         self._minimap: t.Optional[Minimap] = None
         self._drag_dot: t.Optional[str] = None
+
+        # Colour-picker dialog: at most one open, with the entry it edits.
+        self._color_dialog: t.Optional[UIColourPickerDialog] = None
+        self._color_dialog_entry: t.Optional[t.Any] = None
 
         # Section state.
         self._static_registry = SliderRegistry()
@@ -215,6 +227,7 @@ class DevmodeTab(Tab):
 
     def destroy(self) -> None:
         """Kill every widget from both registries, the panel, and any dialog."""
+        self._close_color_dialog()
         self._reset_registry(self._static_registry)
         self._reset_registry(self._light_registry)
         widgets: t.List[t.Any] = [
@@ -258,6 +271,7 @@ class DevmodeTab(Tab):
         Args:
             name (str): Section name — a static section or a LightKind label.
         """
+        self._close_color_dialog()
         self._reset_registry(self._static_registry)
         self._reset_registry(self._light_registry)
         self._active_section = name
@@ -267,15 +281,18 @@ class DevmodeTab(Tab):
             self._active_kind = None
             height = build_atmosphere_section(self._manager, container, 0, self._static_registry, self.state.config)
             read_config_to_widgets(self.state.config, self._static_registry)
+            add_swatches(self._manager, self._static_registry)
         elif name == "Devmode Camera":
             self._active_kind = None
             height = build_devmode_camera_section(self._manager, container, 0, self._static_registry, self.state.config)
             read_config_to_widgets(self.state.config, self._static_registry)
+            add_swatches(self._manager, self._static_registry)
         else:
             kind = self._kind_by_label(name)
             self._active_kind = kind
             height = build_dynamic_section(self._manager, container, 0, self._light_registry, kind)
             read_config_to_widgets(kind.target, self._light_registry)
+            add_swatches(self._manager, self._light_registry)
 
         content_width = self._scroll.get_container().get_size()[0]
         self._scroll.set_scrollable_area_dimensions((content_width, max(height, 10)))
@@ -304,6 +321,7 @@ class DevmodeTab(Tab):
         registry.entry_to_slider.clear()
         registry.bool_buttons.clear()
         registry.text_entries.clear()
+        registry.swatches.clear()
         registry.color_pools.clear()
         registry.extra_widgets.clear()
         registry.dirty.clear()
@@ -339,6 +357,13 @@ class DevmodeTab(Tab):
         elif event.type == pygame_gui.UI_FILE_DIALOG_PATH_PICKED and event.ui_element is self._save_dialog:
             self._save_to_path(Path(event.text))
             self._save_dialog = None
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            self._handle_swatch_click(event.pos)
+        elif event.type == pygame_gui.UI_COLOUR_PICKER_COLOUR_PICKED and event.ui_element is self._color_dialog:
+            self._handle_colour_picked(event.colour)
+        elif event.type == pygame_gui.UI_WINDOW_CLOSE and event.ui_element is self._color_dialog:
+            self._color_dialog = None
+            self._color_dialog_entry = None
 
     def _handle_button(self, element: t.Any) -> None:
         """Route a button press to Rerender / Save / Real-Tiles / a bool toggle."""
@@ -379,6 +404,7 @@ class DevmodeTab(Tab):
         elif entry not in registry.text_entries and entry not in registry.color_pool_widgets():
             return
         self._apply_active_section()
+        refresh_swatch(registry, entry)
 
     def _apply_active_section(self) -> None:
         """Write the active section's widget values into its root object.
@@ -388,6 +414,67 @@ class DevmodeTab(Tab):
         """
         apply_widgets_to_config(self._active_registry(), self._active_root())
         self.state.invalidate_scene()
+
+    # ------------------------------------------------------------------
+    # Colour picker
+    # ------------------------------------------------------------------
+
+    def _handle_swatch_click(self, pos: t.Tuple[int, int]) -> None:
+        """Open the picker when a visible colour swatch is clicked.
+
+        Args:
+            pos (tuple[int, int]): Screen position of the click.
+        """
+        if self._scroll is None:
+            return
+        entry = find_swatch_entry_at(self._active_registry(), pos, self._scroll.get_abs_rect())
+        if entry is not None:
+            self._open_color_dialog(entry)
+
+    def _open_color_dialog(self, entry: t.Any) -> None:
+        """Open the colour picker seeded from a hex entry's current colour.
+
+        A dialog already being open is a no-op, so a second swatch click never
+        stacks pickers.
+
+        Args:
+            entry: The hex UITextEntryLine the picked colour will be written to.
+        """
+        if self._color_dialog is not None:
+            return
+        text = entry.get_text()
+        initial = pygame.Color(text) if is_hex_color(text) else pygame.Color(255, 255, 255)
+        dialog_x = max(10, self._panel_rect.x - 420)
+        self._color_dialog = UIColourPickerDialog(
+            pygame.Rect(dialog_x, self._panel_rect.y + 40, 400, 400),
+            self._manager,
+            initial_colour=initial,
+            window_title="Pick colour",
+        )
+        self._color_dialog_entry = entry
+
+    def _handle_colour_picked(self, colour: pygame.Color) -> None:
+        """Write a picked colour into the target entry and apply it.
+
+        The dialog kills itself on OK, so this only clears the tab's references.
+
+        Args:
+            colour (pygame.Color): The colour chosen in the picker.
+        """
+        entry = self._color_dialog_entry
+        if entry is not None:
+            entry.set_text(color_to_hex(colour))
+            refresh_swatch(self._active_registry(), entry)
+            self._apply_active_section()
+        self._color_dialog = None
+        self._color_dialog_entry = None
+
+    def _close_color_dialog(self) -> None:
+        """Kill any open colour-picker dialog and clear its target entry."""
+        if self._color_dialog is not None:
+            self._color_dialog.kill()
+        self._color_dialog = None
+        self._color_dialog_entry = None
 
     # ------------------------------------------------------------------
     # Actions

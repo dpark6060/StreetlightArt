@@ -69,6 +69,15 @@ dataclass — there are no hand-authored per-field ranges. For each field:
   color's hex or its weight inline; the count is fixed this version, so
   add or remove colors via the TOML directly
 
+### Color swatches and the picker
+
+Every `#RRGGBB` field — a section's color entry (e.g. Atmosphere's haze color)
+and each hex row of a color pool — shows a small filled swatch beside its text
+box. Click a swatch to open a color picker seeded with the current color; hit OK
+and the picked color is written into the entry and applied exactly like typing
+the hex by hand (Cancel or closing the dialog changes nothing). One picker is
+open at a time, and it closes when you switch sections.
+
 ### Sliders never clamp your values
 
 Slider ranges are *typical editing* ranges, not hard caps. A value the config

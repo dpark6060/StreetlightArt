@@ -12,6 +12,7 @@ import pytest
 os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 import pygame  # noqa: E402
+import pygame_gui  # noqa: E402
 
 from streets_at_night.config.defaults import DEFAULTS  # noqa: E402
 from streets_at_night.config.schema import SceneConfig  # noqa: E402
@@ -42,6 +43,28 @@ def _make_tab(config: SceneConfig, tmp_path) -> tuple:
     jobs = JobRunner()
     tab = DevmodeTab(state, jobs)
     return tab, state, jobs
+
+
+@pytest.fixture
+def tall_content_rect() -> pygame.Rect:
+    """A content rect tall enough that the whole Atmosphere section fits on screen.
+
+    haze_color is the last row of the Atmosphere section; with the default
+    content rect its swatch scrolls below the visible panel and cannot be
+    clicked. A tall rect keeps every row (and its swatch) inside the panel.
+    """
+    return pygame.Rect(0, 0, 1440, 1100)
+
+
+@pytest.fixture
+def built_tab(config, headless_manager, tall_content_rect, tmp_path):
+    """Build a DevmodeTab headless with heavy render stubbed and Atmosphere shown."""
+    tab, _, _ = _make_tab(config, tmp_path)
+    with mock.patch.object(devmode_tab_module, "render_devmode_scene"), mock.patch.object(
+        devmode_tab_module, "fit_image_to_viewport"
+    ), mock.patch.object(devmode_tab_module, "pil_to_pygame_surface"):
+        tab.build(headless_manager, tall_content_rect)
+    return tab
 
 
 def test_build_creates_widgets_and_destroy_clears_them(config, headless_manager, content_rect, tmp_path):
@@ -287,3 +310,85 @@ def test_toggle_real_tiles_submits_background_job(config, headless_manager, cont
     assert tab._use_real_tiles is True
     mock_submit.assert_called_once()
     assert tab._realtiles_btn.text == "Real Tiles: ON"
+
+
+def test_build_section_creates_swatches_for_hex_entries(built_tab):
+    # Arrange — the Atmosphere section registers haze_color as a text entry.
+    built_tab._build_section("Atmosphere")
+
+    # Act
+    registry = built_tab._active_registry()
+
+    # Assert — at least the haze_color entry received a swatch.
+    assert len(registry.swatches) >= 1
+
+
+def test_swatch_click_opens_colour_picker_dialog(built_tab):
+    # Arrange
+    built_tab._build_section("Atmosphere")
+    registry = built_tab._active_registry()
+    entry, swatch = next(iter(registry.swatches.items()))
+    pos = swatch.get_abs_rect().center
+
+    # Act
+    event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": pos})
+    built_tab.handle_event(event)
+
+    # Assert
+    assert built_tab._color_dialog is not None
+    assert built_tab._color_dialog_entry is entry
+
+
+def test_second_swatch_click_does_not_stack_dialogs(built_tab):
+    # Arrange
+    built_tab._build_section("Atmosphere")
+    registry = built_tab._active_registry()
+    _entry, swatch = next(iter(registry.swatches.items()))
+    pos = swatch.get_abs_rect().center
+    event = pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": pos})
+    built_tab.handle_event(event)
+    first_dialog = built_tab._color_dialog
+
+    # Act
+    built_tab.handle_event(event)
+
+    # Assert — same dialog instance, not a second one.
+    assert built_tab._color_dialog is first_dialog
+
+
+def test_colour_picked_sets_entry_applies_and_refreshes(built_tab):
+    # Arrange — open the dialog for the haze_color entry.
+    built_tab._build_section("Atmosphere")
+    registry = built_tab._active_registry()
+    entry, swatch = next(iter(registry.swatches.items()))
+    pos = swatch.get_abs_rect().center
+    built_tab.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": pos}))
+
+    # Act
+    picked = pygame.event.Event(
+        pygame_gui.UI_COLOUR_PICKER_COLOUR_PICKED,
+        {"colour": pygame.Color(18, 52, 86), "ui_element": built_tab._color_dialog},
+    )
+    built_tab.handle_event(picked)
+
+    # Assert — entry text set, config applied through the normal path, dialog refs cleared.
+    assert entry.get_text() == "#123456"
+    assert built_tab.state.config.atmosphere.haze_color == (18, 52, 86)
+    assert built_tab._color_dialog is None
+    assert built_tab._color_dialog_entry is None
+
+
+def test_section_switch_closes_open_colour_dialog(built_tab):
+    # Arrange
+    built_tab._build_section("Atmosphere")
+    registry = built_tab._active_registry()
+    _entry, swatch = next(iter(registry.swatches.items()))
+    pos = swatch.get_abs_rect().center
+    built_tab.handle_event(pygame.event.Event(pygame.MOUSEBUTTONDOWN, {"button": 1, "pos": pos}))
+
+    # Act
+    built_tab._build_section("Devmode Camera")
+
+    # Assert
+    assert built_tab._color_dialog is None
+    assert built_tab._color_dialog_entry is None
