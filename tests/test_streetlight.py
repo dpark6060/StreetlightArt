@@ -51,6 +51,8 @@ def sample_profile() -> FixtureProfile:
         illumination_intensity=0.75,
         spacing=45.0,
         side="both",
+        bulb_fraction=0.6,
+        reflector_falloff=2.0,
     )
 
 
@@ -74,6 +76,8 @@ def sample_profile_config() -> FixtureProfileConfig:
         spacing_min=45.0,
         spacing_max=45.0,
         side="both",
+        bulb_fraction=0.6,
+        reflector_falloff=2.0,
     )
 
 
@@ -284,7 +288,11 @@ def test_create_from_profile_uses_beam_illumination_model(sample_profile, sample
 
     # Assert — a physical beam model carrying the profile's beam angle; the
     # illumination pass derives the actual pool radius from pole height + angle.
-    assert light.illumination == BeamIllumination(sample_profile.beam_angle_deg)
+    assert light.illumination == BeamIllumination(
+        sample_profile.beam_angle_deg,
+        sample_profile.bulb_fraction,
+        sample_profile.reflector_falloff,
+    )
 
 
 # ---------------------------------------------------------------------------

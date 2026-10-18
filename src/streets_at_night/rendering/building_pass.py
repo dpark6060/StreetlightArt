@@ -268,7 +268,7 @@ def _draw_building(
     for wall, wall_screen in zip(facing_walls, faces_screen[1:]):
         if wall_screen is None:
             continue
-        shade = _get_face_shade(wall.normal, shade_strength)
+        shade = get_face_shade(wall.normal, shade_strength)
         backend.draw_polygon(wall_screen, _apply_shade(wall_color, shade))
 
     backend.draw_polygon(roof_screen, roof_color)
@@ -402,6 +402,30 @@ def _get_facing_walls(building: "Building", camera: Camera) -> t.List[FacingWall
     return facing_walls
 
 
+def get_all_walls(building: "Building") -> t.List[FacingWall]:
+    """Return every footprint edge of a building as a wall, with no culling.
+
+    For renderers that resolve visibility themselves (the GPU depth buffer).
+
+    Args:
+        building (Building): The building whose footprint edges to return.
+
+    Returns:
+        list[FacingWall]: One entry per footprint edge, in edge order.
+    """
+    footprint = building.footprint
+    n = len(footprint)
+    return [
+        FacingWall(
+            edge_index=i,
+            p0=footprint[i],
+            p1=footprint[(i + 1) % n],
+            normal=_get_outward_normal(footprint[i], footprint[(i + 1) % n]),
+        )
+        for i in range(n)
+    ]
+
+
 def _get_outward_normal(p0: np.ndarray, p1: np.ndarray) -> np.ndarray:
     """Compute the outward 2D unit normal of a CCW footprint edge.
 
@@ -446,7 +470,7 @@ def _is_wall_facing_camera(
     return bool(np.dot(normal, wall_center - cam_xy) <= 0.0)
 
 
-def _get_face_shade(normal: np.ndarray, shade_strength: float) -> float:
+def get_face_shade(normal: np.ndarray, shade_strength: float) -> float:
     """Compute a face brightness multiplier from its outward normal.
 
     Faces pointing toward the fixed pseudo-moon direction are brightened
@@ -782,6 +806,53 @@ def _accumulate_building_windows(
                 lit_count += 1
 
     return lit_count
+
+
+@dataclass
+class LitWindow:
+    """One lit window's world-space quad and emission, before extinction.
+
+    Attributes:
+        corners: Four (3,) world-space corners, bottom-left, bottom-right,
+            top-right, top-left.
+        linear_color: Linear (R, G, B) window color.
+        brightness: Linear brightness multiplier.
+    """
+
+    corners: t.List[np.ndarray]
+    linear_color: t.Tuple[float, float, float]
+    brightness: float
+
+
+def get_lit_windows(building: "Building", config: BuildingConfig) -> t.List[LitWindow]:
+    """Return every lit window on every wall of a building.
+
+    Uses the same grid, RNG keys, lit test, color, and brightness draws as
+    the CPU window pass, so a window lit here is lit there with the same
+    color. Extinction is left to the caller (it depends on the camera).
+
+    Args:
+        building (Building): The building whose windows to derive.
+        config (BuildingConfig): Window sizing/color/brightness configuration.
+
+    Returns:
+        list[LitWindow]: Lit windows across all walls.
+    """
+    lit_fraction = _get_lit_fraction(building.building_kind, config)
+    windows = []
+    for wall in get_all_walls(building):
+        cells = build_window_grid(
+            wall.p0, wall.p1, building.height, wall.normal, wall.edge_index,
+            building.window_seed, config,
+        )
+        for cell in cells:
+            rng = _get_window_rng(cell.rng_key)
+            if not _is_window_lit(rng, lit_fraction):
+                continue
+            linear_color = _get_window_linear_color(rng, config)
+            brightness = _get_window_brightness(rng, config)
+            windows.append(LitWindow(cell.corners, linear_color, brightness))
+    return windows
 
 
 def _get_lit_fraction(building_kind: str, config: BuildingConfig) -> float:

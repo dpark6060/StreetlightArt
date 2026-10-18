@@ -19,10 +19,10 @@ from streets_at_night.placement.commercial_placer import (
     _get_edge_midpoint,
     _get_exterior_edges,
     _place_lights_along_edge,
-    _place_parking_grid,
     _place_sign_lights,
     _place_storefront_lights_on_longest_edge,
     place_commercial_lights,
+    place_parking_grid,
 )
 
 
@@ -341,29 +341,70 @@ def test_compute_grid_points_matches_old_nested_loop_implementation(parking_poly
 
 
 # ---------------------------------------------------------------------------
-# _place_parking_grid
+# place_parking_grid
 # ---------------------------------------------------------------------------
 
 
 def test_place_parking_grid_returns_light_sources(parking_polygon, light_config, rng):
     # Act
-    lights = _place_parking_grid(parking_polygon, light_config, rng)
+    lights = place_parking_grid(parking_polygon, light_config, rng)
 
     # Assert
     assert all(isinstance(l, LightSource) for l in lights)
+
+
+def test_place_parking_grid_pole_heights_from_config(parking_polygon, light_config, rng):
+    # Arrange
+    light_config.commercial.parking_height_min = 20.0
+    light_config.commercial.parking_height_max = 21.0
+
+    # Act
+    lights = place_parking_grid(parking_polygon, light_config, rng)
+
+    # Assert
+    assert lights
+    assert all(20.0 <= l.position[2] <= 21.0 for l in lights)
 
 
 def test_place_parking_grid_positions_inside_polygon(
     parking_polygon, light_config, rng
 ):
     # Act
-    lights = _place_parking_grid(parking_polygon, light_config, rng)
+    lights = place_parking_grid(parking_polygon, light_config, rng)
 
     # Assert
     from shapely.geometry import Point
     for light in lights:
         x, y = light.position[0], light.position[1]
         assert parking_polygon.contains(Point(x, y))
+
+
+def test_place_parking_grid_spacing_scale_half_produces_more_lights(
+    parking_polygon, light_config
+):
+    """A 0.5 spacing_scale yields a denser grid than the default scale."""
+    baseline = place_parking_grid(parking_polygon, light_config, random.Random(7))
+
+    dense = place_parking_grid(
+        parking_polygon, light_config, random.Random(7), spacing_scale=0.5
+    )
+
+    assert len(dense) > len(baseline)
+
+
+def test_place_parking_grid_spacing_scale_default_matches_unscaled_behavior(
+    parking_polygon, light_config
+):
+    """spacing_scale=1.0 reproduces the same grid as omitting the argument."""
+    a = place_parking_grid(parking_polygon, light_config, random.Random(7))
+
+    b = place_parking_grid(
+        parking_polygon, light_config, random.Random(7), spacing_scale=1.0
+    )
+
+    assert len(a) == len(b)
+    for la, lb in zip(a, b):
+        np.testing.assert_array_almost_equal(la.position, lb.position)
 
 
 # ---------------------------------------------------------------------------

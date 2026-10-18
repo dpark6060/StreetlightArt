@@ -7,6 +7,7 @@ import pygame_gui
 
 from ..config.schema import SceneConfig
 from .config_bridge import get_nested
+from .field_meta import get_field_unit
 from .slider_registry import SliderDescriptor, SliderRegistry
 
 # Layout constants
@@ -167,9 +168,11 @@ def _add_slider_row(
     label_width, slider_width, entry_width = _compute_row_widths(container)
     row_y = y + (_ROW_HEIGHT - 20) // 2
 
+    unit = get_field_unit(descriptor.config_path[-1])
+    label_text = f"{descriptor.label} ({unit})" if unit else descriptor.label
     label = pygame_gui.elements.UILabel(
         relative_rect=pygame.Rect(0, row_y, label_width, 20),
-        text=descriptor.label,
+        text=label_text,
         manager=manager,
         container=container,
     )

@@ -35,6 +35,8 @@ class FixtureProfile:
         illumination_intensity: Ground illumination strength in [0, 1].
         spacing: Distance between consecutive lights in meters.
         side: Where lights are placed — "both", "one", or "alternating".
+        bulb_fraction: Bulb cutoff radius as a fraction of the beam radius.
+        reflector_falloff: Fade exponent for the reflector band past the bulb cutoff.
     """
 
     fixture_color: t.Tuple[int, int, int]
@@ -45,6 +47,8 @@ class FixtureProfile:
     illumination_intensity: float
     spacing: float
     side: str
+    bulb_fraction: float = 1.0
+    reflector_falloff: float = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -138,7 +142,11 @@ class StreetLight:
             size=0.3,
             glow_radius=fixture_profile.glow_radius,
             illumination_intensity=fixture_profile.illumination_intensity,
-            illumination=BeamIllumination(fixture_profile.beam_angle_deg),
+            illumination=BeamIllumination(
+                fixture_profile.beam_angle_deg,
+                fixture_profile.bulb_fraction,
+                fixture_profile.reflector_falloff,
+            ),
         )
 
 
@@ -232,4 +240,6 @@ def config_to_fixture_profile(
         illumination_intensity=cfg.illumination_intensity,
         spacing=rng.uniform(cfg.spacing_min, cfg.spacing_max),
         side=cfg.side,
+        bulb_fraction=cfg.bulb_fraction,
+        reflector_falloff=cfg.reflector_falloff,
     )

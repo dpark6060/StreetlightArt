@@ -26,6 +26,7 @@ from ..rendering.raycast import build_ground_gbuffer
 from ..rendering.render_pipeline import render_scene_frame
 from ..rendering.road_pass import render_roads_export
 from .label_pass import make_label_pass
+from .scale_marker_pass import make_scale_marker_pass
 from .synthetic_scene import ROW_LABELS
 
 # Full-quality re-render only fires once camera movement has been still for
@@ -128,12 +129,15 @@ def build_render_passes(
     G-buffer. Buildings run after roads and before illumination (same order as
     the export pipeline). The composite pass must be present and after the light
     passes so the accumulated linear light buffer is resolved into the visible
-    image; labels come last so they overlay the final composited frame.
+    image; overlay passes come last so they draw onto the final composited
+    frame: the scale-marker pass first, then labels so text is never occluded
+    by the marker line.
 
     Args:
         scene: The scene to render (used for the label pass camera).
         gbuffer: Shared ground raycast for illumination and atmosphere.
-        use_labels (bool): When True, append the synthetic-row label pass.
+        use_labels (bool): When True, append the synthetic-row scale-marker and
+            label passes.
 
     Returns:
         list: Ordered render passes for render_scene_frame.
@@ -157,6 +161,7 @@ def build_render_passes(
         render_composite,
     ]
     if use_labels:
+        passes.append(make_scale_marker_pass(ROW_LABELS))
         passes.append(make_label_pass(ROW_LABELS, scene.camera))
     return passes
 

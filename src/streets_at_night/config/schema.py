@@ -89,6 +89,9 @@ class FixtureProfileConfig:
     (see utils.colors.kelvin_to_rgb). The ground pool is derived physically
     from pole height and ``beam_angle_deg`` in the illumination pass, so the
     legacy cone shape parameters are not part of a streetlight profile.
+    ``bulb_fraction`` and ``reflector_falloff`` split the pool into a direct
+    bulb zone and a fading reflector zone (see ``BeamIllumination``); their
+    defaults give the single-cutoff pool, so older configs load unchanged.
     """
 
     color_temp_k: float
@@ -103,6 +106,8 @@ class FixtureProfileConfig:
     spacing_max: float
     side: str
     saturation: float = 1.0
+    bulb_fraction: float = 1.0
+    reflector_falloff: float = 1.0
 
 
 @dataclass
@@ -132,7 +137,12 @@ class StreetLightConfig:
 
 @dataclass
 class CarConfig:
-    """Car light configuration including colors and per-road-type densities."""
+    """Car light configuration including colors and per-road-type densities.
+
+    Each car casts a single directional headlight cone along its travel
+    bearing: ``headlight_beam_length`` sets the cone reach in meters and
+    ``headlight_beam_angle_deg`` sets the full horizontal cone angle.
+    """
 
     headlight_colors: ColorPoolConfig
     taillight_colors: ColorPoolConfig
@@ -153,7 +163,6 @@ class CarConfig:
     density_service_min: float
     density_service_max: float
     headlight_glow_radius: float
-    headlight_illumination_radius: float
     headlight_illumination_intensity: float
     headlight_illumination_falloff: float
     headlight_illumination_inner_fraction: float
@@ -162,11 +171,20 @@ class CarConfig:
     taillight_illumination_intensity: float
     taillight_illumination_falloff: float
     taillight_illumination_inner_fraction: float
+    headlight_beam_length: float = 25.0
+    headlight_beam_angle_deg: float = 40.0
 
 
 @dataclass
 class CommercialLightConfig:
-    """Commercial zone light configuration for signs, parking, and storefronts."""
+    """Commercial zone light configuration for signs, parking, and storefronts.
+
+    Signs and storefronts use an authored cone ground pool. Parking lot lights
+    are pole-mounted, so their pool is physical like a streetlight's: derived
+    from the sampled pole height (``parking_height_min``/``max``) and the
+    ``parking_beam_angle_deg`` / ``parking_bulb_fraction`` /
+    ``parking_reflector_falloff`` fixture shape.
+    """
 
     sign_colors: ColorPoolConfig
     sign_brightness_min: float
@@ -180,10 +198,12 @@ class CommercialLightConfig:
     parking_brightness_min: float
     parking_brightness_max: float
     parking_glow_radius: float
-    parking_illumination_radius: float
+    parking_height_min: float
+    parking_height_max: float
+    parking_beam_angle_deg: float
+    parking_bulb_fraction: float
+    parking_reflector_falloff: float
     parking_illumination_intensity: float
-    parking_illumination_falloff: float
-    parking_illumination_inner_fraction: float
     parking_grid_spacing_min: float
     parking_grid_spacing_max: float
     storefront_colors: ColorPoolConfig
@@ -417,3 +437,6 @@ class SceneConfig:
     heat_haze: t.Optional["HeatHazeConfig"] = None
     buildings: t.Optional["BuildingConfig"] = None
     region_name: t.Optional[str] = None
+    # Shared look file this config layers over, relative to the config file
+    # (see config.layers). None for a self-contained config.
+    look: t.Optional[str] = None

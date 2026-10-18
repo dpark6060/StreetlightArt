@@ -7,17 +7,19 @@ Renders an aerial night view of San Bernardino, CA using OpenStreetMap road data
 **What it does:**
 
 1. **`verify`** — Downloads road, land use, and building data from OSM via `osmnx` for a bounding box (default: San Bernardino area, `scene_config.toml [bounds]`). Caches raw data as `.gpkg` files in `cache/`. Classifies roads by OSM `highway` tag into 6 `RoadType` categories. Saves a matplotlib verification plot to `output/verify.png`.
-2. **`preview`** — Builds a fully populated `Scene` (roads, zones, streetlights, cars, commercial lights, and lit-window buildings; ENU meters via UTM Zone 11N; spatial index at 500m cell size). Generates a flat top-down road map (`PIL.Image`, cached as `cache/flat_map_*.png`). Runs a pygame event loop at 1280x720 where each frame raycasts every screen pixel through the camera to the z=0 ground plane and samples the flat map, then optionally applies heat-haze distortion. WASD/QE/arrows/mouse-drag for camera control. P for screenshot, R for reset, C to save the current camera position back to the TOML config, ESC to quit. `--no-lights` skips light rendering for a faster preview.
+2. **`preview`** — Builds a fully populated `Scene` (roads, zones, streetlights, cars, commercial lights, and lit-window buildings; ENU meters via the origin's UTM zone; spatial index at 500m cell size). Generates a flat top-down road map (`PIL.Image`, cached as `cache/flat_map_*.png`). Runs a pygame event loop at 1280x720 where each frame raycasts every screen pixel through the camera to the z=0 ground plane and samples the flat map, then optionally applies heat-haze distortion. WASD/QE/arrows/mouse-drag for camera control. P for screenshot, R for reset, C to save the current camera position back to the TOML config, ESC to quit. `--no-lights` skips light rendering for a faster preview.
 3. **`render`** — Builds the same fully populated Scene, but renders via `PillowBackend` at a configurable quality preset (low=1920x1080, medium=3840x2160, high=7680x4320, overridable with `--width`/`--height`). Runs the full linear-HDR pass pipeline (ground, roads, illumination, lights, atmosphere, compositor) with progress reporting per pass. Saves PNG or TIFF to `output/render.png` (`--format`, `--no-lights` to skip illumination/light passes).
 4. **`animate`** — Animates Kolmogorov heat-haze distortion over a previously rendered still image (`output/render.png` by default). Two modes: an interactive pygame window (default, press P to save a frame, ESC to quit), or `--record FILE` which renders frames offline through `imageio`/ffmpeg to an MP4 at a chosen quality/resolution, optionally with `--seamless` looping via a crossfade tail. Requires `[heat_haze] enabled = true` in the config; the depth map used for haze distortion is rebuilt from the config camera at the target resolution.
 5. **`devmode`** — Alias that opens the tabbed `ui` directly on its Devmode tab (`run_ui(..., initial_tab="Devmode")`). Keeps `--cache-dir`; the old `--real-tiles` flag is gone (the tab has a synthetic/real toggle). The standalone `cmd_devmode` event loop and hand-written control panel were removed in the Fable UI rework — the Devmode tab now owns scene rendering and panel construction.
 6. **`ui`** — Launches the tabbed pygame + pygame-gui window (`ui/app.py`, `run_ui`) that wraps every command as a tab (Verify, Preview, Render, Animate, Devmode) behind a shared config bar. `--tab` picks the tab to open on launch (default `Verify`); `--cache-dir` sets the OSM cache directory. Tabs run work off the main thread via `ui/jobs.py` (`JobRunner`) and share an `AppState` (`ui/app_state.py`) holding the working `SceneConfig`, its path, and the cache dir.
 
+7. **`tune`** — Opens a separate real-time GPU window (`gpu/tune_app.py`, wgpu on Metal + rendercanvas/glfw + imgui) with a human-scale scene: an E-W road, a small shop with lit windows/sign/storefronts, a 4.7 m car, a 1.75 m person, and 4 poles at the selected fixture's sampled spacing. Panel tabs: Road / Commercial (streetlight pools, parking — picking one mounts it on the poles — head/taillights), Building (windows, signs, storefronts), Scene (illumination brightness, knee, grade, glow shape). Drag orbits, shift+drag pans, scroll zooms, R resets. Save writes via `config_writer`. The light math is a WGSL port of the CPU passes; `tests/test_gpu_parity.py` renders on the GPU and compares against the numpy functions (skipped without a wgpu adapter).
+
 **Key constraints:**
 
 - Camera defaults: position at 34.23°N 117.31°W at 5186ft, target at 34.11°N 117.30°W at 1000ft, 60° FOV, near=100m, far=60000m
 - Coordinate system is ENU (East-North-Up) in meters, origin at camera/target midpoint
-- UTM zone is hardcoded to 11N (EPSG:32611) — only correct for Southern California
+- UTM zone is derived from the coordinate origin longitude/latitude (`get_utm_epsg` in `camera/coordinates.py`), so any city projects correctly; the zone EPSG is exposed as `CoordinateTransformer.utm_epsg`
 - Road classification drops footways, cycleways, paths, pedestrian, tracks, steps, bridleway
 - Flat map capped at 8000px in either dimension; resolution auto-scales coarser if exceeded
 - Zones, streetlights, cars, commercial lights, atmosphere, and heat haze are all implemented (not stubs); houses render as extruded building geometry with lit windows (`models/building.py`, `placement/building_builder.py`, `rendering/building_pass.py`) rather than point lights, with a single-row window fallback for one-story heights and a residential lit fraction of 0.4 for house/detached/residential kinds; `zone_builder.py` builds residential/commercial/dark zones from OSM land use + building footprints, `RoadSegment.fixture_profile` drives per-segment streetlight sampling
@@ -44,6 +46,7 @@ src/streets_at_night/
     schema.py              # Dataclasses: SceneConfig and all nested config sections
     defaults.py            # DEFAULTS dict — base config values
     loader.py              # load_config() — TOML → SceneConfig with deep merge
+    layers.py              # Place/look layering: `look = "..."` merges DEFAULTS ← look ← place; split_for_save routes saves back
     serde.py               # dataclass_from_dict / dataclass_to_dict reflection walkers
     camera_io.py           # save_camera_position — write camera pose back to a TOML config
     paths.py               # resolve_cache_dir and other path helpers
@@ -66,7 +69,7 @@ src/streets_at_night/
     zone_builder.py         # build_zones — OSM land use/buildings → residential/commercial/dark zones
   camera/
     camera.py               # Camera class — position/target/FOV, view+projection matrices
-    coordinates.py          # CoordinateTransformer — WGS84↔ENU via pyproj UTM 11N
+    coordinates.py          # CoordinateTransformer — WGS84↔ENU via pyproj, UTM zone from origin
     projection.py           # project_points (vectorized), frustum_cull_segments, near-plane clip
     controls.py             # handle_input — pygame WASD/mouse/scroll → camera mutations, HUD
   scene/
@@ -114,8 +117,17 @@ src/streets_at_night/
     widgets/
       file_picker.py           # FilePickerRow — text entry + browse dialog
       labeled_entry.py         # LabeledEntry — label + text entry row
+  gpu/                         # wgpu renderer — currently the `tune` scene; grows into the city renderer
+    orbit_camera.py            # OrbitCamera — orbit/pan/zoom around a ground pivot → camera.Camera
+    tuning_scene.py            # build_tuning_scene — road, shop, car, person, poles; lights via real factories
+    gpu_scene.py               # Pack geometry/pool lights/sprites/uniforms into float32 arrays for upload
+    renderer.py                # TuningRenderer — HDR scene pass, sprite pass (source-occlusion), composite
+    tuning_view.py             # TuningView — scene + renderer glue (window and headless renders)
+    field_editor.py            # imgui slider rows for a LightKind (reuses devmode field_meta/light_catalog)
+    tune_app.py                # run_tune — glfw window, imgui panel, input, Save
+    shaders/*.wgsl             # common, illumination (falloff ports), geometry, sprites, composite
   devmode/
-    synthetic_scene.py        # Builds the 10-row synthetic ENU test scene (incl. a Houses row of buildings)
+    synthetic_scene.py        # Builds the 12-row synthetic ENU test scene (incl. a Houses row of buildings and two parking-lot cluster rows)
     real_scene.py              # Loads a clipped strip of real OSM road data for devmode
     devmode_camera.py          # Builds an ENU-space Camera from DevmodeCameraConfig
     dynamic_panel.py           # build_dynamic_section — data-driven slider panel from field metadata
@@ -145,7 +157,7 @@ main.py:main()
        -> _load_scene(config, quality, cache_dir)
             |-- load_roads/land_use/buildings(bbox, cache_dir)  # osmnx download or .gpkg cache
             |-- classify_roads(roads_raw)          # highway tag → RoadType column
-            |-- create_transformer(origin_lat/lon) # pyproj UTM 11N transformer
+            |-- create_transformer(origin_lat/lon) # pyproj UTM transformer (zone from origin)
             |-- create_camera(pos, target, ...)    # Camera with view/proj matrices
             `-- build_scene(roads, transformer, camera, config, land_use, buildings)
                  |-- convert_road_geometry()       # WGS84 LineStrings → ENU (N,3) arrays
@@ -184,7 +196,7 @@ cmd_animate_record(args, config, heat_haze_cfg)
 - `RenderBackend` ABC has two implementations; preview uses `blit_pil_image`, export uses `draw_line`/`add_linear`/`resolve_linear`
 - Export passes share a single per-frame ground raycast G-buffer (`raycast.build_ground_gbuffer`) rather than recomputing it per pass
 - All light-emitting passes (illumination, lights, atmosphere) write into the backend's linear buffer via `add_linear` — never draw light directly into the sRGB substrate; only the compositor tone-maps and encodes
-- Coordinate conversion always flows WGS84 → UTM 11N → ENU offset; `CoordinateTransformer` encapsulates origin
+- Coordinate conversion always flows WGS84 → origin's UTM zone → ENU offset; `CoordinateTransformer` encapsulates origin and zone
 - Devmode config edits go through `config_bridge`/`slider_registry`, which map slider widgets to dataclass field paths on `SceneConfig` by tuple path (string = attribute, int = list index)
 
 ## Tech
@@ -212,6 +224,9 @@ cmd_animate_record(args, config, heat_haze_cfg)
 | Pillow      | >=10.0     | Flat map generation, warp output, export   |
 | torch       | >=2.1      | MPS/CPU-accelerated heat-haze frame warping (`grid_sample`) |
 | imageio[ffmpeg] | >=2.34 | MP4 encoding for `animate --record`        |
+| wgpu        | >=0.32     | GPU rendering (Metal) for `tune`           |
+| rendercanvas, glfw | >=2.7, >=2.11 | Window + event loop for `tune`  |
+| imgui-bundle | >=1.92.0,<1.92.900 | `tune` control panel. Capped: 1.92.900 dropped `ImDrawData.cmd_lists_count`, which wgpu 0.32's imgui backend uses |
 
 **Dev dependencies:**
 

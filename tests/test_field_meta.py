@@ -3,7 +3,7 @@
 
 import pytest
 
-from streets_at_night.devmode.field_meta import FieldMeta, get_field_meta
+from streets_at_night.devmode.field_meta import FieldMeta, get_field_meta, get_field_unit
 
 
 @pytest.mark.parametrize(
@@ -16,6 +16,8 @@ from streets_at_night.devmode.field_meta import FieldMeta, get_field_meta
         ("saturation", 1.0, 0.0, 2.0, False),
         ("beam_angle_deg", 90.0, 10.0, 170.0, False),
         ("illumination_inner_fraction", 0.5, 0.0, 1.0, False),
+        ("bulb_fraction", 0.5, 0.0, 1.0, False),
+        ("parking_reflector_falloff", 2.0, 0.1, 8.0, False),
         ("illumination_falloff", 2.0, 0.1, 8.0, False),
         ("illumination_intensity", 0.5, 0.0, 1.0, False),
         ("illumination_radius", 30.0, 0.0, 60.0, False),
@@ -25,6 +27,7 @@ from streets_at_night.devmode.field_meta import FieldMeta, get_field_meta
         ("spacing_min", 50.0, 1.0, 300.0, False),
         ("separation_max", 5.0, 0.5, 10.0, False),
         ("density_highway_min", 0.1, 0.0, 0.2, False),
+        ("headlight_beam_length", 25.0, 0.0, 80.0, False),
     ],
 )
 def test_get_field_meta_matches_rules(field_name, sample_value, expected_min, expected_max, expected_int):
@@ -35,6 +38,33 @@ def test_get_field_meta_matches_rules(field_name, sample_value, expected_min, ex
     assert meta.min_val == expected_min
     assert meta.max_val == expected_max
     assert meta.is_int == expected_int
+
+
+@pytest.mark.parametrize(
+    "field_name, expected_unit",
+    [
+        ("glow_radius", "m"),
+        ("taillight_illumination_radius", "m"),
+        ("headlight_beam_length", "m"),
+        ("headlight_beam_angle_deg", "deg"),
+        ("height_min", "m"),
+        ("spacing_max", "m"),
+        ("falloff_distance", "m"),
+        ("separation_min", "m"),
+        ("density_highway_min", "m/car"),
+        ("beam_angle_deg", "deg"),
+        ("fov", "deg"),
+        ("color_temp_k", "K"),
+        ("color_temp_shift_k", "K"),
+        ("exposure", "stops"),
+        ("pos_x", "m"),
+        ("brightness_min", ""),
+        ("illumination_intensity", ""),
+        ("side", ""),
+    ],
+)
+def test_get_field_unit_matches_rules(field_name, expected_unit):
+    assert get_field_unit(field_name) == expected_unit
 
 
 def test_get_field_meta_knee_range():

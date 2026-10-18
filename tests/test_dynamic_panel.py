@@ -34,7 +34,7 @@ def config() -> SceneConfig:
 
 
 def test_build_dynamic_section_fixture_profile_sliders_and_text(headless_manager, scroll, config):
-    # Arrange — a FixtureProfileConfig has 11 float fields, one str (side).
+    # Arrange — a FixtureProfileConfig has 13 float fields, one str (side).
     profile = config.lights.streetlights.highway[0].profile
     kind = LightKind("Streetlight: Highway (pool 0)", profile, None)
     registry = SliderRegistry()
@@ -43,7 +43,7 @@ def test_build_dynamic_section_fixture_profile_sliders_and_text(headless_manager
     height = build_dynamic_section(headless_manager, scroll.scrollable_container, 0, registry, kind)
 
     # Assert
-    assert len(registry.sliders) == 11
+    assert len(registry.sliders) == 13
     assert len(registry.text_entries) == 1
     assert len(registry.bool_buttons) == 0
     assert height > 0
@@ -74,8 +74,9 @@ def test_build_dynamic_section_prefix_filters_and_strips(headless_manager, scrol
     labels = {d.label for d in registry.sliders.values()}
     paths = {d.config_path[0] for d in registry.sliders.values()}
 
-    # Assert — 7 numeric headlight fields, no taillight/density/separation.
-    assert len(registry.sliders) == 7
+    # Assert — 8 numeric headlight fields (incl. beam_length/beam_angle_deg),
+    # no taillight/density/separation.
+    assert len(registry.sliders) == 8
     assert all(p.startswith("headlight_") for p in paths)
     # Descriptor labels are unique per section (kind.label:field_name).
     assert "Cars: Headlights:headlight_brightness_min" in labels
@@ -114,6 +115,24 @@ def test_build_dynamic_section_color_pool_entries_prefilled(headless_manager, sc
     first_hex, first_weight = binding.rows[0]
     assert first_hex.get_text() == pool.colors[0][0]
     assert first_weight.get_text() == f"{pool.colors[0][1]:.3f}"
+
+
+def test_build_dynamic_section_labels_include_units(headless_manager, scroll, config):
+    # Arrange
+    profile = config.lights.streetlights.highway[0].profile
+    kind = LightKind("Streetlight: Highway (pool 0)", profile, None)
+    registry = SliderRegistry()
+
+    # Act
+    build_dynamic_section(headless_manager, scroll.scrollable_container, 0, registry, kind)
+    texts = {w.text for w in registry.extra_widgets if isinstance(w, pygame_gui.elements.UILabel)}
+
+    # Assert — metered fields get (m), unit-named fields collapse, unitless stay bare.
+    assert "Height Min (m)" in texts
+    assert "Glow Radius (m)" in texts
+    assert "Beam Angle (deg)" in texts
+    assert "Color Temp (K)" in texts
+    assert "Illumination Intensity" in texts
 
 
 def test_build_dynamic_section_global_kind_only_shift_field(headless_manager, scroll, config):

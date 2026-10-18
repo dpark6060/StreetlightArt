@@ -85,17 +85,17 @@ def test_build_render_passes_runs_buildings_between_roads_and_illumination():
     assert order.index("roads") < order.index("buildings") < order.index("illum")
 
 
-def test_build_render_passes_appends_label_pass_when_requested():
+def test_build_render_passes_appends_overlay_passes_when_requested():
     # Arrange
     scene = mock.MagicMock()
 
     # Act
     without = build_render_passes(scene, gbuffer=None, use_labels=False)
-    with_labels = build_render_passes(scene, gbuffer=None, use_labels=True)
+    with_overlays = build_render_passes(scene, gbuffer=None, use_labels=True)
 
-    # Assert — labels add exactly one trailing pass after composite.
-    assert len(with_labels) == len(without) + 1
-    assert with_labels[-2] is render_composite
+    # Assert — overlays add exactly two trailing passes after composite.
+    assert len(with_overlays) == len(without) + 2
+    assert with_overlays[-3] is render_composite
 
 
 def test_ensure_devmode_config_populates_when_none(config):

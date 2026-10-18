@@ -35,6 +35,10 @@ class LightSource:
         illumination: The ground-pool model — ``BeamIllumination`` for
             pole lights, ``ConeIllumination`` for authored cone pools, or
             ``None`` for lights that cast no ground pool (taillights, etc.).
+        emits_core: When False, the light contributes ground illumination
+            only — the light passes draw no core dot or glow halo for it.
+            Used by illumination-carrier lights such as the per-car
+            headlight cone.
     """
 
     position: np.ndarray
@@ -44,3 +48,4 @@ class LightSource:
     glow_radius: float
     illumination_intensity: float
     illumination: IlluminationModel = None
+    emits_core: bool = True

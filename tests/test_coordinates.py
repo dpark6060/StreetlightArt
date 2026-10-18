@@ -60,6 +60,36 @@ def test_create_transformer_returns_coordinate_transformer():
     assert isinstance(result, CoordinateTransformer)
 
 
+@pytest.mark.parametrize(
+    "lat, lon, expected_epsg",
+    [
+        (34.17, -117.30, "EPSG:32611"),   # San Bernardino -> zone 11N
+        (43.16, -77.60, "EPSG:32618"),    # Rochester, NY -> zone 18N
+        (-33.87, 151.21, "EPSG:32756"),   # Sydney -> zone 56S
+    ],
+)
+def test_create_transformer_selects_utm_zone_from_origin(lat, lon, expected_epsg):
+    # Act
+    transformer = create_transformer(lat, lon)
+
+    # Assert
+    assert transformer.utm_epsg == expected_epsg
+
+
+def test_wgs84_to_enu_north_displacement_far_from_zone_11(transformer):
+    # Arrange — Rochester, NY is in UTM zone 18; a hardcoded zone-11 projection
+    # would rotate a due-north displacement ~30 degrees into east.
+    rochester = create_transformer(43.16, -77.60)
+
+    # Act
+    east, north, _ = wgs84_to_enu(rochester, 43.25, -77.60)
+
+    # Assert — dominantly north; only small in-zone grid convergence
+    # (~1.8 deg at this longitude) may leak into east, never a 30-deg rotation.
+    assert north > 0.0
+    assert abs(east) < 0.05 * north
+
+
 # ---------------------------------------------------------------------------
 # wgs84_to_enu — single-point
 # ---------------------------------------------------------------------------

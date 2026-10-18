@@ -1,8 +1,10 @@
 """WGS84 (lat/lon/alt) to local East-North-Up (ENU) meter coordinate conversion.
 
-Uses UTM Zone 11N (EPSG:32611) as an intermediate CRS — the correct UTM zone
-for the San Bernardino, CA area. All output coordinates are offsets in meters
-from a configurable local origin.
+Uses the UTM zone containing the local origin as an intermediate CRS (e.g.
+zone 11N for San Bernardino, zone 18N for Rochester, NY). Projecting through
+a fixed far-away zone rotates and stretches the whole scene, so the zone is
+always derived from the origin longitude/latitude. All output coordinates are
+offsets in meters from a configurable local origin.
 
 ENU convention:
     X = East  (meters)
@@ -19,7 +21,6 @@ from pyproj import Transformer
 
 _FEET_TO_METERS: float = 0.3048
 _WGS84_EPSG: str = "EPSG:4326"
-_UTM_ZONE_11N_EPSG: str = "EPSG:32611"
 
 
 class CoordinateTransformer:
@@ -44,6 +45,7 @@ class CoordinateTransformer:
         origin_northing: float,
         to_utm: Transformer,
         from_utm: Transformer,
+        utm_epsg: str,
     ) -> None:
         """Initialise a CoordinateTransformer.
 
@@ -52,11 +54,13 @@ class CoordinateTransformer:
             origin_lon (float): Longitude of the local origin in WGS84 degrees.
             origin_easting (float): UTM easting of the origin in meters.
             origin_northing (float): UTM northing of the origin in meters.
-            to_utm (Transformer): pyproj Transformer from WGS84 to UTM Zone 11N.
-            from_utm (Transformer): pyproj Transformer from UTM Zone 11N to WGS84.
+            to_utm (Transformer): pyproj Transformer from WGS84 to the origin's UTM zone.
+            from_utm (Transformer): pyproj Transformer from the origin's UTM zone to WGS84.
+            utm_epsg (str): EPSG code of the intermediate UTM zone (e.g. "EPSG:32611").
         """
         self.origin_lat = origin_lat
         self.origin_lon = origin_lon
+        self.utm_epsg = utm_epsg
         self._origin_easting = origin_easting
         self._origin_northing = origin_northing
         self._to_utm = to_utm
@@ -130,8 +134,26 @@ class CoordinateTransformer:
         return float(lat), float(lon), float(up_m)
 
 
+def get_utm_epsg(lat: float, lon: float) -> str:
+    """Return the EPSG code of the UTM zone containing a WGS84 point.
+
+    Args:
+        lat (float): Latitude in WGS84 degrees (selects the N/S EPSG band).
+        lon (float): Longitude in WGS84 degrees (selects the zone number).
+
+    Returns:
+        str: EPSG code string, e.g. "EPSG:32611" (north) or "EPSG:32756" (south).
+    """
+    zone = min(60, max(1, int((lon + 180.0) // 6.0) + 1))
+    band = 32600 if lat >= 0.0 else 32700
+    return f"EPSG:{band + zone}"
+
+
 def create_transformer(origin_lat: float, origin_lon: float) -> CoordinateTransformer:
     """Create a coordinate transformer centered on the given lat/lon origin.
+
+    The intermediate UTM zone is derived from the origin so scenes anywhere on
+    the globe project without the rotation/stretch of an out-of-zone CRS.
 
     Args:
         origin_lat (float): Latitude of the local origin in WGS84 degrees.
@@ -140,8 +162,9 @@ def create_transformer(origin_lat: float, origin_lon: float) -> CoordinateTransf
     Returns:
         CoordinateTransformer: Configured transformer ready for conversion.
     """
-    to_utm = Transformer.from_crs(_WGS84_EPSG, _UTM_ZONE_11N_EPSG, always_xy=True)
-    from_utm = Transformer.from_crs(_UTM_ZONE_11N_EPSG, _WGS84_EPSG, always_xy=True)
+    utm_epsg = get_utm_epsg(origin_lat, origin_lon)
+    to_utm = Transformer.from_crs(_WGS84_EPSG, utm_epsg, always_xy=True)
+    from_utm = Transformer.from_crs(utm_epsg, _WGS84_EPSG, always_xy=True)
     origin_easting, origin_northing = to_utm.transform(origin_lon, origin_lat)
     return CoordinateTransformer(
         origin_lat=origin_lat,
@@ -150,6 +173,7 @@ def create_transformer(origin_lat: float, origin_lon: float) -> CoordinateTransf
         origin_northing=origin_northing,
         to_utm=to_utm,
         from_utm=from_utm,
+        utm_epsg=utm_epsg,
     )
 
 

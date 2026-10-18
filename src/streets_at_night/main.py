@@ -252,6 +252,11 @@ def main() -> None:
         help="Directory for OSM data cache files",
     )
 
+    subparsers.add_parser(
+        "tune",
+        help="Open the GPU 3D light-tuning scene (road, building, car, person, poles)",
+    )
+
     args = parser.parse_args()
     config = load_config(args.config)
 
@@ -289,6 +294,9 @@ def main() -> None:
             resolve_cache_dir(args.cache_dir, config),
             initial_tab="Devmode",
         )
+    elif args.command == "tune":
+        from .gpu.tune_app import run_tune
+        run_tune(config, args.config if args.config.exists() else None)
 
 
 def cmd_verify(config: SceneConfig, output_path: Path, cache_dir: Path) -> None:
@@ -339,7 +347,7 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
     """
     import pygame
     from .rendering.pygame_backend import PygameBackend
-    from .rendering.flat_map import get_flat_map
+    from .rendering.flat_map import get_flat_map, save_flat_map_to_output
     from .rendering.raycast import build_ground_gbuffer
     from .camera.controls import handle_input, render_hud, MouseDragState
 
@@ -351,7 +359,8 @@ def cmd_preview(args: argparse.Namespace, config: SceneConfig) -> None:
     print("Generating flat map for preview...")
     flat_map, flat_meta = get_flat_map(scene, cache_dir)
     flat_map_array = np.asarray(flat_map)
-    print(f"Flat map ready: {flat_map.size[0]}x{flat_map.size[1]}px")
+    saved_path = save_flat_map_to_output(flat_map, config.region_name, Path("output"))
+    print(f"Flat map ready: {flat_map.size[0]}x{flat_map.size[1]}px (saved to {saved_path})")
 
     pygame.init()
     preview_width, preview_height = 1280, 720

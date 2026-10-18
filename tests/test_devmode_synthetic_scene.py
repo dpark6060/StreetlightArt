@@ -171,19 +171,19 @@ def test_synthetic_building_footprints_are_ccw(
 def test_synthetic_scene_buildings_row_adds_no_road_segment(
     config_with_buildings: SceneConfig,
 ) -> None:
-    """The Houses row does not add a tenth road segment (still 9)."""
+    """The Houses row adds no segment of its own (rows 0-8 plus two parking pads)."""
 
     result = build_synthetic_scene(config_with_buildings)
 
-    assert len(result.road_segments) == 9
+    assert len(result.road_segments) == 11
 
 
 def test_synthetic_scene_has_correct_road_segments(scene_config: SceneConfig) -> None:
-    """build_synthetic_scene creates exactly 9 road segments (rows 0-8)."""
+    """build_synthetic_scene creates 11 road segments (rows 0-8 plus two parking pads)."""
 
     result = build_synthetic_scene(scene_config)
 
-    assert len(result.road_segments) == 9
+    assert len(result.road_segments) == 11
 
 
 def test_road_segments_cover_all_five_road_types(scene_config: SceneConfig) -> None:
@@ -486,5 +486,43 @@ def test_row_labels_uniform_200m_pitch() -> None:
     # Act
     offsets = [y for _, y in ROW_LABELS]
 
-    # Assert — 10 rows from 900 down to -900 at a uniform 200m pitch
-    assert offsets == [900.0, 700.0, 500.0, 300.0, 100.0, -100.0, -300.0, -500.0, -700.0, -900.0]
+    # Assert — 12 rows from 900 down to -1300 at a uniform 200m pitch
+    assert offsets == [
+        900.0, 700.0, 500.0, 300.0, 100.0, -100.0,
+        -300.0, -500.0, -700.0, -900.0, -1100.0, -1300.0,
+    ]
+
+
+def test_build_synthetic_scene_places_lights_in_both_parking_cluster_rows(
+    scene_config: SceneConfig,
+) -> None:
+    """Both parking cluster rows receive at least one light."""
+    scene = build_synthetic_scene(scene_config)
+
+    med = [l for l in scene.lights if -1160.0 <= l.position[1] <= -1040.0]
+    high = [l for l in scene.lights if -1360.0 <= l.position[1] <= -1240.0]
+    assert len(med) > 0
+    assert len(high) > 0
+
+
+def test_build_synthetic_scene_high_density_cluster_has_more_lights_than_medium(
+    scene_config: SceneConfig,
+) -> None:
+    """The high-density cluster packs more poles into the same lot size."""
+    scene = build_synthetic_scene(scene_config)
+
+    med = [l for l in scene.lights if -1160.0 <= l.position[1] <= -1040.0]
+    high = [l for l in scene.lights if -1360.0 <= l.position[1] <= -1240.0]
+    assert len(high) > len(med)
+
+
+def test_parking_cluster_segments_are_unlit_residential_pads(
+    scene_config: SceneConfig,
+) -> None:
+    """Segments 9-10 are wide RESIDENTIAL pads with no fixture profile."""
+    scene = build_synthetic_scene(scene_config)
+
+    for i in (9, 10):
+        assert scene.road_segments[i].road_type == RoadType.RESIDENTIAL
+        assert scene.road_segments[i].fixture_profile is None
+        assert scene.road_segments[i].width == 120.0

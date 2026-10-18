@@ -7,7 +7,11 @@ import numpy as np
 import pytest
 
 from streets_at_night.camera.camera import Camera
-from streets_at_night.models.illumination import BeamIllumination, ConeIllumination
+from streets_at_night.models.illumination import (
+    BeamIllumination,
+    ConeIllumination,
+    DirectionalConeIllumination,
+)
 from streets_at_night.models.light_source import LightSource
 from streets_at_night.config.schema import IlluminationConfig
 from streets_at_night.rendering.illumination_pass import (
@@ -15,9 +19,11 @@ from streets_at_night.rendering.illumination_pass import (
     _auto_scale_illumination_resolution,
     _build_illumination_map,
     _compute_visible_bounds,
-    _effective_pool_radius,
+    _directional_cone_falloff,
+    effective_pool_radius,
     _is_light_visible,
     _paint_illumination_blob,
+    _physical_falloff,
     render_illumination,
 )
 from streets_at_night.rendering.raycast import GroundHit
@@ -246,6 +252,94 @@ def test_paint_illumination_blob_physical_zero_beyond_beam_radius():
     assert illum_map[100, 130, 0] == 0.0
 
 
+def test_paint_illumination_blob_physical_peak_scales_inverse_square_with_height():
+    # Arrange — same fixture on a 6 m and a 12 m pole
+    short_map = _make_blank_map()
+    tall_map = _make_blank_map()
+    short = _make_light(position=np.array([100.0, 100.0, 6.0]), beam_angle_deg=120.0)
+    tall = _make_light(position=np.array([100.0, 100.0, 12.0]), beam_angle_deg=120.0)
+    camera_pos = np.array([100.0, 100.0, 5000.0])
+
+    # Act
+    _paint_illumination_blob(short_map, short, 0.0, 200.0, 1.0, 60, camera_pos, 1e10)
+    _paint_illumination_blob(tall_map, tall, 0.0, 200.0, 1.0, 60, camera_pos, 1e10)
+
+    # Assert — half the height, four times the illuminance under the lamp
+    assert short_map[100, 100, 0] == pytest.approx(4.0 * tall_map[100, 100, 0], rel=1e-4)
+
+
+def test_physical_falloff_defaults_match_single_cutoff_pool():
+    # Arrange — h=10, r=17.3: defaults mean bulb fills the pool, no reflector
+    dist = np.array([0.0, 5.0, 10.0, 15.0, 17.3])
+    inverse_square = 1.0 / (1.0 + (dist / 10.0) ** 2) ** 1.5
+
+    # Act
+    result = _physical_falloff(dist, 10.0, 17.3)
+
+    # Assert — untouched inverse-square inside the outer 15% soft edge
+    np.testing.assert_allclose(result[:3], inverse_square[:3])
+    assert result[-1] == 0.0
+
+
+def test_physical_falloff_bulb_zone_is_plain_inverse_square():
+    # Arrange — bulb cutoff at 10 m; the reflector exponent must not reach inside it
+    dist = np.array([0.0, 4.0, 8.0, 10.0])
+    inverse_square = 1.0 / (1.0 + (dist / 10.0) ** 2) ** 1.5
+
+    # Act
+    result = _physical_falloff(dist, 10.0, 20.0, bulb_fraction=0.5, reflector_falloff=4.0)
+
+    # Assert
+    np.testing.assert_allclose(result, inverse_square)
+
+
+def test_physical_falloff_no_step_at_bulb_cutoff():
+    # Arrange — samples straddling the 10 m bulb cutoff
+    dist = np.array([9.99, 10.01])
+
+    # Act
+    result = _physical_falloff(dist, 10.0, 20.0, bulb_fraction=0.5, reflector_falloff=4.0)
+
+    # Assert — the reflector band starts at the bulb-zone brightness
+    assert result[1] == pytest.approx(result[0], rel=1e-2)
+
+
+def test_physical_falloff_reflector_fades_to_zero_at_housing_cutoff():
+    # Arrange
+    dist = np.array([11.0, 15.0, 19.0, 20.0])
+
+    # Act
+    result = _physical_falloff(dist, 10.0, 20.0, bulb_fraction=0.5, reflector_falloff=2.0)
+
+    # Assert — monotonic fade through the reflector band, dark at the cutoff
+    assert np.all(np.diff(result) < 0.0)
+    assert result[-1] == 0.0
+
+
+def test_physical_falloff_higher_reflector_falloff_dies_faster():
+    # Arrange — mid reflector band
+    dist = np.array([15.0])
+
+    # Act
+    gentle = _physical_falloff(dist, 10.0, 20.0, bulb_fraction=0.5, reflector_falloff=1.0)
+    steep = _physical_falloff(dist, 10.0, 20.0, bulb_fraction=0.5, reflector_falloff=4.0)
+
+    # Assert
+    assert steep[0] < gentle[0]
+
+
+def test_physical_falloff_bulb_fraction_clamped_to_housing():
+    # Arrange
+    dist = np.linspace(0.0, 20.0, 41)
+
+    # Act
+    over = _physical_falloff(dist, 10.0, 20.0, bulb_fraction=1.5)
+    full = _physical_falloff(dist, 10.0, 20.0, bulb_fraction=1.0)
+
+    # Assert — a bulb can't be seen past the housing
+    np.testing.assert_allclose(over, full)
+
+
 def test_paint_illumination_blob_legacy_cone_used_when_no_beam_angle():
     # Arrange — no beam angle → authored illumination_radius drives the cone
     illum_map = _make_blank_map()
@@ -324,7 +418,7 @@ def test_build_illumination_map_culls_light_outside_bounds():
 
 
 # ---------------------------------------------------------------------------
-# _effective_pool_radius
+# effective_pool_radius
 # ---------------------------------------------------------------------------
 
 
@@ -333,7 +427,7 @@ def test_effective_pool_radius_physical_light_uses_beam_geometry():
     light = _make_light(position=np.array([0.0, 0.0, 10.0]), beam_angle_deg=120.0)
 
     # Act
-    radius = _effective_pool_radius(light)
+    radius = effective_pool_radius(light)
 
     # Assert
     assert radius == pytest.approx(17.32, abs=0.01)
@@ -344,7 +438,7 @@ def test_effective_pool_radius_legacy_light_uses_authored_radius():
     light = _make_light(position=np.array([0.0, 0.0, 0.0]), illumination_radius=42.0)
 
     # Act
-    radius = _effective_pool_radius(light)
+    radius = effective_pool_radius(light)
 
     # Assert
     assert radius == 42.0
@@ -356,7 +450,128 @@ def test_effective_pool_radius_beam_light_at_ground_level_raises():
 
     # Act & Assert — fail loud rather than silently produce a wrong pool
     with pytest.raises(ValueError, match="positive pole height"):
-        _effective_pool_radius(light)
+        effective_pool_radius(light)
+
+
+def test_effective_pool_radius_directional_cone_uses_length():
+    # Arrange — a directional cone circumscribes into a circle of radius=length
+    light = LightSource(
+        position=np.array([0.0, 0.0, 0.0]),
+        color=(255, 255, 255),
+        brightness=1.0,
+        size=0.5,
+        glow_radius=10.0,
+        illumination_intensity=1.0,
+        illumination=DirectionalConeIllumination(
+            direction=(1.0, 0.0), length=33.0, beam_angle_deg=40.0,
+            falloff=1.5, inner_fraction=0.3,
+        ),
+    )
+
+    # Act
+    radius = effective_pool_radius(light)
+
+    # Assert
+    assert radius == 33.0
+
+
+# ---------------------------------------------------------------------------
+# _directional_cone_falloff
+# ---------------------------------------------------------------------------
+
+
+def _make_directional_model(
+    direction=(1.0, 0.0),
+    length: float = 25.0,
+    beam_angle_deg: float = 40.0,
+    falloff: float = 1.5,
+    inner_fraction: float = 0.3,
+) -> DirectionalConeIllumination:
+    """Return a DirectionalConeIllumination with overridable shape params."""
+    return DirectionalConeIllumination(
+        direction=direction, length=length, beam_angle_deg=beam_angle_deg,
+        falloff=falloff, inner_fraction=inner_fraction,
+    )
+
+
+def test_directional_cone_falloff_zero_behind_apex():
+    # Arrange — cone points east; sample points all behind the apex (dx < 0)
+    model = _make_directional_model(direction=(1.0, 0.0))
+    dx_m = np.array([-1.0, -5.0, -20.0], dtype=np.float32)
+    dy_m = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+
+    # Act
+    result = _directional_cone_falloff(dx_m, dy_m, model)
+
+    # Assert — nothing lights up behind the car
+    assert np.all(result == 0.0)
+
+
+def test_directional_cone_falloff_full_on_axis_inside_inner_fraction():
+    # Arrange — on-axis point well inside the flat inner zone
+    model = _make_directional_model(direction=(1.0, 0.0), length=25.0, inner_fraction=0.3)
+    along = 0.5 * model.inner_fraction * model.length
+    dx_m = np.array([along], dtype=np.float32)
+    dy_m = np.array([0.0], dtype=np.float32)
+
+    # Act
+    result = _directional_cone_falloff(dx_m, dy_m, model)
+
+    # Assert — inner zone on the axis is at full brightness
+    assert result[0] == pytest.approx(1.0, abs=1e-5)
+
+
+def test_directional_cone_falloff_zero_beyond_length():
+    # Arrange — on-axis point past the cone reach
+    model = _make_directional_model(direction=(1.0, 0.0), length=25.0)
+    dx_m = np.array([30.0], dtype=np.float32)
+    dy_m = np.array([0.0], dtype=np.float32)
+
+    # Act
+    result = _directional_cone_falloff(dx_m, dy_m, model)
+
+    # Assert
+    assert result[0] == 0.0
+
+
+def test_directional_cone_falloff_zero_outside_half_angle():
+    # Arrange — beam_angle 40° → half-angle 20°; sample at ~63° off-axis
+    model = _make_directional_model(direction=(1.0, 0.0), beam_angle_deg=40.0)
+    dx_m = np.array([10.0], dtype=np.float32)
+    dy_m = np.array([20.0], dtype=np.float32)
+
+    # Act
+    result = _directional_cone_falloff(dx_m, dy_m, model)
+
+    # Assert — outside the angular wedge, falloff is zero
+    assert result[0] == 0.0
+
+
+def test_paint_illumination_blob_directional_cone_respects_y_flip():
+    # Arrange — cone points NORTH (+y). Map row 0 = max_y, so north of the
+    # apex must land in rows ABOVE the center row. Getting the dy sign wrong
+    # would mirror the cone south and this test would catch it.
+    illum_map = _make_blank_map(size=200)
+    light = LightSource(
+        position=np.array([100.0, 100.0, 0.0]),
+        color=(255, 255, 255),
+        brightness=1.0,
+        size=0.5,
+        glow_radius=10.0,
+        illumination_intensity=1.0,
+        illumination=DirectionalConeIllumination(
+            direction=(0.0, 1.0), length=25.0, beam_angle_deg=60.0,
+            falloff=1.5, inner_fraction=0.3,
+        ),
+    )
+    camera_pos = np.array([100.0, 100.0, 5000.0])
+
+    # Act — min_x=0, max_y=200, resolution=1 → apex at map row 100, col 100
+    _paint_illumination_blob(illum_map, light, 0.0, 200.0, 1.0, 60, camera_pos, 1e10)
+
+    # Assert — energy lies north (rows above center), nothing south of it
+    assert illum_map[:100].sum() > 0.0
+    assert illum_map[101:].sum() == 0.0
 
 
 def test_build_illumination_map_none_illumination_paints_nothing():
@@ -552,6 +767,30 @@ def test_render_illumination_returns_empty_when_no_lights():
 # ---------------------------------------------------------------------------
 # render_illumination — empty ground mask (all-sky frame)
 # ---------------------------------------------------------------------------
+
+
+def test_render_illumination_skips_lights_without_pool_when_sizing_padding():
+    # Arrange — a headlight point light carries no ground pool
+    scene = mock.MagicMock()
+    scene.lights = [
+        _make_light(position=np.array([0.0, 0.0, 1.0]), illumination=None),
+        _make_light(position=np.array([0.0, 0.0, 5.0])),
+    ]
+    scene.config.atmosphere = _make_atmosphere()
+
+    camera = _make_camera(position=np.array([0.0, 0.0, 500.0]))
+    backend = mock.MagicMock()
+    backend.get_surface_size.return_value = (4, 4)
+
+    gbuffer = _make_gbuffer(
+        hit_x=np.zeros((4, 4)), hit_y=np.zeros((4, 4)), ground_mask=np.zeros((4, 4), dtype=bool),
+    )
+
+    # Act
+    result = render_illumination(scene, camera, backend, gbuffer=gbuffer)
+
+    # Assert — no AttributeError from the pool-less light
+    assert result == {}
 
 
 def test_render_illumination_returns_empty_when_gbuffer_has_no_ground_hits():

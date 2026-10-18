@@ -6,7 +6,7 @@ import typing as t
 import numpy as np
 
 from .color_pool import ColorPool
-from .illumination import ConeIllumination
+from .illumination import BeamIllumination, ConeIllumination
 from .light_source import LightSource
 from ..config.schema import CommercialLightConfig
 
@@ -86,10 +86,10 @@ def create_parking_lot_light(
         size=0.3,
         glow_radius=config.parking_glow_radius,
         illumination_intensity=config.parking_illumination_intensity,
-        illumination=ConeIllumination(
-            config.parking_illumination_radius,
-            config.parking_illumination_falloff,
-            config.parking_illumination_inner_fraction,
+        illumination=BeamIllumination(
+            config.parking_beam_angle_deg,
+            config.parking_bulb_fraction,
+            config.parking_reflector_falloff,
         ),
     )
 

@@ -166,6 +166,20 @@ def test_car_density_values_valid(loaded_config: SceneConfig):
 
 
 # ---------------------------------------------------------------------------
+# CarConfig — headlight beam cone fields
+# ---------------------------------------------------------------------------
+
+
+def test_car_beam_fields_valid(loaded_config: SceneConfig):
+    # Arrange
+    cars = loaded_config.lights.cars
+
+    # Assert — cone reach is positive and the full angle is a sane cone
+    assert cars.headlight_beam_length > 0
+    assert 0 < cars.headlight_beam_angle_deg < 180
+
+
+# ---------------------------------------------------------------------------
 # CommercialLightConfig — sign color pool
 # ---------------------------------------------------------------------------
 

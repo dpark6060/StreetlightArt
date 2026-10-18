@@ -236,6 +236,113 @@ def test_render_lights_export_adds_linear_even_with_no_visible_lights(
 
 
 # ---------------------------------------------------------------------------
+# emits_core=False — illumination-only carrier lights draw no core/glow
+# ---------------------------------------------------------------------------
+
+
+@mock.patch("streets_at_night.rendering.light_pass.project_points")
+def test_render_lights_export_skips_emits_core_false_light(
+    mock_project, mock_backend, mock_camera
+):
+    # Arrange — one bright core-less carrier in view, one normal control light
+    carrier = LightSource(
+        position=np.array([0.0, 100.0, 0.0]),
+        color=(255, 255, 255),
+        brightness=5.0,
+        size=0.5,
+        glow_radius=10.0,
+        illumination_intensity=0.6,
+        illumination=None,
+        emits_core=False,
+    )
+    control = LightSource(
+        position=np.array([0.0, 100.0, 5.0]),
+        color=(255, 255, 255),
+        brightness=1.0,
+        size=0.5,
+        glow_radius=10.0,
+        illumination_intensity=0.0,
+        illumination=None,
+    )
+    screen_coords = np.array([[320.0, 180.0], [320.0, 180.0]])
+    valid_mask = np.array([True, True])
+    mock_project.return_value = (screen_coords, valid_mask)
+    scene = _make_scene_with_lights([carrier, control])
+
+    # Act
+    result = render_lights_export(scene, mock_camera, mock_backend)
+
+    # Assert — only the control light is counted
+    assert result["lights_drawn"] == 1
+
+
+@mock.patch("streets_at_night.rendering.light_pass.project_points")
+def test_render_lights_export_emits_core_false_only_leaves_buffer_dark(
+    mock_project, mock_backend, mock_camera
+):
+    # Arrange — a single bright carrier that must not paint anything
+    carrier = LightSource(
+        position=np.array([0.0, 100.0, 0.0]),
+        color=(255, 255, 255),
+        brightness=5.0,
+        size=0.5,
+        glow_radius=10.0,
+        illumination_intensity=0.6,
+        illumination=None,
+        emits_core=False,
+    )
+    screen_coords = np.array([[320.0, 180.0]])
+    valid_mask = np.array([True])
+    mock_project.return_value = (screen_coords, valid_mask)
+    scene = _make_scene_with_lights([carrier])
+
+    # Act
+    result = render_lights_export(scene, mock_camera, mock_backend)
+
+    # Assert — nothing counted and the accumulation buffer stays all-zero
+    assert result["lights_drawn"] == 0
+    buffer = mock_backend.add_linear.call_args.args[0]
+    assert np.all(buffer == 0.0)
+
+
+@mock.patch("streets_at_night.rendering.light_pass.project_points")
+def test_render_lights_preview_skips_emits_core_false_light(
+    mock_project, mock_backend, mock_camera
+):
+    # Arrange — one core-less carrier, one normal control light
+    carrier = LightSource(
+        position=np.array([0.0, 100.0, 0.0]),
+        color=(255, 255, 255),
+        brightness=1.0,
+        size=0.5,
+        glow_radius=10.0,
+        illumination_intensity=0.6,
+        illumination=None,
+        emits_core=False,
+    )
+    control = LightSource(
+        position=np.array([0.0, 100.0, 5.0]),
+        color=(255, 255, 255),
+        brightness=1.0,
+        size=0.5,
+        glow_radius=10.0,
+        illumination_intensity=0.0,
+        illumination=None,
+    )
+    screen_coords = np.array([[320.0, 180.0], [320.0, 180.0]])
+    valid_mask = np.array([True, True])
+    mock_project.return_value = (screen_coords, valid_mask)
+    scene = _make_scene_with_lights([carrier, control])
+
+    # Act
+    result = render_lights_preview(scene, mock_camera, mock_backend)
+
+    # Assert — the carrier is not drawn or counted; only the control is
+    mock_backend.draw_circle.assert_called_once()
+    assert result["lights_drawn"] == 1
+
+
+# ---------------------------------------------------------------------------
 # _preview_radius
 # ---------------------------------------------------------------------------
 

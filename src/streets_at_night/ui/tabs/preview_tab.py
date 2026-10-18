@@ -28,7 +28,7 @@ from ...config.camera_io import (
     write_camera_to_toml,
 )
 from ...devmode.config_writer import write_config
-from ...rendering.flat_map import get_flat_map
+from ...rendering.flat_map import get_flat_map, save_flat_map_to_output
 from ...rendering.pillow_backend import PillowBackend
 from ...rendering.raycast import build_ground_gbuffer
 from ...rendering.warp_preview import render_warp_preview
@@ -677,4 +677,6 @@ def _load_preview_data(
         scene = load_scene(config, "low", cache_dir, progress=lambda msg: progress(msg, -1.0))
     progress("Generating flat map...", -1.0)
     flat_map, flat_meta = get_flat_map(scene, cache_dir)
+    saved_path = save_flat_map_to_output(flat_map, config.region_name, Path("output"))
+    progress(f"Flat map saved to {saved_path}", -1.0)
     return scene, flat_map, flat_meta

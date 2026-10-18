@@ -1,4 +1,11 @@
-"""CarLightPair — a paired headlight/taillight set for a single car."""
+"""CarLightPair — a car's two point lights plus one directional headlight cone.
+
+Each car is two point lights (offset perpendicular to travel, resolved to
+headlight or taillight color at render time) plus a third illumination-only
+``LightSource`` carrying a ``DirectionalConeIllumination`` cast forward along
+the travel bearing. The cone is a world-space fact, so it is camera-independent
+and keeps its headlight color/brightness even when the car shows taillights.
+"""
 
 import math
 import random
@@ -7,7 +14,7 @@ import typing as t
 import numpy as np
 
 from .color_pool import ColorPool
-from .illumination import ConeIllumination
+from .illumination import ConeIllumination, DirectionalConeIllumination
 from .light_source import LightSource
 from ..config.schema import CarConfig
 
@@ -20,14 +27,16 @@ _LIGHT_SIZE: float = 0.15
 
 
 class CarLightPair:
-    """A paired set of car lights — always two, never one.
+    """A car's two point lights plus one forward-facing headlight cone.
 
     Stores absolute travel bearing so headlight vs taillight assignment
     can be deferred to render time via ``resolve_facing()``. This keeps
     placement valid when the camera moves during preview.
 
-    Car light positions are offset perpendicular to the travel direction
-    to approximate the separation between the two headlights (or taillights).
+    The two point-light positions are offset perpendicular to the travel
+    direction to approximate the separation between the two headlights (or
+    taillights). A third, illumination-only ``LightSource`` at the car center
+    carries the directional headlight-cone ground pool.
     """
 
     def __init__(
@@ -72,6 +81,8 @@ class CarLightPair:
             config.separation_min,
             config.separation_max,
         )
+        self._cone_light = self._make_cone_light(position)
+        self._apply_cone_properties()
 
     # ------------------------------------------------------------------
     # Public interface
@@ -97,13 +108,18 @@ class CarLightPair:
         else:
             self._apply_taillight_properties()
 
+        # The headlight cone is a world-space fact, independent of the camera,
+        # so it is refreshed unconditionally (receding cars still cast it).
+        self._apply_cone_properties()
+
     def get_lights(self) -> t.List[LightSource]:
-        """Return the two LightSource instances for this car.
+        """Return the LightSource instances for this car.
 
         Returns:
-            List[LightSource]: Always exactly two lights.
+            List[LightSource]: Always exactly three lights — the two point
+                lights plus the illumination-only headlight-cone carrier.
         """
-        return list(self._lights)
+        return [*self._lights, self._cone_light]
 
     # ------------------------------------------------------------------
     # Private init helpers
@@ -162,6 +178,28 @@ class CarLightPair:
         right_pos = center - perp * half
         return left_pos, right_pos
 
+    def _make_cone_light(self, position: np.ndarray) -> LightSource:
+        """Create the illumination-only headlight-cone carrier at the car center.
+
+        Args:
+            position (np.ndarray): 3-element (x, y, z) car center in ENU meters.
+
+        Returns:
+            LightSource: A core-less carrier holding the headlight color and
+                brightness; its DirectionalConeIllumination is set by
+                _apply_cone_properties.
+        """
+        return LightSource(
+            position=position.copy(),
+            color=self._headlight_color,
+            brightness=self._headlight_brightness,
+            size=0.0,
+            glow_radius=0.0,
+            illumination_intensity=0.0,
+            illumination=None,
+            emits_core=False,
+        )
+
     @staticmethod
     def _make_placeholder_light(position: np.ndarray) -> LightSource:
         """Create a LightSource with placeholder values at a given position.
@@ -197,18 +235,31 @@ class CarLightPair:
         travel_y = math.sin(self.travel_bearing)
         return np.array([travel_x, travel_y, 0.0])
 
+    def _apply_cone_properties(self) -> None:
+        """Refresh the cone carrier from config so devmode edits apply live."""
+        cfg = self._config
+        direction = (math.cos(self.travel_bearing), math.sin(self.travel_bearing))
+        self._cone_light.illumination_intensity = cfg.headlight_illumination_intensity
+        self._cone_light.illumination = DirectionalConeIllumination(
+            direction=direction,
+            length=cfg.headlight_beam_length,
+            beam_angle_deg=cfg.headlight_beam_angle_deg,
+            falloff=cfg.headlight_illumination_falloff,
+            inner_fraction=cfg.headlight_illumination_inner_fraction,
+        )
+
     def _apply_headlight_properties(self) -> None:
-        """Set both lights to the pre-sampled headlight color, brightness, and glow."""
+        """Set both point lights to the pre-sampled headlight color, brightness, and glow.
+
+        The point lights no longer carry a ground pool in headlight mode — the
+        cone carrier owns it — so their illumination model is cleared to None.
+        """
         for light in self._lights:
             light.color = self._headlight_color
             light.brightness = self._headlight_brightness
             light.glow_radius = self._config.headlight_glow_radius
             light.illumination_intensity = self._config.headlight_illumination_intensity
-            light.illumination = ConeIllumination(
-                self._config.headlight_illumination_radius,
-                self._config.headlight_illumination_falloff,
-                self._config.headlight_illumination_inner_fraction,
-            )
+            light.illumination = None
 
     def _apply_taillight_properties(self) -> None:
         """Set both lights to the pre-sampled taillight color, brightness, and glow."""

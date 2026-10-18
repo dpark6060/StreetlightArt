@@ -12,6 +12,7 @@ from streets_at_night.models.commercial import (
     create_sign_light,
     create_storefront_light,
 )
+from streets_at_night.models.illumination import BeamIllumination
 from streets_at_night.models.light_source import LightSource
 
 
@@ -60,10 +61,12 @@ def commercial_config() -> CommercialLightConfig:
         parking_brightness_min=0.75,
         parking_brightness_max=0.9,
         parking_glow_radius=20.0,
-        parking_illumination_radius=30.0,
+        parking_height_min=8.0,
+        parking_height_max=12.0,
+        parking_beam_angle_deg=125.0,
+        parking_bulb_fraction=0.6,
+        parking_reflector_falloff=2.0,
         parking_illumination_intensity=0.8,
-        parking_illumination_falloff=1.5,
-        parking_illumination_inner_fraction=0.3,
         parking_grid_spacing_min=20.0,
         parking_grid_spacing_max=30.0,
         storefront_colors=ColorPoolConfig(colors=[
@@ -180,15 +183,19 @@ def test_create_parking_lot_light_brightness_in_range(rng, commercial_config):
     assert 0.75 <= light.brightness <= 0.9
 
 
-def test_create_parking_lot_light_has_large_illumination(rng, commercial_config):
+def test_create_parking_lot_light_uses_physical_beam_from_config(rng, commercial_config):
     # Arrange
-    pos = np.array([0.0, 0.0, 0.0])
+    pos = np.array([0.0, 0.0, 10.0])
 
     # Act
     light = create_parking_lot_light(pos, commercial_config, rng)
 
-    # Assert — parking lots have wide coverage
-    assert light.illumination.radius == commercial_config.parking_illumination_radius
+    # Assert — pole-mounted, so the pool is physical like a streetlight's
+    assert light.illumination == BeamIllumination(
+        commercial_config.parking_beam_angle_deg,
+        commercial_config.parking_bulb_fraction,
+        commercial_config.parking_reflector_falloff,
+    )
 
 
 def test_create_parking_lot_light_color_is_valid_rgb(position, rng, commercial_config):

@@ -93,12 +93,12 @@ def test_place_cars_pairs_are_car_light_pair_instances(straight_segment, light_c
     assert all(isinstance(p, CarLightPair) for p in pairs)
 
 
-def test_place_cars_each_pair_contributes_two_lights(straight_segment, light_config, rng):
+def test_place_cars_each_pair_contributes_three_lights(straight_segment, light_config, rng):
     # Act
     lights, pairs = place_cars([straight_segment], light_config, rng)
 
-    # Assert — each CarLightPair produces exactly two LightSources
-    assert len(lights) == len(pairs) * 2
+    # Assert — each CarLightPair produces two point lights plus the cone carrier
+    assert len(lights) == len(pairs) * 3
 
 
 def test_place_cars_produces_cars_on_long_segment(straight_segment, light_config, rng):
@@ -409,8 +409,9 @@ def test_create_car_at_point_east_tangent_headlights_face_oncoming_camera(light_
     pair.resolve_facing(np.array([-1.0, 0.0, 0.0]))
     lights = pair.get_lights()
 
-    # Assert — camera looking west at an eastbound car sees headlights
-    assert all(light.glow_radius == light_config.cars.headlight_glow_radius for light in lights)
+    # Assert — camera looking west at an eastbound car sees headlights on the
+    # two point lights (the cone carrier has no glow)
+    assert all(light.glow_radius == light_config.cars.headlight_glow_radius for light in lights[:2])
 
 
 def test_create_car_at_point_east_west_road_lights_separated_along_y(light_config):
@@ -425,7 +426,7 @@ def test_create_car_at_point_east_west_road_lights_separated_along_y(light_confi
 
     # Act
     pair = _create_car_at_point(point, tangent, RoadType.HIGHWAY, light_config.cars, rng)
-    light_a, light_b = pair.get_lights()
+    light_a, light_b = pair.get_lights()[:2]
 
     # Assert — lights differ in y (perpendicular to travel), match in x
     assert abs(light_a.position[1] - light_b.position[1]) == pytest.approx(2.0)

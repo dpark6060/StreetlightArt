@@ -9,6 +9,7 @@ import pytest
 
 from streets_at_night.config.schema import CarConfig, ColorPoolConfig
 from streets_at_night.models.car import CarLightPair
+from streets_at_night.models.illumination import DirectionalConeIllumination
 from streets_at_night.models.light_source import LightSource
 
 
@@ -61,10 +62,11 @@ def car_config() -> CarConfig:
         density_service_min=300.0,
         density_service_max=800.0,
         headlight_glow_radius=8.0,
-        headlight_illumination_radius=15.0,
         headlight_illumination_intensity=0.6,
         headlight_illumination_falloff=1.5,
         headlight_illumination_inner_fraction=0.3,
+        headlight_beam_length=25.0,
+        headlight_beam_angle_deg=40.0,
         taillight_glow_radius=3.0,
         taillight_illumination_radius=2.0,
         taillight_illumination_intensity=0.1,
@@ -85,16 +87,56 @@ def car_pair(road_position, rng, car_config) -> CarLightPair:
 
 
 # ---------------------------------------------------------------------------
-# __init__ — always exactly two lights
+# __init__ — two point lights plus the illumination-only cone carrier
 # ---------------------------------------------------------------------------
 
 
-def test_get_lights_returns_exactly_two(car_pair):
+def test_get_lights_returns_three_lights(car_pair):
     # Act
     lights = car_pair.get_lights()
 
+    # Assert — two point lights plus the headlight-cone carrier
+    assert len(lights) == 3
+
+
+def test_get_lights_cone_carrier_emits_no_core(car_pair):
+    # Act
+    lights = car_pair.get_lights()
+
+    # Assert — the third light contributes ground pool only, no core/glow
+    assert lights[2].emits_core is False
+
+
+def test_cone_carrier_direction_matches_travel_bearing(road_position, rng, car_config):
+    # Arrange — bearing 0.0 = travelling due East → unit heading (1, 0)
+    pair = CarLightPair(
+        position=road_position, travel_bearing=0.0, config=car_config, rng=rng
+    )
+
+    # Act
+    cone = pair.get_lights()[2]
+
     # Assert
-    assert len(lights) == 2
+    assert cone.illumination.direction[0] == pytest.approx(1.0)
+    assert cone.illumination.direction[1] == pytest.approx(0.0)
+
+
+def test_cone_carrier_uses_headlight_color_and_beam_config(road_position, rng, car_config):
+    # Arrange — single-color headlight pool so the sampled color is known
+    car_config.headlight_colors = ColorPoolConfig(colors=[("#AABBCC", 1.0)])
+    pair = CarLightPair(
+        position=road_position, travel_bearing=0.0, config=car_config, rng=rng
+    )
+
+    # Act
+    cone = pair.get_lights()[2]
+
+    # Assert — carrier color is the headlight color; cone shape comes from config
+    assert cone.color == (0xAA, 0xBB, 0xCC)
+    assert cone.illumination.length == car_config.headlight_beam_length
+    assert cone.illumination.beam_angle_deg == car_config.headlight_beam_angle_deg
+    assert cone.illumination.falloff == car_config.headlight_illumination_falloff
+    assert cone.illumination.inner_fraction == car_config.headlight_illumination_inner_fraction
 
 
 def test_get_lights_are_light_source_instances(car_pair):
@@ -173,8 +215,8 @@ def test_resolve_facing_toward_camera_sets_bright_glow(car_pair):
     car_pair.resolve_facing(camera_forward)
     lights = car_pair.get_lights()
 
-    # Assert — headlights have large glow radius
-    assert all(light.glow_radius == 8.0 for light in lights)
+    # Assert — the two point lights (headlights) have large glow radius
+    assert all(light.glow_radius == 8.0 for light in lights[:2])
 
 
 def test_resolve_facing_toward_camera_sets_brightness_range(car_pair, car_config):
@@ -206,8 +248,8 @@ def test_resolve_facing_away_from_camera_sets_dim_glow(car_pair):
     car_pair.resolve_facing(camera_forward)
     lights = car_pair.get_lights()
 
-    # Assert — taillights have small glow radius
-    assert all(light.glow_radius == 3.0 for light in lights)
+    # Assert — the two point lights (taillights) have small glow radius
+    assert all(light.glow_radius == 3.0 for light in lights[:2])
 
 
 def test_resolve_facing_away_from_camera_sets_brightness_range(car_pair, car_config):
@@ -218,11 +260,43 @@ def test_resolve_facing_away_from_camera_sets_brightness_range(car_pair, car_con
     car_pair.resolve_facing(camera_forward)
     lights = car_pair.get_lights()
 
-    # Assert — taillight brightness within config range
+    # Assert — the two point lights get taillight brightness (the cone carrier
+    # keeps its headlight brightness, so scope to the point lights)
     assert all(
         car_config.taillight_brightness_min <= light.brightness <= car_config.taillight_brightness_max
-        for light in lights
+        for light in lights[:2]
     )
+
+
+# ---------------------------------------------------------------------------
+# resolve_facing — cone carrier is camera-independent
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_facing_away_keeps_headlight_cone(car_pair, car_config):
+    # Arrange — car moving away shows taillights, but the cone is world-space
+    camera_forward = np.array([1.0, 0.0, 0.0])
+
+    # Act
+    car_pair.resolve_facing(camera_forward)
+    cone = car_pair.get_lights()[2]
+
+    # Assert — carrier still holds a forward cone with headlight color
+    assert isinstance(cone.illumination, DirectionalConeIllumination)
+    assert cone.illumination.length == car_config.headlight_beam_length
+
+
+def test_resolve_facing_toward_camera_clears_point_light_pools(car_pair):
+    # Arrange — car approaching shows headlights; point lights no longer pool
+    camera_forward = np.array([-1.0, 0.0, 0.0])
+
+    # Act
+    car_pair.resolve_facing(camera_forward)
+    lights = car_pair.get_lights()
+
+    # Assert — the cone carrier owns the ground pool now, not the point lights
+    assert lights[0].illumination is None
+    assert lights[1].illumination is None
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +379,6 @@ def test_headlight_color_comes_from_config():
         density_service_min=300.0,
         density_service_max=800.0,
         headlight_glow_radius=8.0,
-        headlight_illumination_radius=15.0,
         headlight_illumination_intensity=0.6,
         headlight_illumination_falloff=1.5,
         taillight_glow_radius=3.0,
@@ -359,7 +432,6 @@ def test_taillight_color_comes_from_config():
         density_service_min=300.0,
         density_service_max=800.0,
         headlight_glow_radius=8.0,
-        headlight_illumination_radius=15.0,
         headlight_illumination_intensity=0.6,
         headlight_illumination_falloff=1.5,
         taillight_glow_radius=3.0,
@@ -413,7 +485,6 @@ def test_separation_respects_config_range():
         density_service_min=300.0,
         density_service_max=800.0,
         headlight_glow_radius=8.0,
-        headlight_illumination_radius=15.0,
         headlight_illumination_intensity=0.6,
         headlight_illumination_falloff=1.5,
         taillight_glow_radius=3.0,
@@ -447,10 +518,11 @@ def test_separation_respects_config_range():
 
 def _make_config_with_light_overrides(
     headlight_glow_radius: float = 8.0,
-    headlight_illumination_radius: float = 15.0,
     headlight_illumination_intensity: float = 0.6,
     headlight_illumination_falloff: float = 1.5,
     headlight_illumination_inner_fraction: float = 0.3,
+    headlight_beam_length: float = 25.0,
+    headlight_beam_angle_deg: float = 40.0,
     taillight_glow_radius: float = 3.0,
     taillight_illumination_radius: float = 2.0,
     taillight_illumination_intensity: float = 0.1,
@@ -482,10 +554,11 @@ def _make_config_with_light_overrides(
         density_service_min=300.0,
         density_service_max=800.0,
         headlight_glow_radius=headlight_glow_radius,
-        headlight_illumination_radius=headlight_illumination_radius,
         headlight_illumination_intensity=headlight_illumination_intensity,
         headlight_illumination_falloff=headlight_illumination_falloff,
         headlight_illumination_inner_fraction=headlight_illumination_inner_fraction,
+        headlight_beam_length=headlight_beam_length,
+        headlight_beam_angle_deg=headlight_beam_angle_deg,
         taillight_glow_radius=taillight_glow_radius,
         taillight_illumination_radius=taillight_illumination_radius,
         taillight_illumination_intensity=taillight_illumination_intensity,
@@ -509,13 +582,13 @@ def test_headlight_glow_radius_comes_from_config():
     pair.resolve_facing(camera_forward)
     lights = pair.get_lights()
 
-    # Assert
-    assert all(light.glow_radius == 20.0 for light in lights)
+    # Assert — only the two point lights carry the headlight glow
+    assert all(light.glow_radius == 20.0 for light in lights[:2])
 
 
-def test_headlight_illumination_radius_comes_from_config():
+def test_headlight_beam_length_comes_from_config():
     # Arrange
-    config = _make_config_with_light_overrides(headlight_illumination_radius=40.0)
+    config = _make_config_with_light_overrides(headlight_beam_length=40.0)
     pair = CarLightPair(
         position=np.array([0.0, 0.0, 0.0]),
         travel_bearing=0.0,
@@ -526,10 +599,29 @@ def test_headlight_illumination_radius_comes_from_config():
 
     # Act
     pair.resolve_facing(camera_forward)
-    lights = pair.get_lights()
+    cone = pair.get_lights()[2]
 
     # Assert
-    assert all(light.illumination.radius == 40.0 for light in lights)
+    assert cone.illumination.length == 40.0
+
+
+def test_headlight_beam_angle_comes_from_config():
+    # Arrange
+    config = _make_config_with_light_overrides(headlight_beam_angle_deg=55.0)
+    pair = CarLightPair(
+        position=np.array([0.0, 0.0, 0.0]),
+        travel_bearing=0.0,
+        config=config,
+        rng=random.Random(0),
+    )
+    camera_forward = np.array([-1.0, 0.0, 0.0])
+
+    # Act
+    pair.resolve_facing(camera_forward)
+    cone = pair.get_lights()[2]
+
+    # Assert
+    assert cone.illumination.beam_angle_deg == 55.0
 
 
 def test_headlight_illumination_intensity_comes_from_config():
@@ -545,10 +637,10 @@ def test_headlight_illumination_intensity_comes_from_config():
 
     # Act
     pair.resolve_facing(camera_forward)
-    lights = pair.get_lights()
+    cone = pair.get_lights()[2]
 
-    # Assert
-    assert all(light.illumination_intensity == 0.9 for light in lights)
+    # Assert — the cone carrier's pool strength comes from headlight config
+    assert cone.illumination_intensity == 0.9
 
 
 def test_taillight_glow_radius_comes_from_config():
@@ -566,8 +658,8 @@ def test_taillight_glow_radius_comes_from_config():
     pair.resolve_facing(camera_forward)
     lights = pair.get_lights()
 
-    # Assert
-    assert all(light.glow_radius == 10.0 for light in lights)
+    # Assert — only the two point lights carry the taillight glow
+    assert all(light.glow_radius == 10.0 for light in lights[:2])
 
 
 def test_taillight_illumination_radius_comes_from_config():
@@ -585,8 +677,8 @@ def test_taillight_illumination_radius_comes_from_config():
     pair.resolve_facing(camera_forward)
     lights = pair.get_lights()
 
-    # Assert
-    assert all(light.illumination.radius == 7.0 for light in lights)
+    # Assert — the two point lights keep their small radial taillight pools
+    assert all(light.illumination.radius == 7.0 for light in lights[:2])
 
 
 def test_taillight_illumination_intensity_comes_from_config():
@@ -604,8 +696,8 @@ def test_taillight_illumination_intensity_comes_from_config():
     pair.resolve_facing(camera_forward)
     lights = pair.get_lights()
 
-    # Assert
-    assert all(light.illumination_intensity == 0.05 for light in lights)
+    # Assert — only the two point lights carry the taillight pool strength
+    assert all(light.illumination_intensity == 0.05 for light in lights[:2])
 
 
 # ---------------------------------------------------------------------------
@@ -631,8 +723,8 @@ def test_headlight_brightness_comes_from_config():
     pair.resolve_facing(camera_forward)
     lights = pair.get_lights()
 
-    # Assert — brightness falls within the tight configured range
-    assert all(0.85 <= light.brightness <= 0.86 for light in lights)
+    # Assert — the two point lights get headlight brightness in range
+    assert all(0.85 <= light.brightness <= 0.86 for light in lights[:2])
 
 
 def test_taillight_brightness_comes_from_config():
@@ -653,5 +745,5 @@ def test_taillight_brightness_comes_from_config():
     pair.resolve_facing(camera_forward)
     lights = pair.get_lights()
 
-    # Assert — brightness falls within the tight configured range
-    assert all(0.35 <= light.brightness <= 0.36 for light in lights)
+    # Assert — the two point lights get taillight brightness in range
+    assert all(0.35 <= light.brightness <= 0.36 for light in lights[:2])

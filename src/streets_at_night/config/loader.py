@@ -1,16 +1,15 @@
 """TOML config loader — reads scene_config.toml and returns a SceneConfig.
 
-The load path is: read TOML -> deep-merge over the built-in DEFAULTS ->
-reflect the merged dict onto the schema dataclasses (``config.serde``). There
+The load path is: read TOML (plus its shared look file, if it names one; see
+``config.layers``) -> deep-merge over the built-in DEFAULTS -> reflect the
+merged dict onto the schema dataclasses (``config.serde``). There
 is no hand-written per-section reader; ``schema.py`` is the single source of
 truth for the config surface.
 """
 
-import copy
-import tomllib
 from pathlib import Path
 
-from .defaults import DEFAULTS
+from .layers import load_layered
 from .schema import DevmodeCameraConfig, DevmodeConfig, SceneConfig
 from .serde import dataclass_from_dict
 
@@ -18,7 +17,8 @@ from .serde import dataclass_from_dict
 def load_config(toml_path: Path) -> SceneConfig:
     """Load a SceneConfig from a TOML file overlaid onto built-in defaults.
 
-    If the file does not exist, the default values are used as-is.
+    If the file does not exist, the default values are used as-is. If it
+    names a ``look`` file, that file is merged in underneath it.
     Quality preset selection is handled by the caller via
     config.quality_presets["low"] (or "medium" / "high").
 
@@ -28,44 +28,8 @@ def load_config(toml_path: Path) -> SceneConfig:
     Returns:
         SceneConfig: Populated config dataclass.
     """
-    merged = _load_merged(toml_path)
+    merged = load_layered(toml_path)
     return dataclass_from_dict(SceneConfig, merged)
-
-
-def _load_merged(toml_path: Path) -> dict:
-    """Merge user TOML values onto the built-in defaults.
-
-    Args:
-        toml_path (Path): Path to the TOML config file.
-
-    Returns:
-        dict: Merged configuration dictionary.
-    """
-    merged = copy.deepcopy(DEFAULTS)
-    if not toml_path.exists():
-        return merged
-    with open(toml_path, "rb") as fh:
-        user_data = tomllib.load(fh)
-    _deep_merge(merged, user_data)
-    return merged
-
-
-def _deep_merge(base: dict, override: dict) -> None:
-    """Recursively merge override values into base in-place.
-
-    Note: only dict values are merged recursively. List values (e.g. fixture
-    pool entries, heat-haze layers) replace the base wholesale — this is
-    load-bearing user behavior, not an oversight.
-
-    Args:
-        base (dict): The base dictionary to mutate.
-        override (dict): Values to overlay on top of base.
-    """
-    for key, value in override.items():
-        if isinstance(value, dict) and isinstance(base.get(key), dict):
-            _deep_merge(base[key], value)
-        else:
-            base[key] = value
 
 
 def build_devmode_camera_config(data: dict) -> DevmodeCameraConfig:

@@ -18,9 +18,6 @@ from ..models.commercial import (
 from ..models.light_source import LightSource
 from ..models.zones import CommercialZone
 
-_PARKING_LIGHT_HEIGHT_MIN: float = 8.0
-_PARKING_LIGHT_HEIGHT_MAX: float = 12.0
-
 
 @dataclass
 class CommercialColorPools:
@@ -158,7 +155,7 @@ def _place_parking_lights(
     """
     lights: t.List[LightSource] = []
     for area in parking_areas:
-        lights.extend(_place_parking_grid(area, config, rng, pools.parking))
+        lights.extend(place_parking_grid(area, config, rng, pools.parking))
     return lights
 
 
@@ -315,17 +312,21 @@ def _place_lights_along_edge(
     return lights
 
 
-def _place_parking_grid(
+def place_parking_grid(
     polygon: Polygon,
     config: LightConfig,
     rng: random.Random,
     pool: t.Optional[ColorPool] = None,
+    spacing_scale: float = 1.0,
 ) -> t.List[LightSource]:
     """Place parking lot lights on a regular grid within a polygon.
 
-    Grid spacing is drawn once from the configured range. Only grid points
-    that fall inside the polygon are kept. Each light is placed at a random
-    pole height between _PARKING_LIGHT_HEIGHT_MIN and _PARKING_LIGHT_HEIGHT_MAX.
+    Grid spacing is drawn once from the configured range, then multiplied by
+    ``spacing_scale`` (values < 1.0 pack the poles more densely). The scaled
+    spacing is floored at 1.0m to guard against degenerate grids. Only grid
+    points that fall inside the polygon are kept. Each light is placed at a
+    random pole height between ``parking_height_min`` and
+    ``parking_height_max``.
 
     Args:
         polygon (Polygon): Parking area polygon in ENU metres.
@@ -333,18 +334,24 @@ def _place_parking_grid(
         rng (random.Random): Seeded RNG.
         pool (ColorPool, optional): Shared parking color pool. If None, each
             parking light factory call builds its own.
+        spacing_scale (float): Multiplier on the sampled grid spacing. Defaults
+            to 1.0. Values below 1.0 pack poles more densely.
 
     Returns:
         List[LightSource]: Parking lot lights inside the polygon.
     """
-    spacing = rng.uniform(
+    spacing = spacing_scale * rng.uniform(
         config.commercial.parking_grid_spacing_min,
         config.commercial.parking_grid_spacing_max,
     )
+    spacing = max(spacing, 1.0)  # guard against degenerate grids
     grid_points = _compute_grid_points(polygon, spacing)
     lights: t.List[LightSource] = []
     for x, y in grid_points:
-        position = np.array([x, y, rng.uniform(_PARKING_LIGHT_HEIGHT_MIN, _PARKING_LIGHT_HEIGHT_MAX)])
+        height = rng.uniform(
+            config.commercial.parking_height_min, config.commercial.parking_height_max
+        )
+        position = np.array([x, y, height])
         lights.append(create_parking_lot_light(position, config.commercial, rng, pool))
     return lights
 

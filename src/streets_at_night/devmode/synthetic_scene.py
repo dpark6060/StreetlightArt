@@ -1,17 +1,20 @@
 """Builds a synthetic ENU-space test scene for devmode parameter tuning.
 
-The scene contains 10 rows of content stacked along the Y axis. Each row
+The scene contains 12 rows of content stacked along the Y axis. Each row
 extends from X=0 to X=10000m. Rows 0-4 are road types with streetlights
 and cars. Row 5 is a car-only row. Rows 6-8 are direct light source rows
 (sign lights, parking lights, storefronts). Row 9 is a buildings row of
 mixed-height houses and apartment blocks, so the extruded mass render and
-lit windows can be tuned from the Devmode panel.
+lit windows can be tuned from the Devmode panel. Rows 10-11 are two
+rectangular parking-lot light grids (medium and high density) built by the
+real commercial placer, so the parking_* sliders drive both clusters.
 """
 
 import random
 import typing as t
 
 import numpy as np
+from shapely.geometry import box
 
 from ..config.defaults import DEFAULTS
 from ..config.loader import build_devmode_camera_config
@@ -23,6 +26,7 @@ from ..models.road_segment import RoadSegment, get_default_width
 from ..models.road_types import RoadType
 from ..models.streetlight import FixtureProfile, config_to_fixture_profile
 from ..placement.car_placer import place_cars
+from ..placement.commercial_placer import place_parking_grid
 from ..placement.streetlight_placer import place_streetlights
 from ..scene.scene import Scene
 from .devmode_camera import build_devmode_camera
@@ -43,6 +47,8 @@ ROW_LABELS: t.List[t.Tuple[str, float]] = [
     ("Parking Lights", -500.0),
     ("Storefront",     -700.0),
     ("Houses",         -900.0),
+    ("Parking Lot Med",  -1100.0),
+    ("Parking Lot High", -1300.0),
 ]
 
 # Road type for each of rows 0-4 (index matches ROW_LABELS)
@@ -64,14 +70,28 @@ _SEGMENT_STEP: float = 200.0
 # Spacing between light instances in the direct-light rows (meters)
 _DIRECT_LIGHT_SPACING = 80.0
 
+# Parking cluster rows (indices 10-11): lot X extents, depth, and the
+# spacing scale applied to the config's sampled parking grid spacing.
+_PARKING_LOT_DEPTH = 120.0
+_PARKING_MED_X: t.Tuple[float, float] = (1600.0, 1900.0)
+_PARKING_HIGH_X: t.Tuple[float, float] = (2400.0, 2700.0)
+_PARKING_MED_SPACING_SCALE = 1.0
+# The "High" row only reads as denser than "Med" while
+# high_scale * parking_grid_spacing_max < parking_grid_spacing_min (i.e. the
+# scaled max spacing stays below the unscaled min). At the default 20-30m range
+# that holds with margin; widening the range past max >= 2*min via the sliders
+# can let "High" draw a coarser grid than "Med".
+_PARKING_HIGH_SPACING_SCALE = 0.5
+
 
 def build_synthetic_scene(config: SceneConfig) -> Scene:
     """Build a synthetic ENU-space scene for devmode parameter tuning.
 
-    Creates 10 rows of visual content. Rows 0-4 are road segments with
+    Creates 12 rows of visual content. Rows 0-4 are road segments with
     streetlights and cars. Row 5 is a car-only row. Rows 6-8 are direct
     light source rows placed at evenly-spaced X positions. Row 9 is the
-    buildings row.
+    buildings row. Rows 10-11 are two rectangular parking-lot light grids
+    (medium vs high density) built by the real commercial placer.
 
     Args:
         config (SceneConfig): Scene configuration. Uses config.devmode for
@@ -89,6 +109,7 @@ def build_synthetic_scene(config: SceneConfig) -> Scene:
     rng = random.Random(config.seed)
     _populate_road_lights(scene, config, rng, road_segments)
     _populate_direct_light_rows(scene, config, rng)
+    _populate_parking_clusters(scene, config, rng)
 
     return scene
 
@@ -142,21 +163,23 @@ def _make_row_geometry(y: float) -> np.ndarray:
 
 
 def _build_road_segments() -> t.List[RoadSegment]:
-    """Create nine road segments for rows 0-8.
+    """Create eleven road segments for rows 0-8 plus the two parking pads.
 
     Rows 0-4 correspond to the five road types with streetlights. Row 5 is
     the car-only row using RoadType.HIGHWAY geometry but with
     fixture_profile=None to prevent streetlight placement. Rows 6-8 are wide
     surface segments (RoadType.RESIDENTIAL, fixture_profile=None) placed under
     the direct light source rows so the illumination pass has road geometry to
-    illuminate.
+    illuminate. The final two segments (list indices 9-10) are the parking-lot
+    pads for cluster rows 10-11: wide RESIDENTIAL strips spanning each lot's X
+    extent, giving the clusters an asphalt surface and minimap presence.
 
-    Each segment is built with _make_row_geometry(), which inserts intermediate
-    vertices every _SEGMENT_STEP meters so the road renderer can project
-    individual sub-segments that fall within the camera frustum.
+    Each segment is built with a multi-point geometry that inserts intermediate
+    vertices so the road renderer can project individual sub-segments that fall
+    within the camera frustum.
 
     Returns:
-        list[RoadSegment]: Nine road segments, one per row.
+        list[RoadSegment]: Eleven road segments (rows 0-8 plus two lot pads).
     """
     segments = []
 
@@ -182,7 +205,34 @@ def _build_road_segments() -> t.List[RoadSegment]:
             fixture_profile=None,
         ))
 
+    for x_range, (_, y_offset) in zip(
+        (_PARKING_MED_X, _PARKING_HIGH_X), ROW_LABELS[10:12]
+    ):
+        segments.append(RoadSegment(
+            geometry=_make_lot_geometry(x_range, y_offset),
+            road_type=RoadType.RESIDENTIAL,
+            width=_PARKING_LOT_DEPTH,
+            fixture_profile=None,
+        ))
+
     return segments
+
+
+def _make_lot_geometry(x_range: t.Tuple[float, float], y: float) -> np.ndarray:
+    """Create a short multi-point geometry spanning one parking lot's X extent.
+
+    Args:
+        x_range (tuple[float, float]): (x_start, x_end) of the lot in ENU meters.
+        y (float): Y coordinate (ENU meters) for this row.
+
+    Returns:
+        np.ndarray: (4, 3) geometry array from x_start to x_end at z=0.
+    """
+    x_values = np.linspace(x_range[0], x_range[1], 4)
+    geom = np.zeros((len(x_values), 3))
+    geom[:, 0] = x_values
+    geom[:, 1] = y
+    return geom
 
 
 def _create_scene(
@@ -194,7 +244,7 @@ def _create_scene(
     """Instantiate a Scene with the given segments, camera, and buildings.
 
     Args:
-        road_segments (list[RoadSegment]): All nine road segments.
+        road_segments (list[RoadSegment]): All road segments.
         camera (Camera): The devmode camera.
         config (SceneConfig): Scene configuration.
         buildings (list[Building]): Buildings for the Houses row (may be empty).
@@ -320,7 +370,7 @@ def _populate_road_lights(
         scene (Scene): The scene to populate.
         config (SceneConfig): Scene configuration.
         rng (random.Random): Master RNG seeded from config.seed.
-        road_segments (list[RoadSegment]): All nine road segments.
+        road_segments (list[RoadSegment]): All road segments.
     """
     streetlight_rng = random.Random(rng.randint(0, 2**32))
     car_rng = random.Random(rng.randint(0, 2**32))
@@ -523,3 +573,55 @@ def _create_storefront_light_row(
         create_storefront_light(np.array([x, y, 4.0]), config.lights.commercial, rng)
         for x in x_positions
     ]
+
+
+def _populate_parking_clusters(
+    scene: Scene,
+    config: SceneConfig,
+    rng: random.Random,
+) -> None:
+    """Place the medium- and high-density parking lot clusters (rows 10-11).
+
+    Both clusters reuse the real commercial placer (place_parking_grid) on
+    rectangular lot polygons, so every parking_* config field — including the
+    grid spacing sliders — drives them. The high-density cluster halves the
+    sampled grid spacing via spacing_scale.
+
+    Args:
+        scene (Scene): The scene to populate.
+        config (SceneConfig): Scene configuration providing parking params.
+        rng (random.Random): Master RNG; a child RNG is derived from it.
+    """
+    cluster_rng = random.Random(rng.randint(0, 2**32))
+    lights: t.List[LightSource] = []
+    lights.extend(_create_parking_cluster(
+        _PARKING_MED_X, ROW_LABELS[10][1], _PARKING_MED_SPACING_SCALE, config, cluster_rng
+    ))
+    lights.extend(_create_parking_cluster(
+        _PARKING_HIGH_X, ROW_LABELS[11][1], _PARKING_HIGH_SPACING_SCALE, config, cluster_rng
+    ))
+    scene.add_lights(lights)
+
+
+def _create_parking_cluster(
+    x_range: t.Tuple[float, float],
+    y: float,
+    spacing_scale: float,
+    config: SceneConfig,
+    rng: random.Random,
+) -> t.List[LightSource]:
+    """Create one rectangular parking-lot light grid via the real placer.
+
+    Args:
+        x_range (tuple[float, float]): (x_start, x_end) of the lot in ENU meters.
+        y (float): Row center Y coordinate (ENU meters).
+        spacing_scale (float): Multiplier on the sampled grid spacing.
+        config (SceneConfig): Scene configuration.
+        rng (random.Random): RNG for this cluster.
+
+    Returns:
+        list[LightSource]: Parking lot lights inside the lot polygon.
+    """
+    half_depth = _PARKING_LOT_DEPTH / 2.0
+    lot = box(x_range[0], y - half_depth, x_range[1], y + half_depth)
+    return place_parking_grid(lot, config.lights, rng, spacing_scale=spacing_scale)

@@ -392,10 +392,11 @@ DEFAULTS: dict = {
             "density_service_min": 300.0,
             "density_service_max": 800.0,
             "headlight_glow_radius": 8.0,
-            "headlight_illumination_radius": 15.0,
             "headlight_illumination_intensity": 0.6,
             "headlight_illumination_falloff": 1.5,
             "headlight_illumination_inner_fraction": 0.3,
+            "headlight_beam_length": 25.0,
+            "headlight_beam_angle_deg": 40.0,
             "taillight_glow_radius": 3.0,
             "taillight_illumination_radius": 2.0,
             "taillight_illumination_intensity": 0.1,
@@ -433,13 +434,18 @@ DEFAULTS: dict = {
             },
             "parking_brightness_min": 0.75,
             "parking_brightness_max": 0.9,
-            "parking_glow_radius": 20.0,
-            "parking_illumination_radius": 30.0,
+            "parking_glow_radius": 1.5,
+            # Physical pool: radius = pole height * tan(beam / 2), ~45-68 m
+            # here, but the bright core is the ~14-20 m bulb zone; the rest is
+            # a steep reflector fade. Tuned against an aerial photo of a lot.
+            "parking_height_min": 8.0,
+            "parking_height_max": 12.0,
+            "parking_beam_angle_deg": 160.0,
+            "parking_bulb_fraction": 0.3,
+            "parking_reflector_falloff": 3.0,
             "parking_illumination_intensity": 0.8,
-            "parking_illumination_falloff": 1.5,
-            "parking_illumination_inner_fraction": 0.3,
-            "parking_grid_spacing_min": 20.0,
-            "parking_grid_spacing_max": 30.0,
+            "parking_grid_spacing_min": 40.0,
+            "parking_grid_spacing_max": 45.0,
             # Storefront: 60% warm white, 25% warm yellow, 15% fluorescent
             "storefront_colors": {
                 "colors": [

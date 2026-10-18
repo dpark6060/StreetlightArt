@@ -1,0 +1,35 @@
+look = "looks/night.toml"
+seed = 42
+region_name = "rochester"
+
+[camera]
+lat = 43.07162938393354
+lon = -77.58867185604488
+altitude_ft = 7364.149606299212
+target_lat = 43.16282713415467
+target_lon = -77.60946681040829
+target_altitude_ft = -1638.11238465635
+fov = 60.0
+near = 100.0
+far = 60000.0
+
+[bounds]
+north = 43.33
+south = 42.9
+east = -77.3
+west = -77.8
+
+[devmode]
+render_width = 896
+render_height = 720
+
+[devmode.camera]
+pos_x = -127.27272727272725
+pos_y = 99.99999999999875
+pos_z = 1000.0
+target_x = 2872.7272727272725
+target_y = 45.454545454544245
+target_z = 0.0
+fov = 32.407407407407405
+near = 100.0
+far = 60000.0

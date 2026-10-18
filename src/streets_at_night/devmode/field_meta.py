@@ -13,6 +13,11 @@ above the rule max pushes the max up (with headroom), a value below the rule
 min pushes the min down. Combined with the text entry expanding the range to
 fit anything the user types (see ``widget_sync.apply_entry_to_slider``), the
 slider imposes no artificial ceiling.
+
+A separate ordered substring rule list (``_FIELD_UNIT_RULES``) drives the unit
+suffix appended to a field's display label (e.g. "Glow Radius (m)") via
+``get_field_unit``; it is kept independent of the slider ranges so presentation
+and range editing change separately.
 """
 
 import typing as t
@@ -44,7 +49,9 @@ _FIELD_META_RULES: t.List[t.Tuple[str, FieldMeta]] = [
     ("lit_fraction", FieldMeta(0.0, 1.0)),
     ("saturation", FieldMeta(0.0, 2.0)),
     ("beam_angle", FieldMeta(10.0, 170.0)),
+    ("beam_length", FieldMeta(0.0, 80.0)),
     ("inner_fraction", FieldMeta(0.0, 1.0)),
+    ("bulb_fraction", FieldMeta(0.0, 1.0)),
     ("falloff", FieldMeta(0.1, 8.0)),
     ("illumination_intensity", FieldMeta(0.0, 1.0)),
     ("illumination_radius", FieldMeta(0.0, 60.0)),
@@ -122,3 +129,38 @@ def _contain_value(base: FieldMeta, current_value: float) -> FieldMeta:
     if current_value < min_val:
         min_val = current_value * 1.5 if current_value < 0 else current_value * 0.5
     return FieldMeta(min_val, max_val, base.is_int)
+
+
+# Ordered (substring, unit) rules for display labels. First substring match
+# wins; fields with no match are unitless. Kept separate from
+# _FIELD_META_RULES because ranges and presentation change independently.
+_FIELD_UNIT_RULES: t.List[t.Tuple[str, str]] = [
+    ("color_temp", "K"),        # color_temp_k and color_temp_shift_k
+    ("beam_angle", "deg"),
+    ("beam_length", "m"),
+    ("exposure", "stops"),
+    ("distance", "m"),          # falloff_distance, scatter_distance
+    ("radius", "m"),            # glow_radius, *_illumination_radius
+    ("height", "m"),
+    ("spacing", "m"),
+    ("separation", "m"),
+    ("density", "m/car"),       # car density fields are meters between cars
+    ("pos_", "m"),              # devmode camera pos_x/y/z
+    ("target_", "m"),           # devmode camera target_x/y/z
+    ("fov", "deg"),
+]
+
+
+def get_field_unit(field_name: str) -> str:
+    """Return the display unit for a field, or "" when unitless.
+
+    Args:
+        field_name (str): The dataclass field name being displayed.
+
+    Returns:
+        str: Unit string (e.g. "m", "deg", "K"), empty when no rule matches.
+    """
+    for substring, unit in _FIELD_UNIT_RULES:
+        if substring in field_name:
+            return unit
+    return ""

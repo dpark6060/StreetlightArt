@@ -30,7 +30,9 @@ from ..config.serde import dataclass_to_dict
 
 # Bump when the cached content's structure changes (new Scene fields, changed
 # model shapes) so old pickles are ignored instead of unpickled wrongly.
-SCENE_CACHE_VERSION = 1
+# v2: UTM zone is now derived from the origin (was hardcoded 11N), changing
+# every ENU coordinate baked into caches built outside Southern California.
+SCENE_CACHE_VERSION = 2
 
 # Keep at most this many scene pickles (each ~a few hundred MB) — newest kept,
 # older evicted — so tuning across many configs can't grow the cache unbounded.

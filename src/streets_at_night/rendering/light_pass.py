@@ -1,6 +1,7 @@
 """Light render passes — dots for preview, core + glow halos for export."""
 
 import typing as t
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -17,6 +18,65 @@ if t.TYPE_CHECKING:
 
 # Minimum glow radius in screen pixels before we skip drawing the halo
 _MIN_GLOW_RADIUS_PX: float = 2.0
+
+
+@dataclass(frozen=True)
+class LightSprite:
+    """Screen-space core + glow parameters for one light at one camera.
+
+    Attributes:
+        linear_color: Linear (R, G, B) emission color.
+        core_radius_px: Core disc radius in pixels (at least 1).
+        core_brightness: Linear core radiance (brightness after extinction).
+        glow_radius_px: Glow halo radius in pixels; 0.0 when the halo is too
+            small to draw.
+        glow_peak: Linear glow radiance at the halo center.
+    """
+
+    linear_color: t.Tuple[float, float, float]
+    core_radius_px: float
+    core_brightness: float
+    glow_radius_px: float
+    glow_peak: float
+
+
+def compute_light_sprite(
+    light: "LightSource",
+    distance: float,
+    effective_brightness: float,
+    focal_length: float,
+    atmos: t.Any,
+) -> LightSprite:
+    """Compute a light's on-screen core and glow sizes and intensities.
+
+    Shared by the CPU export pass and the GPU tuning scene so both draw
+    identical cores and halos.
+
+    Args:
+        light (LightSource): The light source.
+        distance (float): Camera distance to the light in meters.
+        effective_brightness (float): Brightness after atmospheric extinction.
+        focal_length (float): Focal length in pixels.
+        atmos: AtmosphereConfig (glow expansion, glow_max_alpha).
+
+    Returns:
+        LightSprite: Core and glow parameters for this frame.
+    """
+    # A light's emitted radiance dims by extinction (effective_brightness)
+    # but keeps its own color; the haze veil over it is added per-pixel by
+    # the airlight term in the atmosphere pass.
+    glow_radius_px = _glow_radius_px(
+        _resolve_glow_radius(light, distance, atmos), distance, focal_length
+    )
+    if glow_radius_px < _MIN_GLOW_RADIUS_PX:
+        glow_radius_px = 0.0
+    return LightSprite(
+        linear_color=srgb255_to_linear(light.color),
+        core_radius_px=_core_radius(light, distance, focal_length, effective_brightness),
+        core_brightness=effective_brightness,
+        glow_radius_px=glow_radius_px,
+        glow_peak=(atmos.glow_max_alpha / 255.0) * effective_brightness,
+    )
 
 
 def render_lights_preview(
@@ -61,6 +121,8 @@ def render_lights_preview(
     drawn = 0
     for i in np.nonzero(valid_mask)[0]:
         light = scene.lights[i]
+        if not light.emits_core:
+            continue
         center = (float(screen_coords[i, 0]), float(screen_coords[i, 1]))
         radius = _preview_radius(float(eff_brightness[i]))
         backend.draw_circle(center, radius, light.color)
@@ -119,31 +181,26 @@ def render_lights_export(
     drawn = 0
     for i in visible_indices:
         light = scene.lights[i]
+        if not light.emits_core:
+            continue
         center = (float(screen_coords[i, 0]), float(screen_coords[i, 1]))
-        distance = float(distances[i])
-        effective_brightness = float(eff_brightness[i])
-        # A light's emitted radiance dims by extinction (effective_brightness)
-        # but keeps its own color; the haze veil over it is added per-pixel by
-        # the airlight term in the atmosphere pass.
-        linear_color = srgb255_to_linear(light.color)
-        effective_glow_radius = _resolve_glow_radius(light, distance, atmos)
-
-        core_radius = _core_radius(light, distance, focal_length, effective_brightness)
-        radius_px = _glow_radius_px(effective_glow_radius, distance, focal_length)
-
-        _accumulate_core(
-            light_buffer, center[0], center[1], core_radius,
-            linear_color, effective_brightness,
+        sprite = compute_light_sprite(
+            light, float(distances[i]), float(eff_brightness[i]), focal_length, atmos
         )
 
-        if radius_px >= _MIN_GLOW_RADIUS_PX:
+        _accumulate_core(
+            light_buffer, center[0], center[1], sprite.core_radius_px,
+            sprite.linear_color, sprite.core_brightness,
+        )
+
+        if sprite.glow_radius_px > 0.0:
             _accumulate_glow(
                 light_buffer,
                 center[0],
                 center[1],
-                linear_color,
-                radius_px,
-                (atmos.glow_max_alpha / 255.0) * effective_brightness,
+                sprite.linear_color,
+                sprite.glow_radius_px,
+                sprite.glow_peak,
                 atmos.glow_falloff_steepness,
                 atmos.glow_wing_exponent,
                 atmos.glow_tail_strength,

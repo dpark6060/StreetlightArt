@@ -125,3 +125,26 @@ def test_is_dataclass_instance(sample_light):
 
     # Assert
     assert result is True
+
+
+# ---------------------------------------------------------------------------
+# emits_core flag
+# ---------------------------------------------------------------------------
+
+
+def test_light_source_emits_core_defaults_true(sample_position):
+    # Arrange — construct without passing emits_core
+
+    # Act
+    light = LightSource(
+        position=sample_position,
+        color=(200, 150, 50),
+        brightness=1.0,
+        size=0.5,
+        glow_radius=10.0,
+        illumination_intensity=0.4,
+        illumination=ConeIllumination(8.0, 2.0, 0.0),
+    )
+
+    # Assert — a normal light emits a core by default
+    assert light.emits_core is True

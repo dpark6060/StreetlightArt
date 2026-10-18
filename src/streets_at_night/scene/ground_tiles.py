@@ -35,7 +35,9 @@ if t.TYPE_CHECKING:
 
 # Bump this when the tile rendering/caching logic changes in a way that isn't
 # already captured by the hashed config fields below, to force cache regeneration.
-_TILE_CACHE_VERSION: int = 1
+# v2: UTM zone now derived from origin — tile grid origins moved for scenes
+# outside zone 11N, so tile indices from v1 point at the wrong world coords.
+_TILE_CACHE_VERSION: int = 2
 
 
 @dataclass

@@ -22,7 +22,7 @@ import numpy as np
 
 from ..camera.camera import Camera
 from .backend import RenderBackend
-from ..models.illumination import BeamIllumination
+from ..models.illumination import BeamIllumination, DirectionalConeIllumination
 from .color_space import srgb255_to_linear
 from .raycast import GroundHit, build_ground_gbuffer
 from .render_utils import apply_brightness_falloff, camera_distance
@@ -97,7 +97,12 @@ def render_illumination(
         gbuffer = build_ground_gbuffer(camera, width, height)
 
     max_light_radius = max(
-        (_effective_pool_radius(light) for light in scene.lights), default=0.0
+        (
+            effective_pool_radius(light)
+            for light in scene.lights
+            if light.illumination is not None
+        ),
+        default=0.0,
     )
     padding = max(_BOUNDS_PADDING_M, max_light_radius)
     bounds = _compute_visible_bounds(gbuffer, camera, padding, scene.get_lights_aabb())
@@ -232,14 +237,16 @@ def _auto_scale_illumination_resolution(
     return scaled
 
 
-def _effective_pool_radius(light: "LightSource") -> float:
+def effective_pool_radius(light: "LightSource") -> float:
     """Compute the effective ground pool radius for a light, in meters.
 
     ``BeamIllumination`` lights derive the pool radius from the beam cone
     geometry (pole height + angle); ``ConeIllumination`` lights use the
-    authored radius. Shared by AABB culling and blob painting so the two
-    can't drift apart. ``None`` (no ground pool) is not a valid input here —
-    callers skip those lights before reaching this helper.
+    authored radius; ``DirectionalConeIllumination`` lights use ``length`` (the
+    oriented cone fits inside a circle of that radius centered on the apex, so
+    AABB culling and the paint window stay correct). Shared by AABB culling and
+    blob painting so the two can't drift apart. ``None`` (no ground pool) is not
+    a valid input here — callers skip those lights before reaching this helper.
 
     Args:
         light (LightSource): Light source with a non-None illumination model.
@@ -261,6 +268,8 @@ def _effective_pool_radius(light: "LightSource") -> float:
                 f"(position z); got z={height}"
             )
         return height * math.tan(math.radians(model.beam_angle_deg / 2.0))
+    if isinstance(model, DirectionalConeIllumination):
+        return model.length
     return model.radius
 
 
@@ -291,7 +300,7 @@ def _is_light_visible(
         bool: True if the light should be painted.
     """
     min_x, min_y, max_x, max_y = bounds
-    radius = _effective_pool_radius(light)
+    radius = effective_pool_radius(light)
     lx, ly = float(light.position[0]), float(light.position[1])
     if lx + radius < min_x or lx - radius > max_x or ly + radius < min_y or ly - radius > max_y:
         return False
@@ -413,16 +422,20 @@ def _paint_illumination_blob(
 ) -> None:
     """Paint an intensity blob for one light source into the illumination map.
 
-    Two falloff models are supported, selected per light:
+    Three falloff models are supported, selected per light:
 
     - Physical (``BeamIllumination``): the pool radius is derived from pole
       height and beam angle, and intensity follows the inverse-square +
       cosine-incidence law for a point source at height h,
-      ``1 / (1 + (r/h)^2)^1.5``. A taller pole gives a wider, flatter, dimmer
-      pool for free. Used by streetlights, which have a real pole height.
+      ``1 / (1 + (r/h)^2)^1.5``, with a reflector band past the bulb cutoff
+      that fades to zero at the housing cutoff (see ``_physical_falloff``). A taller pole gives a wider, flatter,
+      dimmer pool for free. Used by streetlights and parking lot lights.
     - Authored two-zone cone (``ConeIllumination``): the authored ``radius``
       with an inner flat zone and ``falloff`` fade. Used by lights with no
-      meaningful pole height (cars, signs, houses).
+      meaningful pole height (signs, storefronts).
+    - Oriented cone (``DirectionalConeIllumination``): a wedge cast forward
+      along a heading — axial two-zone fade times an angular feather, zero
+      behind the apex. Used by car headlights.
 
     Light brightness is attenuated by exponential distance falloff from the
     camera before computing the peak, matching the formula used in the glow pass.
@@ -443,7 +456,7 @@ def _paint_illumination_blob(
     """
     height = float(light.position[2])
     is_physical = isinstance(light.illumination, BeamIllumination)
-    radius_m = _effective_pool_radius(light)
+    radius_m = effective_pool_radius(light)
 
     cx = (light.position[0] - min_x) / resolution
     cy = (max_y - light.position[1]) / resolution
@@ -467,19 +480,25 @@ def _paint_illumination_blob(
         indexing="ij",
     )
 
-    dist_m = np.sqrt((grid_x - cx) ** 2 + (grid_y - cy) ** 2) * resolution
+    # Signed world-space deltas from the light. NOTE the y flip: map row 0 is
+    # max_y (north edge), so increasing grid_y means decreasing world y.
+    # Getting this sign wrong silently mirrors every directional cone
+    # north/south, which no radial test would ever catch.
+    dx_m = (grid_x - cx) * resolution
+    dy_m = (cy - grid_y) * resolution
+    dist_m = np.hypot(dx_m, dy_m)
 
+    model = light.illumination
     if is_physical:
-        falloff = _physical_falloff(dist_m, height, radius_m)
+        falloff = _physical_falloff(
+            dist_m, height, radius_m, model.bulb_fraction, model.reflector_falloff
+        )
+    elif isinstance(model, DirectionalConeIllumination):
+        falloff = _directional_cone_falloff(dx_m, dy_m, model)
     else:
-        cone = light.illumination
-        falloff = _cone_falloff(dist_m, radius_m, cone.inner_fraction, cone.falloff)
+        falloff = _cone_falloff(dist_m, radius_m, model.inner_fraction, model.falloff)
 
-    dist = camera_distance(light.position, camera_position)
-    effective_brightness = apply_brightness_falloff(light.brightness, dist, falloff_distance)
-    # illumination_brightness is authored on a 0-255 scale; /255 maps it into
-    # linear radiance so the painted values are linear-light, not sRGB codes.
-    peak = (illumination_brightness / 255.0) * light.illumination_intensity * effective_brightness
+    peak = compute_pool_peak(light, illumination_brightness, camera_position, falloff_distance)
     intensity = peak * falloff
 
     lin_r, lin_g, lin_b = srgb255_to_linear(light.color)
@@ -488,32 +507,104 @@ def _paint_illumination_blob(
     illum_map[y0:y1, x0:x1, 2] += intensity * lin_b
 
 
+def compute_pool_peak(
+    light: "LightSource",
+    illumination_brightness: int,
+    camera_position: np.ndarray,
+    falloff_distance: float,
+) -> float:
+    """Compute a light's peak ground-pool radiance before the falloff curve.
+
+    Shared by the CPU illumination map and the GPU tuning scene so both
+    scale pools identically.
+
+    Args:
+        light (LightSource): Light with a non-None illumination model.
+        illumination_brightness (int): Base brightness scalar from
+            AtmosphereConfig, authored on a 0-255 scale.
+        camera_position (np.ndarray): (3,) camera position in ENU meters.
+        falloff_distance (float): Characteristic extinction distance in meters.
+
+    Returns:
+        float: Linear peak radiance; multiply by the falloff curve and the
+        light's linear color to get the painted value.
+    """
+    dist = camera_distance(light.position, camera_position)
+    effective_brightness = apply_brightness_falloff(light.brightness, dist, falloff_distance)
+    # illumination_brightness is authored on a 0-255 scale; /255 maps it into
+    # linear radiance so the painted values are linear-light, not sRGB codes.
+    peak = (illumination_brightness / 255.0) * light.illumination_intensity * effective_brightness
+    if isinstance(light.illumination, BeamIllumination):
+        # Illuminance under a lamp goes as I / h^2: a shorter pole gives a
+        # smaller but brighter pool, so total light depends on intensity alone.
+        peak *= (_REFERENCE_POLE_HEIGHT_M / float(light.position[2])) ** 2
+    return peak
+
+
+# Pole height (m) at which a physical pool's peak equals its authored
+# intensity. Shorter poles peak brighter by (ref / h)^2, taller ones dimmer.
+# Set to a typical highway pole so tuned highway pools keep their look.
+_REFERENCE_POLE_HEIGHT_M: float = 13.5
+
+# Minimum fraction of the beam radius over which the pool edge fades to zero.
+_CUTOFF_EDGE_SOFTNESS: float = 0.15
+
+
 def _physical_falloff(
     dist_m: np.ndarray,
     height: float,
     radius_m: float,
+    bulb_fraction: float = 1.0,
+    reflector_falloff: float = 1.0,
 ) -> np.ndarray:
-    """Compute ground illuminance falloff for a point source at a given height.
+    """Compute ground illuminance falloff for a pole-mounted luminaire.
 
     Follows the inverse-square + cosine-incidence law, normalized to 1.0
-    directly under the lamp: ``E(r)/E(0) = 1 / (1 + (r/h)^2)^1.5``. The curve
-    is faded to zero with a smoothstep over the outer 15% of the beam radius so
-    there is no hard ring at the cutoff.
+    directly under the lamp: ``E(r)/E(0) = 1 / (1 + (r/h)^2)^1.5``. Inside the
+    bulb radius (``bulb_fraction * radius_m``) that curve is used as-is. Past
+    it, only the reflector lights the ground, and the curve is multiplied by
+    ``(1 - smoothstep(t)) ** reflector_falloff`` as t runs 0 -> 1 from the bulb
+    radius to the housing cutoff. The fade starts at the bulb-zone brightness
+    with zero slope, so there is no line at the bulb cutoff, and reaches zero
+    at ``radius_m``. The band spans at least the outer 15% of the beam radius
+    so it never ends in a hard ring. With the defaults (bulb fills the pool,
+    exponent 1) this is the single-cutoff pool.
 
     Args:
         dist_m (np.ndarray): Radial ground distance from the lamp, in meters.
         height (float): Pole height in meters (> 0).
-        radius_m (float): Beam cutoff radius in meters.
+        radius_m (float): Housing cutoff radius in meters.
+        bulb_fraction (float): Bulb cutoff radius as a fraction of radius_m.
+            Clamped to [0, 1]; a bulb can't be visible past the housing.
+        reflector_falloff (float): Reflector-band fade exponent. Higher dies
+            off faster. Floored just above 0 so the pool still ends at radius_m.
 
     Returns:
         np.ndarray: Falloff multiplier in [0, 1], same shape as dist_m.
     """
-    falloff = 1.0 / (1.0 + (dist_m / height) ** 2) ** 1.5
+    inverse_square = 1.0 / (1.0 + (dist_m / height) ** 2) ** 1.5
 
-    edge_start = 0.85 * radius_m
-    edge = np.clip((dist_m - edge_start) / max(radius_m - edge_start, 1e-6), 0.0, 1.0)
-    edge = edge * edge * (3.0 - 2.0 * edge)
-    return falloff * (1.0 - edge)
+    bulb_radius = min(max(bulb_fraction, 0.0), 1.0) * radius_m
+    fade_start = min(bulb_radius, (1.0 - _CUTOFF_EDGE_SOFTNESS) * radius_m)
+    reflector_fade = (1.0 - _smoothstep(dist_m, fade_start, radius_m)) ** max(
+        reflector_falloff, 1e-6
+    )
+    return inverse_square * reflector_fade
+
+
+def _smoothstep(x: np.ndarray, edge0: float, edge1: float) -> np.ndarray:
+    """Return the smoothstep ramp from 0 at edge0 to 1 at edge1.
+
+    Args:
+        x (np.ndarray): Input values.
+        edge0 (float): Value where the ramp starts (output 0).
+        edge1 (float): Value where the ramp ends (output 1).
+
+    Returns:
+        np.ndarray: Ramp values in [0, 1], same shape as x.
+    """
+    t = np.clip((x - edge0) / max(edge1 - edge0, 1e-6), 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
 
 
 def _cone_falloff(
@@ -542,6 +633,49 @@ def _cone_falloff(
     fade_t = np.clip((t - inner_fraction) / denom, 0.0, 1.0)
     fade_t = fade_t * fade_t * (3.0 - 2.0 * fade_t)
     return (1.0 - fade_t) ** exponent
+
+
+# Fraction of the cone half-angle over which the wedge edge feathers to zero.
+_CONE_EDGE_SOFTNESS: float = 0.3
+
+
+def _directional_cone_falloff(
+    dx_m: np.ndarray,
+    dy_m: np.ndarray,
+    model: DirectionalConeIllumination,
+) -> np.ndarray:
+    """Compute the oriented headlight-cone falloff.
+
+    Projects each ground offset onto the cone axis: ``along`` (meters ahead
+    of the apex) drives the same two-zone axial fade as ConeIllumination;
+    the off-axis angle drives a smoothstep feather over the outer
+    _CONE_EDGE_SOFTNESS of the half-angle. Points behind the apex are zero.
+
+    Args:
+        dx_m (np.ndarray): Signed east offsets from the apex, in meters.
+        dy_m (np.ndarray): Signed north offsets from the apex, in meters.
+        model (DirectionalConeIllumination): Cone geometry and fade params.
+
+    Returns:
+        np.ndarray: Falloff multiplier in [0, 1], same shape as dx_m.
+    """
+    ux, uy = model.direction
+    along = dx_m * ux + dy_m * uy
+    lateral = -dx_m * uy + dy_m * ux
+
+    axial = _cone_falloff(
+        np.maximum(along, 0.0), model.length, model.inner_fraction, model.falloff
+    )
+
+    half_angle = math.radians(model.beam_angle_deg / 2.0)
+    off_axis = np.arctan2(np.abs(lateral), np.maximum(along, 1e-6))
+    edge_start = half_angle * (1.0 - _CONE_EDGE_SOFTNESS)
+    edge = np.clip(
+        (half_angle - off_axis) / max(half_angle - edge_start, 1e-6), 0.0, 1.0
+    )
+    edge = edge * edge * (3.0 - 2.0 * edge)
+
+    return np.where(along > 0.0, axial * edge, 0.0).astype(np.float32)
 
 
 def _sample_illumination_map(

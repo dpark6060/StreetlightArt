@@ -20,7 +20,7 @@ import pygame
 import pygame_gui
 
 from ..config.schema import ColorPoolConfig
-from .field_meta import get_field_meta
+from .field_meta import get_field_meta, get_field_unit
 from .light_catalog import LightKind
 from .slider_registry import SliderDescriptor, SliderRegistry
 
@@ -86,19 +86,29 @@ def _field_matches_prefix(field_name: str, prefix: t.Optional[str]) -> bool:
 
 
 def _display_name(field_name: str, prefix: t.Optional[str]) -> str:
-    """Build a human label: strip the prefix, spaces for underscores, title-case.
+    """Build a human label: strip prefix, title-case, append the unit suffix.
+
+    The unit is looked up from the full field name via field_meta.get_field_unit.
+    A trailing name token that spells the unit ("Color Temp K", "Beam Angle
+    Deg") is dropped before the suffix is appended, so units are never doubled.
 
     Args:
         field_name (str): Dataclass field name.
         prefix (str | None): Prefix to strip, or None.
 
     Returns:
-        str: Display label (e.g. "Brightness Min").
+        str: Display label (e.g. "Glow Radius (m)", "Color Temp (K)").
     """
     name = field_name
     if prefix and name.startswith(prefix):
         name = name[len(prefix):]
-    return name.replace("_", " ").title()
+    label = name.replace("_", " ").title()
+    unit = get_field_unit(field_name)
+    if not unit:
+        return label
+    if label.lower().endswith(f" {unit.lower()}"):
+        label = label[: -(len(unit) + 1)]
+    return f"{label} ({unit})"
 
 
 def _add_field_row(

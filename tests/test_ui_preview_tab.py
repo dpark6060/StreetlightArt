@@ -2,6 +2,7 @@
 """Headless tests for the Preview tab: widgets, camera math, coord sync, load job."""
 
 import os
+from pathlib import Path
 from unittest import mock
 
 import numpy as np
@@ -333,13 +334,16 @@ def test_load_preview_data_builds_scene_when_none_cached(config, tmp_path):
     # Act
     with mock.patch(f"{_MODULE}.load_scene") as mock_load, mock.patch(
         f"{_MODULE}.get_flat_map", return_value=flat
-    ) as mock_flat:
+    ) as mock_flat, mock.patch(
+        f"{_MODULE}.save_flat_map_to_output"
+    ) as mock_save:
         scene, flat_map, flat_meta = _load_preview_data(config, tmp_path, None, progress)
 
     # Assert
     mock_load.assert_called_once()
     assert mock_load.call_args.args[1] == "low"
     mock_flat.assert_called_once_with(mock_load.return_value, tmp_path)
+    mock_save.assert_called_once_with(flat[0], config.region_name, Path("output"))
     assert scene is mock_load.return_value
     assert (flat_map, flat_meta) == flat
 
@@ -352,7 +356,7 @@ def test_load_preview_data_reuses_existing_scene(config, tmp_path):
     # Act
     with mock.patch(f"{_MODULE}.load_scene") as mock_load, mock.patch(
         f"{_MODULE}.get_flat_map", return_value=(object(), object())
-    ) as mock_flat:
+    ) as mock_flat, mock.patch(f"{_MODULE}.save_flat_map_to_output"):
         scene, _, _ = _load_preview_data(config, tmp_path, existing, progress)
 
     # Assert

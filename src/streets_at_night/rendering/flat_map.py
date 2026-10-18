@@ -137,6 +137,32 @@ def get_flat_map(
     return img, meta
 
 
+def save_flat_map_to_output(
+    img: Image.Image,
+    region_name: str,
+    output_dir: Path,
+) -> Path:
+    """Save a copy of the flat map into the output directory.
+
+    Gives the user a viewable artifact at a predictable path (the disk cache
+    copy lives under an opaque hash name in the cache directory).
+
+    Args:
+        img (Image.Image): The generated flat map image.
+        region_name (str): Config region name used in the filename; an empty
+            string falls back to "flat_map.png".
+        output_dir (Path): Directory to write into; created if missing.
+
+    Returns:
+        Path: Path of the written PNG.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    suffix = f"_{region_name}" if region_name else ""
+    out_path = output_dir / f"flat_map{suffix}.png"
+    img.save(str(out_path))
+    return out_path
+
+
 def generate_flat_map(
     scene: "Scene",
     resolution: float = 10.0,
